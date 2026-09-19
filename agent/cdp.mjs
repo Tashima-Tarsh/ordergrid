@@ -91,7 +91,8 @@ function pageStateScript(postalCode,paymentRoute){
     let orderId=null;
     for(const re of orderPatterns){const m=text.match(re);if(m){orderId=m[1]||m[0];break;}}
     const confirmation=Boolean(orderId)||/(order (has been )?(placed|confirmed|successful)|thank you for your order|order received)/i.test(text);
-    if(confirmation)return {state:'CONFIRMED',orderId,href:location.href};
+    if(confirmation&&orderId)return {state:'CONFIRMED',orderId,href:location.href};
+    if(confirmation)return {state:'CHALLENGE',code:'ORDER_ID_NOT_FOUND',message:'Retailer confirmed the order but the order ID could not be extracted automatically',href:location.href};
     const hasCaptcha=Boolean(document.querySelector('iframe[src*="captcha" i],[class*="captcha" i],[id*="captcha" i],input[name*="captcha" i]'))||/captcha|i am not a robot/i.test(lower);
     const hasPassword=Boolean(document.querySelector('input[type="password"]'));
     const hasOtp=Boolean(document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i]'))||/(enter|verify).{0,20}(otp|one time password|verification code)/i.test(lower);
@@ -141,7 +142,8 @@ export function cartUrlFor(retailer,productUrl){
 async function driveCheckout(port,{postalCode,paymentRoute}){
   for(let round=0;round<12;round++){
     const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&/^https?:/.test(t.url||""));
-    const target=targets[0];if(!target)return {state:"FAILED",code:"NO_RETAILER_PAGE",message:"No retailer checkout page is open"};
+    const target=targets.find(t=>/(checkout|cart|order|payment|pay|secure|buy)/i.test(t.url||""))||targets[0];
+    if(!target)return {state:"FAILED",code:"NO_RETAILER_PAGE",message:"No retailer checkout page is open"};
     const connection=new CdpConnection(target.webSocketDebuggerUrl);
     try{
       await waitReady(connection);
