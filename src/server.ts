@@ -32,7 +32,142 @@ app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async
 app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)await db.query("delete from sessions where id_hash=$1",[tokenHash(raw)]);reply.clearCookie("session",{path:"/"});return {ok:true}});
 app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await Promise.all([db.query("select status,count(*)::int count,coalesce(sum(estimated_total_minor),0)::bigint total from order_batches where tenant_id=$1 group by status",[p.tenantId]),db.query("select status,count(*)::int count from purchase_orders where tenant_id=$1 group by status",[p.tenantId])]);return {batches:b.rows,orders:o.rows};});
 app.get("/api/batches",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select b.id,b.name,b.status,b.currency,b.payment_route,b.estimated_total_minor,b.created_at,count(i.id)::int item_count,count(distinct i.address_id)::int recipient_count from order_batches b left join batch_items i on i.batch_id=b.id where b.tenant_id=$1 group by b.id order by b.created_at desc limit 100`,[p.tenantId]);return {batches:rows};});
-app.post("/api/address-books/import",async(req,reply)=>{const p=req.principal!;const file=await req.file();if(!file)return reply.code(400).send({error:"file_required"});const buffer=await file.toBuffer();let rows:string[][]=[];if(file.filename.toLowerCase().endsWith(".xlsx")){const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(buffer as any);const sheet=workbook.worksheets[0];if(!sheet)return reply.code(400).send({error:"empty_workbook"});sheet.eachRow(r=>rows.push((r.values as any[]).slice(1).map(v=>String(v??"").trim())));}else{rows=buffer.toString("utf8").replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean).map(line=>line.split(",").map(v=>v.trim().replace(/^"|"$/g,"")));}if(rows.length<2)return reply.code(400).send({error:"no_address_rows"});const headers=rows[0]!.map(h=>h.toLowerCase().replace(/[ _-]+/g,"_"));const required=["recipient","phone","line1","city","state","postal_code"];for(const h of required)if(!headers.includes(h))return reply.code(400).send({error:"missing_column",column:h});const value=(row:string[],name:string)=>row[headers.indexOf(name)]??"";const c=await db.connect();try{await c.query("begin");const book=await c.query("insert into address_books(tenant_id,name,created_by) values($1,$2,$3) returning id,name",[p.tenantId,file.filename.replace(/\.[^.]+$/,"").slice(0,120),p.id]);const ids:string[]=[];for(const row of rows.slice(1)){if(!row.some(Boolean))continue;const phone=value(row,"phone").replace(/\D/g,"");const postal=value(row,"postal_code").replace(/\D/g,"");if(phone.length<10||postal.length!==6)throw new Error("Invalid phone or postal code in address file");const inserted=await c.query(`insert into addresses(address_book_id,recipient,phone,line1,line2,city,state,postal_code,country,reference) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,[book.rows[0].id,value(row,"recipient"),phone,value(row,"line1"),value(row,"line2")||null,value(row,"city"),value(row,"state"),postal,(value(row,"country")||"IN").toUpperCase(),value(row,"reference")||null]);ids.push(inserted.rows[0].id);}if(!ids.length)throw new Error("No valid address rows");await c.query("commit");await audit(db,p.tenantId,p.id,"address_book.imported","address_book",book.rows[0].id,{count:ids.length});return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,count:ids.length});}catch(e){await c.query("rollback");throw e}finally{c.release()}});
+const retailerAccountColumns:Record<string,string>={
+  amazon_account:"amazon-in",
+  amazon_in_account:"amazon-in",
+  flipkart_account:"flipkart",
+  myntra_account:"myntra",
+  ajio_account:"ajio",
+  tata_cliq_account:"tatacliq",
+  tatacliq_account:"tatacliq",
+  meesho_account:"meesho",
+  nykaa_account:"nykaa",
+  jiomart_account:"jiomart"
+};
+
+app.post("/api/address-books/import",async(req,reply)=>{
+  const p=req.principal!;
+  const file=await req.file();
+  if(!file)return reply.code(400).send({error:"file_required"});
+  const buffer=await file.toBuffer();
+  let rows:string[][]=[];
+  if(file.filename.toLowerCase().endsWith(".xlsx")){
+    const workbook=new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    const sheet=workbook.worksheets[0];
+    if(!sheet)return reply.code(400).send({error:"empty_workbook"});
+    sheet.eachRow(r=>rows.push((r.values as any[]).slice(1).map(v=>String(v??"").trim())));
+  }else{
+    rows=buffer.toString("utf8").replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean).map(line=>line.split(",").map(v=>v.trim().replace(/^"|"$/g,"")));
+  }
+  if(rows.length<2)return reply.code(400).send({error:"no_address_rows"});
+  const headers=rows[0]!.map(h=>h.toLowerCase().replace(/[ _-]+/g,"_"));
+  const required=["recipient","phone","line1","city","state","postal_code"];
+  for(const h of required)if(!headers.includes(h))return reply.code(400).send({error:"missing_column",column:h});
+  const value=(row:string[],name:string)=>{const i=headers.indexOf(name);return i<0?"":row[i]??""};
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const book=await client.query("insert into address_books(tenant_id,name,created_by) values($1,$2,$3) returning id,name",[p.tenantId,file.filename.replace(/\.[^.]+$/,"").slice(0,120),p.id]);
+    const ids:string[]=[];
+    let retailerAccountsBound=0;
+    for(const row of rows.slice(1)){
+      if(!row.some(Boolean))continue;
+      const phone=value(row,"phone").replace(/\D/g,"");
+      const postal=value(row,"postal_code").replace(/\D/g,"");
+      if(phone.length<10||postal.length!==6)throw new Error("Invalid phone or postal code in address file");
+      const externalReference=(value(row,"reference").trim()||`CUST-${randomUUID()}`).slice(0,160);
+      const customer=await client.query(
+        `insert into customers(tenant_id,external_reference,display_name,phone)
+         values($1,$2,$3,$4)
+         on conflict(tenant_id,external_reference) do update
+         set display_name=excluded.display_name,phone=excluded.phone,updated_at=now()
+         returning id,external_reference`,
+        [p.tenantId,externalReference,value(row,"recipient"),phone]
+      );
+      const customerId=customer.rows[0].id;
+      const inserted=await client.query(
+        `insert into addresses(address_book_id,customer_id,recipient,phone,line1,line2,city,state,postal_code,country,reference)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+        [book.rows[0].id,customerId,value(row,"recipient"),phone,value(row,"line1"),value(row,"line2")||null,value(row,"city"),value(row,"state"),postal,(value(row,"country")||"IN").toUpperCase(),externalReference]
+      );
+      ids.push(inserted.rows[0].id);
+      for(const [column,retailer] of Object.entries(retailerAccountColumns)){
+        const accountReference=value(row,column).trim();
+        if(!accountReference)continue;
+        await client.query(
+          `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status)
+           values($1,$2,$3,$4,'AUTH_REQUIRED')
+           on conflict(tenant_id,customer_id,retailer) do update
+           set account_reference=excluded.account_reference,updated_at=now()`,
+          [p.tenantId,customerId,retailer,accountReference.slice(0,240)]
+        );
+        retailerAccountsBound++;
+      }
+    }
+    if(!ids.length)throw new Error("No valid address rows");
+    await client.query("commit");
+    await audit(db,p.tenantId,p.id,"address_book.imported","address_book",book.rows[0].id,{count:ids.length,retailerAccountsBound});
+    return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,count:ids.length,retailerAccountsBound});
+  }catch(e){
+    await client.query("rollback");
+    throw e;
+  }finally{
+    client.release();
+  }
+});
+
+app.get("/api/customers",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query(`
+    select c.id,c.external_reference,c.display_name,c.phone,c.active,
+      count(distinct ra.id)::int retailer_account_count,
+      count(distinct a.id)::int address_count
+    from customers c
+    left join retailer_accounts ra on ra.customer_id=c.id and ra.tenant_id=c.tenant_id
+    left join addresses a on a.customer_id=c.id
+    where c.tenant_id=$1
+    group by c.id
+    order by c.external_reference
+    limit 2000
+  `,[p.tenantId]);
+  return {customers:rows};
+});
+
+app.get("/api/retailer-accounts",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query(`
+    select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
+      ra.retailer,ra.account_reference,ra.profile_key,ra.auth_status,ra.last_authenticated_at,ra.updated_at
+    from retailer_accounts ra
+    join customers c on c.id=ra.customer_id
+    where ra.tenant_id=$1
+    order by c.external_reference,ra.retailer
+    limit 5000
+  `,[p.tenantId]);
+  return {accounts:rows};
+});
+
+app.put("/api/customers/:customerId/retailer-accounts/:retailer",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const customerId=z.string().uuid().parse((req.params as any).customerId);
+  const retailer=z.string().regex(/^(amazon-in|flipkart|myntra|ajio|tatacliq|meesho|nykaa|jiomart|store:[a-z0-9.-]+)$/).parse((req.params as any).retailer);
+  const body=z.object({accountReference:z.string().min(1).max(240)}).parse(req.body);
+  const customer=await db.query("select 1 from customers where id=$1 and tenant_id=$2 and active",[customerId,p.tenantId]);
+  if(!customer.rows[0])return reply.code(404).send({error:"customer_not_found"});
+  const {rows}=await db.query(
+    `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status)
+     values($1,$2,$3,$4,'AUTH_REQUIRED')
+     on conflict(tenant_id,customer_id,retailer) do update
+     set account_reference=excluded.account_reference,auth_status='AUTH_REQUIRED',updated_at=now()
+     returning id,customer_id,retailer,account_reference,profile_key,auth_status`,
+    [p.tenantId,customerId,retailer,body.accountReference]
+  );
+  await audit(db,p.tenantId,p.id,"retailer_account.bound","retailer_account",rows[0].id,{customerId,retailer});
+  return rows[0];
+});
+
 app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select po.id,po.status,po.amount_minor,po.failure_message,bi.product_url,bi.title,bi.requested_quantity,a.id address_id,a.recipient,a.city,a.postal_code from purchase_orders po join batch_items bi on bi.id=po.batch_item_id left join addresses a on a.id=bi.address_id where po.tenant_id=$1 order by po.created_at desc limit 250`,[p.tenantId]);return {tasks:rows};});
 
 app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
