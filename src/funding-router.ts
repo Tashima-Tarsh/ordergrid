@@ -43,3 +43,50 @@ export async function assignFundingRoute(db:Db,tenantId:string,basketId:string){
   await db.query("update checkout_baskets set issuer_connection_id=$1,updated_at=now() where id=$2 and tenant_id=$3",[route.issuer_connection_id,basketId,tenantId]);
   return route;
 }
+
+
+export async function assignAvailableVirtualCard(db:Db,tenantId:string,basketId:string){
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const basket=await client.query(`
+      select cb.id,cb.customer_id,cb.issuer_connection_id,cb.virtual_card_id,
+        ic.provider,coalesce(sum(po.amount_minor),0)::bigint amount_minor
+      from checkout_baskets cb
+      left join issuer_connections ic on ic.id=cb.issuer_connection_id
+      left join purchase_orders po on po.checkout_basket_id=cb.id
+      where cb.id=$1 and cb.tenant_id=$2
+      group by cb.id,ic.provider
+      for update of cb
+    `,[basketId,tenantId]);
+    const row=basket.rows[0];
+    if(!row||row.virtual_card_id||!row.issuer_connection_id||!row.provider){
+      await client.query("commit");
+      return row?.virtual_card_id??null;
+    }
+    const card=await client.query(`
+      select id
+      from virtual_cards
+      where tenant_id=$1 and provider=$2 and status='ACTIVE'
+        and balance_minor >= $3
+        and checkout_basket_id is null
+        and (customer_id is null or customer_id=$4)
+      order by case when customer_id=$4 then 0 else 1 end,created_at
+      for update skip locked
+      limit 1
+    `,[tenantId,row.provider,Number(row.amount_minor||0),row.customer_id]);
+    if(!card.rows[0]){
+      await client.query("commit");
+      return null;
+    }
+    await client.query("update virtual_cards set customer_id=$1,checkout_basket_id=$2,updated_at=now() where id=$3",[row.customer_id,basketId,card.rows[0].id]);
+    await client.query("update checkout_baskets set virtual_card_id=$1,updated_at=now() where id=$2 and tenant_id=$3",[card.rows[0].id,basketId,tenantId]);
+    await client.query("commit");
+    return card.rows[0].id as string;
+  }catch(error){
+    await client.query("rollback");
+    throw error;
+  }finally{
+    client.release();
+  }
+}
