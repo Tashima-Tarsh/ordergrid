@@ -1,12 +1,12 @@
 (()=>{
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
-  let provider={provider:'disabled',configured:false},cards=[];
+  let provider={provider:'disabled',configured:false,source:'none'},cards=[];
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
     const body=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(String(body.error||body.message||'Request failed').replaceAll('_',' '));
+    if(!response.ok)throw new Error(String(body.message||body.error||'Request failed').replaceAll('_',' '));
     return body;
   }
   function toast(message){
@@ -18,19 +18,31 @@
     $('#fundingTotal').textContent=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(qty*amount);
     $('#createCards').textContent=`Create & load ${qty} virtual ${qty===1?'card':'cards'}`;
     const approved=$('#fundingApproval').checked;
-    $('#createCards').disabled=!provider.configured||!approved;
-    $('#fundingMessage').textContent=!provider.configured
-      ?'No production card issuer is connected. Configure the approved issuer credentials on the OrderGrid server.'
-      :!approved
-        ?'Confirm that this card programme and funding allocation are authorized.'
-        :`Issuer will create ${qty} real virtual card(s) and load the requested amount to each card.`;
+    const previewOnly=provider.source==='showroom';
+    $('#createCards').disabled=!provider.configured||!approved||previewOnly;
+    $('#fundingMessage').textContent=previewOnly
+      ?'This Render URL is a showroom preview. Connect an issuer on the production OrderGrid API.'
+      :!provider.configured
+        ?'Connect your approved issuer to create real virtual cards.'
+        :!approved
+          ?'Confirm that this card programme and funding allocation are authorized.'
+          :`Issuer will create ${qty} real virtual card(s) and load the requested amount to each card.`;
   }
   function render(){
+    const previewOnly=provider.source==='showroom';
     const name=provider.provider==='enkash'?'EnKash':'No issuer';
-    $('#fundingName').textContent=provider.configured?`${name} production issuer connected`:'No production issuer connected';
-    $('#fundingMeta').textContent=provider.configured?'Cards are created by the issuer; OrderGrid stores only issuer IDs and masked metadata.':'Complete issuer onboarding and server credentials before issuing cards.';
-    $('#issuerStatus').textContent=provider.configured?'PRODUCTION CONNECTED':'NOT CONNECTED';
+    $('#fundingName').textContent=previewOnly?'Showroom preview — issuer not connected':provider.configured?`${name} production issuer connected`:'No production issuer connected';
+    $('#fundingMeta').textContent=previewOnly
+      ?'This preview does not hold issuer secrets or create cards.'
+      :provider.configured
+        ?'Cards are created by the issuer; OrderGrid stores only issuer IDs and masked metadata.'
+        :'Use Connect issuer to add your approved production EnKash credentials.';
+    $('#issuerStatus').textContent=previewOnly?'PREVIEW ONLY':provider.configured?'PRODUCTION CONNECTED':'NOT CONNECTED';
     $('#fundingLimit').textContent=provider.configured?'Issuer governed':'—';
+    $('#connectIssuer').hidden=provider.configured&&!previewOnly;
+    $('#connectIssuer').disabled=previewOnly;
+    $('#connectIssuer').textContent=previewOnly?'Production connection required':'Connect issuer';
+    $('#disconnectIssuer').hidden=!provider.configured||previewOnly;
     $('#virtualCardInventory').innerHTML=cards.length?cards.map((card,i)=>`
       <div class="virtual-card-row" data-card="${card.id}">
         <strong>${card.label||'Virtual card '+String(i+1).padStart(2,'0')} · ${card.masked_number||card.provider_card_id}</strong>
@@ -45,13 +57,46 @@
     try{
       const [p,c]=await Promise.all([request('/api/cards/provider'),request('/api/cards')]);
       provider=p;cards=c.cards||[];render();
-    }catch(error){console.error(error)}
+    }catch(error){
+      provider={provider:'disabled',configured:false,source:'showroom'};
+      cards=[];render();console.error(error);
+    }
   }
+
+  $('#connectIssuer').onclick=()=>{if(provider.source==='showroom'){alert('This URL is the showroom preview. Issuer credentials can only be connected on the production OrderGrid API.');return}$('#issuerError').textContent='';$('#issuerDialog').showModal()};
+  $('#closeIssuer').onclick=()=>$('#issuerDialog').close();
+  $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
+  $('#issuerForm').onsubmit=async event=>{
+    event.preventDefault();
+    const button=$('#saveIssuer'),form=new FormData(event.currentTarget);
+    button.disabled=true;button.textContent='Testing connection…';$('#issuerError').textContent='';
+    try{
+      provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+        provider:'enkash',
+        baseUrl:String(form.get('baseUrl')),
+        tokenUrl:String(form.get('tokenUrl')),
+        partnerId:String(form.get('partnerId')),
+        basicAuth:String(form.get('basicAuth')),
+        username:String(form.get('username')),
+        password:String(form.get('password')),
+        clientId:String(form.get('clientId')),
+        companyId:String(form.get('companyId')),
+        cardAccountId:String(form.get('cardAccountId'))
+      })});
+      event.currentTarget.reset();$('#issuerDialog').close();await load();toast('Issuer connected and verified');
+    }catch(error){$('#issuerError').textContent=error.message}
+    finally{button.disabled=false;button.textContent='Test & connect'}
+  };
+  $('#disconnectIssuer').onclick=async()=>{
+    if(!confirm('Disconnect the issuer from OrderGrid? Existing card records remain, but new issuance and loading will stop.'))return;
+    try{await request('/api/cards/provider',{method:'DELETE'});await load();toast('Issuer disconnected')}catch(error){alert(error.message)}
+  };
+
   ['cardQuantity','cardAmount','merchantControl','fundingApproval'].forEach(id=>$('#'+id)?.addEventListener('input',calculate));
 
   $('#cardProgramForm').onsubmit=async event=>{
     event.preventDefault();
-    if(!provider.configured){alert('Connect an approved production issuer on the OrderGrid server first.');return}
+    if(!provider.configured){alert('Connect an approved production issuer first.');return}
     const button=$('#createCards'),form=new FormData(event.currentTarget);
     const quantity=Number(form.get('quantity')),amountMinor=Math.round(Number(form.get('amount'))*100);
     button.disabled=true;button.textContent='Creating at issuer…';
@@ -71,9 +116,7 @@
           specialDate:String(form.get('specialDate'))
         }
       })});
-      await load();
-      $('#fundingApproval').checked=false;
-      calculate();
+      await load();$('#fundingApproval').checked=false;calculate();
       toast(`${result.created} real virtual card(s) created and loaded${result.failed?' · '+result.failed+' failed':''}`);
     }catch(error){alert(error.message)}
     finally{button.disabled=false;calculate()}
