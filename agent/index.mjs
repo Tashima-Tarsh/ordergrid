@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedHandoff, findChrome, profileKey, profileRoot } from "./lib.mjs";
@@ -7,6 +8,7 @@ import { prepareBasket } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let cookie="";
 
 async function ask(label){return(await rl.question(label)).trim()}
@@ -36,6 +38,9 @@ async function login(){
   if(!sessionCookie)throw new Error("The server did not return a session cookie.");
   cookie=sessionCookie.split(";")[0];
 }
+async function heartbeat(workerId){
+  await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode:"BULK"})});
+}
 async function prepareOne(chrome,basket){
   const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:"{}"});
   if(!body.items?.length)throw new Error("Basket contains no checkout items");
@@ -50,37 +55,75 @@ async function prepareOne(chrome,basket){
   output.write("The retailer cart is open in the isolated customer profile. Complete only retailer-required login/OTP/CAPTCHA/3DS/payment steps, then record the retailer order ID in OrderGrid Bulk Checkout.\n");
   return result;
 }
-async function runPool(items,limit,handler){
+async function runPool(groups,limit,handler){
   let next=0;
-  const workers=Array.from({length:Math.min(limit,items.length)},async()=>{
-    while(next<items.length){
-      const item=items[next++];
-      try{await handler(item)}catch(error){output.write(`Basket error (${item.recipient||item.id}): ${error.message}\n`)}
+  const workers=Array.from({length:Math.min(limit,groups.length)},async()=>{
+    while(next<groups.length){
+      const group=groups[next++];
+      await handler(group);
     }
   });
   await Promise.all(workers);
 }
+function groupByProfile(queue){
+  const groups=new Map();
+  for(const basket of queue){
+    const key=`${basket.account_reference||basket.id}:${basket.retailer}`;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(basket);
+  }
+  return [...groups.values()];
+}
 async function main(){
   output.write("\nOrderGrid Bulk Execution Worker\n");
-  output.write("OrderGrid groups all products for one customer + retailer into one basket and prepares baskets in isolated visible Chrome profiles.\n");
-  output.write("The worker never bypasses retailer authentication, OTP, CAPTCHA or 3DS.\n\n");
+  output.write("Keep this worker running once per operator workstation. Bulk runs are started and monitored from the OrderGrid web workspace.\n");
+  output.write("The worker prepares grouped retailer baskets in isolated visible Chrome profiles and never bypasses OTP, CAPTCHA, 3DS or retailer authentication.\n\n");
   const chrome=findChrome();
   if(!chrome)throw new Error("Google Chrome was not found. Install Chrome and run again.");
   await login();
-  const requested=Number(process.env.ORDERGRID_BASKETS||await ask("Baskets to run (1-25, default 10): ")||"10");
-  const limit=Number.isInteger(requested)&&requested>=1&&requested<=25?requested:10;
+
+  const requested=Number(process.env.ORDERGRID_BASKETS||"10");
+  const claimLimit=Number.isInteger(requested)&&requested>=1&&requested<=25?requested:10;
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");
   const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=8?parallelRequested:4;
+  const daemon=process.env.ORDERGRID_DAEMON!=="0";
+  const autoClaim=process.env.ORDERGRID_AUTO_CLAIM==="1";
+  const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
+  const prepared=new Set();
 
-  let queue=(await api("/api/bulk-queue")).body.baskets||[];
-  if(!queue.length){
-    await api("/api/bulk-queue/claim",{method:"POST",body:JSON.stringify({limit})});
-    queue=(await api("/api/bulk-queue")).body.baskets||[];
+  await heartbeat(workerId);
+  output.write(`Worker online · ${parallel} parallel profile worker(s) · ${autoClaim?"auto-claim enabled":"waiting for OrderGrid Start bulk run"}\n`);
+
+  while(true){
+    try{
+      await heartbeat(workerId);
+      let queue=(await api("/api/bulk-queue")).body.baskets||[];
+      const currentIds=new Set(queue.map(x=>x.id));
+      for(const id of [...prepared])if(!currentIds.has(id))prepared.delete(id);
+
+      if(!queue.length&&autoClaim){
+        await api("/api/bulk-queue/claim",{method:"POST",body:JSON.stringify({limit:claimLimit})});
+        queue=(await api("/api/bulk-queue")).body.baskets||[];
+      }
+      const pending=queue.filter(x=>!prepared.has(x.id));
+      if(pending.length){
+        output.write(`\nOrderGrid assigned ${pending.length} new basket(s).\n`);
+        const groups=groupByProfile(pending);
+        await runPool(groups,parallel,async group=>{
+          for(const basket of group){
+            try{await prepareOne(chrome,basket)}
+            catch(error){output.write(`Basket error (${basket.recipient||basket.id}): ${error.message}\n`)}
+            finally{prepared.add(basket.id)}
+          }
+        });
+        output.write("\nBasket preparation cycle complete. Confirm retailer order IDs from OrderGrid → Bulk checkout.\n");
+      }
+    }catch(error){
+      output.write(`Worker cycle error: ${error.message}\n`);
+    }
+    if(!daemon)break;
+    await sleep(3000);
   }
-  if(!queue.length){output.write("No eligible bulk baskets are available.\n");return}
-  output.write(`Preparing ${queue.length} basket(s) with up to ${parallel} parallel browser workers.\n`);
-  await runPool(queue,parallel,basket=>prepareOne(chrome,basket));
-  output.write("\nBulk preparation complete. Return to OrderGrid → Bulk checkout to monitor and confirm each retailer order.\n");
 }
 
 try{await main()}catch(error){output.write(`\nWorker stopped: ${error.message}\n`);process.exitCode=1}finally{cookie="";rl.close()}
