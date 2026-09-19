@@ -52,7 +52,7 @@ async function runPool(groups,limit,handler){
 function groupByProfile(queue){
   const groups=new Map();
   for(const basket of queue){
-    const key=`${basket.account_reference||basket.id}:${basket.retailer}`;
+    const key=basket.retailer_account_id||`${basket.customer_id||basket.id}:${basket.retailer}`;
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(basket);
   }
@@ -94,21 +94,21 @@ async function main(){
             try{
               const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:JSON.stringify({workerId})});
               for(const item of body.items||[])if(!allowedRetailerUrl(item.executionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
-              const directory=join(profileRoot(),profileKey(`${body.accountReference||basket.id}:${basket.retailer}`));
+              const directory=join(profileRoot(),profileKey(body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
               const result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,resume});
               if(result.state==="CONFIRMED"&&result.orderId){
                 await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
                 started.delete(basket.id);
-                output.write(`Confirmed ${basket.recipient} · ${basket.retailer} · ${result.orderId}\n`);
+                output.write(`Confirmed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer} · ${result.orderId}\n`);
               }else if(result.state==="CHALLENGE"){
                 await postProgress(workerId,basket.id,"CHALLENGE",result.code||"RETAILER_CHALLENGE",result.message||"Retailer action is required");
-                output.write(`Challenge ${basket.recipient} · ${basket.retailer}: ${result.code||"REVIEW_REQUIRED"}\n`);
+                output.write(`Challenge ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.code||"REVIEW_REQUIRED"}\n`);
               }else if(result.state==="FAILED"){
                 await postProgress(workerId,basket.id,"FAILED",result.code||"EXECUTION_FAILED",result.message||"Checkout execution failed");
                 started.delete(basket.id);
-                output.write(`Failed ${basket.recipient} · ${basket.retailer}: ${result.message||result.code}\n`);
+                output.write(`Failed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.message||result.code}\n`);
               }else{
                 await postProgress(workerId,basket.id,"RUNNING",result.code,result.message);
               }

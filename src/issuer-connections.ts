@@ -24,7 +24,7 @@ function tenantIssuer(config:Config,credentials:EnKashTenantCredentials):Virtual
 }
 
 export async function loadTenantIssuer(db:Db,config:Config,tenantId:string):Promise<{issuer:VirtualCardIssuer;source:"tenant"|"environment"|"none"}>{
-  const {rows}=await db.query("select provider,ciphertext,iv,auth_tag,status from issuer_connections where tenant_id=$1 and status='CONNECTED'",[tenantId]);
+  const {rows}=await db.query("select provider,ciphertext,iv,auth_tag,status from issuer_connections where tenant_id=$1 and provider='enkash' and status='CONNECTED'",[tenantId]);
   if(rows[0]){
     const credentials=decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials;
     const issuer=tenantIssuer(config,credentials);
@@ -41,12 +41,12 @@ export async function testAndSaveEnKashConnection(db:Db,config:Config,input:{ten
   await db.query(
     `insert into issuer_connections(tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at)
      values($1,'enkash',$2,$3,$4,'CONNECTED',$5,now(),now())
-     on conflict(tenant_id) do update set provider='enkash',ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',connected_by=excluded.connected_by,connected_at=now(),updated_at=now()`,
+     on conflict(tenant_id,provider) do update set ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',connected_by=excluded.connected_by,connected_at=now(),updated_at=now()`,
     [input.tenantId,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId]
   );
   return issuer;
 }
 
-export async function disconnectTenantIssuer(db:Db,tenantId:string){
-  await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1",[tenantId]);
+export async function disconnectTenantIssuer(db:Db,tenantId:string,provider="enkash"){
+  await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1 and provider=$2",[tenantId,provider]);
 }
