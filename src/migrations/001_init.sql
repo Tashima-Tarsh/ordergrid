@@ -17,3 +17,17 @@ create table audit_log (id bigserial primary key, tenant_id uuid not null refere
 create index audit_log_tenant_created_idx on audit_log(tenant_id, created_at desc);
 create index batches_tenant_status_idx on order_batches(tenant_id,status);
 create index orders_tenant_status_idx on purchase_orders(tenant_id,status);
+
+-- Supabase exposes the public schema through its Data API. OrderGrid uses a
+-- private server-side Postgres connection, so deny all Data API access by
+-- enabling RLS without public policies.
+alter table tenants enable row level security;
+alter table users enable row level security;
+alter table sessions enable row level security;
+alter table address_books enable row level security;
+alter table addresses enable row level security;
+alter table order_batches enable row level security;
+alter table batch_items enable row level security;
+alter table purchase_orders enable row level security;
+alter table provider_secrets enable row level security;
+alter table audit_log enable row level security;
