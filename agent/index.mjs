@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { allowedHandoff, findChrome, profileKey, profileRoot } from "./lib.mjs";
+import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
 import { executeBasket } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
@@ -93,7 +93,7 @@ async function main(){
             const resume=started.has(basket.id)||basket.status==="OPENED"||basket.status==="REQUIRES_ACTION";
             try{
               const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:JSON.stringify({workerId})});
-              for(const item of body.items||[])if(!allowedHandoff(item.executionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
+              for(const item of body.items||[])if(!allowedRetailerUrl(item.executionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
               const directory=join(profileRoot(),profileKey(`${body.accountReference||basket.id}:${basket.retailer}`));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
