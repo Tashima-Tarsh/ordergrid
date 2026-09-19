@@ -4,7 +4,9 @@ import { loadConfig } from "./config.js";
 import { createDb, audit } from "./db.js";
 import { ShopifyProvider, ControlledRetailerProvider, DisabledIssuer } from "./providers.js";
 
-const config=loadConfig(),db=createDb(config),connection=new Redis(config.REDIS_URL,{maxRetriesPerRequest:null});
+const config=loadConfig();
+if(!config.REDIS_URL)throw new Error("REDIS_URL is required to run the background worker");
+const db=createDb(config),connection=new Redis(config.REDIS_URL,{maxRetriesPerRequest:null});
 const providers=[new ControlledRetailerProvider(/(^|\.)amazon\.in$/),new ControlledRetailerProvider(/(^|\.)flipkart\.com$/),new ShopifyProvider()];
 const issuer=new DisabledIssuer(); let stopping=false;
 const worker=new Worker("orders",async job=>{
