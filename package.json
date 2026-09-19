@@ -14,7 +14,8 @@
     "worker": "node dist/worker.js",
     "db:migrate": "node dist/migrate.js",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "agent": "node agent/index.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

@@ -61,6 +61,7 @@ For personal retailer accounts, use a separately isolated browser profile or man
 - Idempotent purchase-order creation
 - Concurrency-safe operator claiming with PostgreSQL row locks
 - 20-minute checkout-session leases, release and expiry recovery
+- Windows operator companion with stable per-customer isolated Chrome profiles
 - Strict HTTPS and lookalike-domain protection
 - Genuine retailer order-ID validation
 - Immutable audit events
@@ -93,6 +94,7 @@ The API is the source of truth. Browser state is not treated as proof that an or
 
 ```text
 public/                  Operator portal
+agent/                   Windows operator companion
 src/server.ts            API, authentication and workflow endpoints
 src/worker.ts            Pricing and ordering worker
 src/assisted-checkout.ts Retailer URL and order-ID validation
@@ -129,6 +131,15 @@ For development:
 ```bash
 npm run dev
 ```
+
+Run the Windows operator companion against a reachable deployment:
+
+```powershell
+$env:ORDERGRID_URL = "https://your-ordergrid.example"
+npm run agent
+```
+
+Include a stable, non-secret `reference` column in the recipient file so the companion reuses the correct isolated Chrome profile. See [`agent/README.md`](agent/README.md).
 
 ## Required environment configuration
 
@@ -180,4 +191,11 @@ npm run build
 npm audit --omit=dev --audit-level=high
 ```
 
-## License\n\nOrderGrid is dual-licensed under your choice of:\n\n- [MIT License](LICENSE-MIT)\n- [Apache License 2.0](LICENSE-APACHE)\n\nSPDX expression: `MIT OR Apache-2.0`. You may use the project under either license.
+## License
+
+OrderGrid is dual-licensed under your choice of:
+
+- [MIT License](LICENSE-MIT)
+- [Apache License 2.0](LICENSE-APACHE)
+
+SPDX expression: `MIT OR Apache-2.0`. You may use the project under either license.
