@@ -5,7 +5,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   APP_ORIGIN: z.string().url(),
   DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1),
+  REDIS_URL: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
