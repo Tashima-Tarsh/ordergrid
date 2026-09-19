@@ -94,7 +94,7 @@ app.get("/api/bulk-baskets",async(req)=>{const p=req.principal!;await db.query("
 
 app.post("/api/bulk-queue/claim",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});const client=await db.connect();try{await client.query("begin");await client.query("update checkout_baskets set status='READY',claimed_by=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[p.tenantId,limit]);const ids:string[]=[];for(const row of picked.rows){await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[p.id,row.id]);ids.push(row.id);}await client.query("commit");await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:ids.length});return {claimed:ids.length,ids};}catch(e){await client.query("rollback");throw e}finally{client.release()}});
 
-app.get("/api/bulk-queue",async(req)=>{const p=req.principal!;await db.query("update checkout_baskets set status='READY',claimed_by=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const {rows}=await db.query(`
+app.get("/api/bulk-queue",async(req,reply)=>{const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);if(!worker.success)return reply.code(400).send({error:"worker_id_required"});await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const {rows}=await db.query(`
   select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
          a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
          count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
@@ -102,11 +102,10 @@ app.get("/api/bulk-queue",async(req)=>{const p=req.principal!;await db.query("up
   join order_batches b on b.id=cb.batch_id
   join addresses a on a.id=cb.address_id
   left join purchase_orders po on po.checkout_basket_id=cb.id
-  where cb.tenant_id=$1 and cb.claimed_by=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+  where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
   group by cb.id,a.recipient,a.city,a.postal_code,b.name,b.payment_route
   order by cb.created_at
-`,[p.tenantId,p.id]);return {baskets:rows};});
-
+`,[p.tenantId,worker.data]);return {baskets:rows};});
 app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);const {rows}=await db.query(`
   update checkout_baskets cb set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',failure_code=null,failure_message=null,updated_at=now()
   from addresses a,order_batches b
