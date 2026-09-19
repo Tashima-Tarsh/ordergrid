@@ -50,16 +50,17 @@ export async function assignAvailableVirtualCard(db:Db,tenantId:string,basketId:
   try{
     await client.query("begin");
     const basket=await client.query(`
-      select cb.id,cb.customer_id,cb.issuer_connection_id,cb.virtual_card_id,
-        ic.provider,coalesce(sum(po.amount_minor),0)::bigint amount_minor
+      select cb.id,cb.customer_id,cb.issuer_connection_id,cb.virtual_card_id,ic.provider
       from checkout_baskets cb
       left join issuer_connections ic on ic.id=cb.issuer_connection_id
-      left join purchase_orders po on po.checkout_basket_id=cb.id
       where cb.id=$1 and cb.tenant_id=$2
-      group by cb.id,ic.provider
       for update of cb
     `,[basketId,tenantId]);
     const row=basket.rows[0];
+    if(row){
+      const amount=await client.query("select coalesce(sum(amount_minor),0)::bigint amount_minor from purchase_orders where checkout_basket_id=$1 and tenant_id=$2",[basketId,tenantId]);
+      row.amount_minor=amount.rows[0]?.amount_minor??0;
+    }
     if(!row||row.virtual_card_id||!row.issuer_connection_id||!row.provider){
       await client.query("commit");
       return row?.virtual_card_id??null;
