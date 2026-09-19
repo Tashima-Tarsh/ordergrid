@@ -57,7 +57,7 @@
         <div><small>Items</small><strong>${b.item_count}</strong></div>
         <div><small>Basket value</small><strong>${money(b.amount_minor)}</strong></div>
         <div><small>Status</small><span class="bulk-status">${esc(b.status)}</span></div>
-        <div class="bulk-actions"><button class="secondary" data-inspect>Inspect</button></div>
+        <div class="bulk-actions"><button class="secondary" data-inspect>Inspect</button>${['CLAIMED','OPENED'].includes(b.status)?'<button data-confirm>Confirm order</button><button class="secondary" data-release>Release</button>':''}</div>
       </div>`).join(''):'<p class="muted">No baskets yet. Create and approve a fulfilment batch.</p>';
   }
   async function load(){
@@ -76,8 +76,24 @@
   document.querySelector('#bulkBasketClose').onclick=()=>document.querySelector('#bulkBasketDialog').close();
   host.onclick=async event=>{
     const row=event.target.closest('[data-basket]');
-    if(!row||!event.target.closest('[data-inspect]'))return;
+    if(!row)return;
     const basket=baskets.find(x=>x.id===row.dataset.basket);
+    if(event.target.closest('[data-release]')){
+      if(!confirm(`Release ${basket.recipient} · ${basket.retailer} back to the bulk queue?`))return;
+      try{await request(`/api/bulk-queue/${basket.id}/release`,{method:'POST'});await load()}catch(error){alert(error.message)}
+      return;
+    }
+    if(event.target.closest('[data-confirm]')){
+      const retailerOrderId=prompt(`Retailer order ID for ${basket.recipient} · ${basket.retailer}:`);
+      if(!retailerOrderId)return;
+      try{
+        await request(`/api/bulk-queue/${basket.id}/confirm`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({retailerOrderId})});
+        await load();window.dispatchEvent(new Event('ordergrid:refresh'));
+        if(window.toast)window.toast('Basket confirmed from retailer order ID');
+      }catch(error){alert(error.message)}
+      return;
+    }
+    if(!event.target.closest('[data-inspect]'))return;
     document.querySelector('#bulkBasketTitle').textContent=`${basket.recipient} · ${basket.retailer}`;
     let detail='<p>This basket has not been claimed for execution yet.</p>';
     try{
