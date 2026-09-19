@@ -61,7 +61,7 @@
     runButton.title=workers.length?'Place approved baskets through OrderGrid':'Start an OrderGrid execution worker on an authorized workstation first';
     document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>`
       <div class="bulk-row" data-basket="${b.id}">
-        <div><strong>${esc(b.recipient)} · ${esc(b.retailer)}</strong><small>${esc(b.batch_name)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>${b.failure_message?`<div class="bulk-exception"><b>${esc(b.failure_code||'ACTION REQUIRED')}</b> · ${esc(b.failure_message)}</div>`:''}</div>
+        <div><strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong><small>${esc(b.recipient)} · account ${esc(b.account_reference||'unbound')} · auth ${esc(b.auth_status||'unknown')}</small><small>${esc(b.batch_name)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>${b.failure_message?`<div class="bulk-exception"><b>${esc(b.failure_code||'ACTION REQUIRED')}</b> · ${esc(b.failure_message)}</div>`:''}</div>
         <div><small>Items</small><strong>${b.item_count}</strong></div>
         <div><small>Basket value</small><strong>${money(b.amount_minor)}</strong></div>
         <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Retry basket</button>':''}</div></div>
