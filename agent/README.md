@@ -1,74 +1,70 @@
-# OrderGrid Bulk Execution Worker
+# OrderGrid Native Bulk Ordering Worker
 
-The OrderGrid execution worker is a persistent local companion for operator workstations. After one-time startup and login, bulk runs are started and monitored from the **OrderGrid → Bulk checkout** workspace.
+The OrderGrid worker is the execution layer behind **OrderGrid → Bulk ordering**. Start it once on an authorized workstation; after that, approved baskets are started, monitored, retried and reconciled from the OrderGrid web workspace.
 
-OrderGrid groups approved order lines into one basket per **customer/account + retailer**. For example, 10 customers × 3 Amazon products produces 30 order lines but normally only 10 Amazon baskets.
+## Normal flow
 
-## What the worker does
+1. OrderGrid receives products and recipients.
+2. It creates one basket per customer/account + retailer.
+3. An approver starts the bulk run in OrderGrid.
+4. A live worker is assigned baskets by worker ID.
+5. The worker reuses the isolated Chrome profile for that customer + retailer.
+6. It adds all basket items and drives the checkout flow.
+7. If the retailer can complete without a new challenge, the worker continues automatically.
+8. If the retailer requires password, OTP, CAPTCHA, 3DS or another protected action, that basket is marked **AUTHORIZATION REQUIRED** in OrderGrid while the secure browser session remains open.
+9. After the protected step is completed, the worker resumes the same checkout automatically.
+10. The basket is marked **CONFIRMED** only after the worker detects a genuine retailer-issued order ID.
 
-For each basket assigned by OrderGrid, the worker:
-
-1. Uses the stable customer/account `reference` plus retailer to select an isolated Chrome profile.
-2. Opens every verified product URL for that basket in the same profile.
-3. Uses local Chrome DevTools automation to attempt repetitive **Add to Cart / Add to Bag** actions.
-4. Opens the retailer cart after all product lines have been prepared.
-5. Leaves the visible retailer session open for any login, OTP, CAPTCHA, 3DS, payment authorization, address choice or retailer-specific exception.
-6. Keeps the basket in OrderGrid until the genuine retailer order ID is recorded from the Bulk Checkout screen.
-
-The automation port is bound to `127.0.0.1` and exists only on the operator workstation. The worker does not use stealth automation and does not attempt to defeat retailer controls.
+There is no normal "retailer handoff" workflow and no manual order-ID entry in the OrderGrid UI.
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 22+
 - Google Chrome
-- A reachable OrderGrid deployment
-- An authorized retailer account for each customer/account
-- The OrderGrid database migrations applied
+- Reachable OrderGrid deployment
+- Authorized retailer accounts
+- All OrderGrid database migrations applied
 
-## Recipient account mapping
+## Recipient/account isolation
 
-Include a stable, non-secret `reference` column in the recipient CSV/XLSX file. Use an internal customer or account reference, never a retailer username or password.
+Include a stable non-secret `reference` in the recipient file:
 
 ```csv
 reference,recipient,phone,line1,city,state,postal_code
 CUST-0001,Example Recipient,9876543210,Example Road,Delhi,Delhi,110001
 ```
 
-The same reference and retailer reuse the same isolated Chrome profile on later runs.
+OrderGrid combines this reference with the retailer identity to select a persistent isolated browser profile.
 
-## Run on Windows
+## Start the worker
 
 ```powershell
 $env:ORDERGRID_URL = "https://your-ordergrid.example"
 npm run agent
 ```
 
-You may also set `ORDERGRID_URL` and double-click `agent\run-ordergrid-agent.cmd`.
-
-The worker remains online by default. OrderGrid displays it as **ONLINE** in Bulk Checkout and polls it for newly assigned baskets.
-
-For managed workstations you may provide the OrderGrid operator credentials through environment variables so the worker can start without an interactive login prompt:
+For managed workstations:
 
 ```powershell
-$env:ORDERGRID_EMAIL = "operator@example.com"
-$env:ORDERGRID_PASSWORD = "<operator password>"
+$env:ORDERGRID_URL = "https://your-ordergrid.example"
+$env:ORDERGRID_EMAIL = "worker@example.com"
+$env:ORDERGRID_PASSWORD = "<worker-password>"
 $env:ORDERGRID_PARALLEL = "4"
 npm run agent
 ```
 
-Protect those environment values using the workstation's secret-management mechanism. Do not store them in the repository.
+The worker stays online by default and heartbeats into OrderGrid. The Bulk ordering page shows the live worker count.
 
-Optional controls:
+Optional:
 
-- `ORDERGRID_PARALLEL=1..8` — number of different isolated customer profiles prepared concurrently. Default: 4.
-- `ORDERGRID_DAEMON=0` — run one polling cycle and exit instead of remaining online.
-- `ORDERGRID_AUTO_CLAIM=1` — allow the worker to claim ready baskets automatically. By default baskets are started explicitly from the OrderGrid web workspace.
-- `ORDERGRID_BASKETS=1..25` — auto-claim size when auto-claim is enabled.
+- `ORDERGRID_PARALLEL=1..8`
+- `ORDERGRID_BASKETS=1..25`
+- `ORDERGRID_DAEMON=0` to run one cycle and exit
 
 ## Security boundary
 
-Chrome profile data is stored under `%LOCALAPPDATA%\OrderGrid\profiles` on Windows. Protect the Windows account with device encryption, screen lock and least-privilege access.
+The worker does not defeat or solve retailer security controls. It does not intercept OTPs, solve CAPTCHAs, bypass 3DS, capture passwords or mark an order successful without a retailer order ID.
 
-OrderGrid does **not** ask the worker to capture or transmit retailer passwords, OTPs, CAPTCHAs, PANs or CVVs. These are entered only into the genuine retailer surface when required. The worker only automates repetitive cart preparation and opens the cart; authentication and final retailer/payment controls remain with the retailer and authorized operator.
+Browser profiles live under `%LOCALAPPDATA%\OrderGrid\profiles` on Windows. Protect operator workstations with device encryption, screen lock and least-privilege access.
 
-A basket is not considered successful merely because Chrome reached a cart or checkout page. OrderGrid marks the basket confirmed only after a genuine retailer-issued order ID is recorded.
+For card payments, OrderGrid does not store full PAN/CVV. Automatic use of an issuer-created card requires an approved PCI/tokenized payment integration or a retailer-saved payment method. If a retailer requests raw card entry and no approved secure payment integration is configured, the basket is surfaced as a payment challenge rather than exposing card credentials to OrderGrid.
