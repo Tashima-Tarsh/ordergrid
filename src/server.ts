@@ -16,6 +16,7 @@ import { createOrderQueue } from "./queue.js";
 import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
 import { disconnectTenantIssuer, loadTenantIssuer, testAndSaveEnKashConnection } from "./issuer-connections.js";
+import { assignFundingRoute } from "./funding-router.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
@@ -175,6 +176,55 @@ app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,body.limit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 
 
+app.get("/api/issuers",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query("select id,provider,status,connected_at,updated_at from issuer_connections where tenant_id=$1 order by provider",[p.tenantId]);
+  return {issuers:rows};
+});
+app.get("/api/funding-policies",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query(`
+    select fp.id,fp.name,fp.retailer,fp.issuer_provider,fp.issuer_connection_id,
+      fp.min_amount_minor,fp.max_amount_minor,fp.priority,fp.active,ic.status issuer_status
+    from funding_policies fp
+    left join issuer_connections ic on ic.id=fp.issuer_connection_id
+    where fp.tenant_id=$1 order by fp.priority,fp.created_at
+  `,[p.tenantId]);
+  return {policies:rows};
+});
+app.post("/api/funding-policies",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    name:z.string().min(2).max(120),
+    retailer:z.string().max(160).nullable().optional(),
+    issuerConnectionId:z.string().uuid(),
+    minAmountMinor:z.number().int().min(0).default(0),
+    maxAmountMinor:z.number().int().min(0).nullable().optional(),
+    priority:z.number().int().min(1).max(10000).default(100)
+  }).parse(req.body);
+  if(body.maxAmountMinor!==null&&body.maxAmountMinor!==undefined&&body.maxAmountMinor<body.minAmountMinor)return reply.code(400).send({error:"invalid_amount_range"});
+  const issuer=await db.query("select id,provider from issuer_connections where id=$1 and tenant_id=$2 and status='CONNECTED'",[body.issuerConnectionId,p.tenantId]);
+  if(!issuer.rows[0])return reply.code(409).send({error:"issuer_not_connected"});
+  const {rows}=await db.query(
+    `insert into funding_policies(tenant_id,name,retailer,issuer_provider,issuer_connection_id,min_amount_minor,max_amount_minor,priority,active)
+     values($1,$2,$3,$4,$5,$6,$7,$8,true)
+     returning id,name,retailer,issuer_provider,issuer_connection_id,min_amount_minor,max_amount_minor,priority,active`,
+    [p.tenantId,body.name,body.retailer??null,issuer.rows[0].provider,body.issuerConnectionId,body.minAmountMinor,body.maxAmountMinor??null,body.priority]
+  );
+  await audit(db,p.tenantId,p.id,"funding_policy.created","funding_policy",rows[0].id,{issuerProvider:issuer.rows[0].provider,retailer:body.retailer??null});
+  return reply.code(201).send(rows[0]);
+});
+app.delete("/api/funding-policies/:id",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query("delete from funding_policies where id=$1 and tenant_id=$2 returning id",[id,p.tenantId]);
+  if(!rows[0])return reply.code(404).send({error:"funding_policy_not_found"});
+  await audit(db,p.tenantId,p.id,"funding_policy.deleted","funding_policy",id);
+  return {ok:true};
+});
+
 app.get("/api/cards/provider",async(req)=>{const p=req.principal!,state=await loadTenantIssuer(db,config,p.tenantId);return {provider:state.issuer.provider,configured:state.issuer.configured(),source:state.source};});
 app.post("/api/cards/provider/connect",async(req,reply)=>{const p=req.principal!;if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});const httpsUrl=z.string().url().refine(v=>new URL(v).protocol==="https:",{message:"HTTPS URL required"});const body=z.object({provider:z.literal("enkash"),baseUrl:httpsUrl,tokenUrl:httpsUrl,partnerId:z.string().min(1).max(200),basicAuth:z.string().min(1).max(1000),username:z.string().min(1).max(200),password:z.string().min(1).max(500),clientId:z.string().min(1).max(200),companyId:z.string().min(1).max(200),cardAccountId:z.string().min(1).max(200)}).parse(req.body);try{const issuer=await testAndSaveEnKashConnection(db,config,{tenantId:p.tenantId,userId:p.id,credentials:{ENKASH_BASE_URL:body.baseUrl,ENKASH_TOKEN_URL:body.tokenUrl,ENKASH_PARTNER_ID:body.partnerId,ENKASH_BASIC_AUTH:body.basicAuth,ENKASH_USERNAME:body.username,ENKASH_PASSWORD:body.password,ENKASH_CLIENT_ID:body.clientId,ENKASH_COMPANY_ID:body.companyId,ENKASH_CARD_ACCOUNT_ID:body.cardAccountId}});await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",null,{provider:"enkash"});return {provider:issuer.provider,configured:true,source:"tenant"};}catch(error:any){req.log.warn({err:String(error.message).slice(0,160)},"issuer connection test failed");return reply.code(400).send({error:"issuer_connection_failed",message:String(error.message).slice(0,160)})}});
 app.delete("/api/cards/provider",async(req,reply)=>{const p=req.principal!;if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});await disconnectTenantIssuer(db,p.tenantId);await audit(db,p.tenantId,p.id,"issuer.disconnected","issuer_connection",null,{provider:"enkash"});return {ok:true};});
@@ -239,7 +289,7 @@ app.get("/api/bulk-baskets",async(req)=>{
   return {baskets:rows};
 });
 
-app.post("/api/bulk-queue/claim",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});const client=await db.connect();try{await client.query("begin");await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[p.tenantId,limit]);const ids:string[]=[];for(const row of picked.rows){await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[p.id,row.id]);ids.push(row.id);}await client.query("commit");await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:ids.length});return {claimed:ids.length,ids};}catch(e){await client.query("rollback");throw e}finally{client.release()}});
+app.post("/api/bulk-queue/claim",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});const client=await db.connect();try{await client.query("begin");await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[p.tenantId,limit]);const ids:string[]=[];for(const row of picked.rows){await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[p.id,row.id]);ids.push(row.id);}await client.query("commit");for(const basketId of ids)await assignFundingRoute(db,p.tenantId,basketId);await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:ids.length});return {claimed:ids.length,ids};}catch(e){await client.query("rollback");throw e}finally{client.release()}});
 
 app.get("/api/bulk-queue",async(req,reply)=>{
   const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);
