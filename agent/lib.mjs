@@ -15,7 +15,7 @@ const RETAILER_HOSTS = [
   "jiomart.com"
 ];
 
-export function allowedHandoff(value) {
+export function allowedRetailerUrl(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.username || url.password) return false;
