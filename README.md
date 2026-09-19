@@ -180,6 +180,4 @@ npm run build
 npm audit --omit=dev --audit-level=high
 ```
 
-## License
-
-No open-source license has been declared. All rights are reserved unless the repository owner adds a license.
+## License\n\nOrderGrid is dual-licensed under your choice of:\n\n- [MIT License](LICENSE-MIT)\n- [Apache License 2.0](LICENSE-APACHE)\n\nSPDX expression: `MIT OR Apache-2.0`. You may use the project under either license.
