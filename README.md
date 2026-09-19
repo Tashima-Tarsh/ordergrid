@@ -35,6 +35,58 @@ OrderGrid:
 - retries failed/challenged baskets from the OrderGrid UI;
 - exports reconciliation reports.
 
+## Customer and retailer account identity
+
+Every order is bound to an immutable OrderGrid customer record. OrderGrid does not infer identity from a browser window, recipient name or card number.
+
+The identity chain is:
+
+```text
+customer_id
+  -> retailer_account_id
+  -> isolated browser profile_key
+  -> checkout_basket
+  -> funding policy / issuer
+  -> virtual_card_id (when allocated)
+  -> retailer_order_id
+```
+
+Recipient imports can include stable customer and retailer-account references:
+
+```csv
+reference,recipient,phone,line1,city,state,postal_code,amazon_account
+CUST-001,Aarav Sharma,9876543210,12 MG Road,Bengaluru,Karnataka,560001,amazon-account-001
+CUST-002,Meera Iyer,9876543211,18 Linking Road,Mumbai,Maharashtra,400052,amazon-account-002
+```
+
+Supported optional account columns currently include `amazon_account`, `flipkart_account`, `myntra_account`, `ajio_account`, `tatacliq_account`, `meesho_account`, `nykaa_account` and `jiomart_account`.
+
+These fields are identifiers/labels only. Do not put retailer passwords, OTPs or recovery secrets in recipient files.
+
+### Example: 100 Amazon accounts
+
+For 100 customers with 100 Amazon accounts and 3 Amazon products:
+
+```text
+100 customers
+x 3 product lines
+= 300 order lines
+= 100 Amazon baskets
+= 100 isolated Amazon browser profiles
+```
+
+The execution worker groups by `retailer_account_id`, not by recipient name. Each Amazon account always reuses the same isolated Chrome profile. If Amazon requires login, password, OTP, CAPTCHA or another protected action for one account, only that retailer account/basket enters an authorization-required state; other accounts can continue.
+
+A first-time or expired Amazon session still needs the account owner/operator to complete Amazon's normal authentication. OrderGrid preserves and reuses the resulting browser session but does not bypass retailer security controls.
+
+## Multi-issuer funding router
+
+A tenant can hold multiple issuer connections at once. The data model supports `axis`, `hdfc`, `icici`, `enkash` and `custom` issuer programmes.
+
+Funding policies deterministically select an issuer by retailer, amount range and priority. A basket never asks AI to randomly choose a bank. If only one issuer is connected, it can be used as the deterministic fallback. If multiple issuers are connected and no policy matches, no issuer is silently guessed.
+
+When an eligible active virtual-card record exists, OrderGrid reserves it transactionally to the same `customer_id` and `checkout_basket_id` so two workers cannot allocate one card to different customers.
+
 ## Real virtual cards
 
 The old browser-side test-card generator has been removed.
