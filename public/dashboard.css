@@ -29,3 +29,5 @@ body.offline .brain-state{color:#fbbf24;border-color:rgba(251,191,36,.3);backgro
 @media(max-width:1000px){.agent-layout{grid-template-columns:1fr}.truth-bar{grid-template-columns:1fr 1fr}.policy-command{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.truth-bar,.agent-grid,.policy-command{grid-template-columns:1fr}.autopilot-hero{align-items:flex-start;flex-direction:column}.autopilot-hero button{width:100%}}
 .process-rail{display:none!important}.payment-modal .notice,.funding-modal .notice{display:none!important}
+
+.issuer-connect-form{width:100%;max-width:none;box-shadow:none;border-radius:0}.issuer-connect-form>p{color:#64748b;line-height:1.5}.issuer-connect-form .program-grid{margin-top:14px}
