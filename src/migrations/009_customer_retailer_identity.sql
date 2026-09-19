@@ -47,6 +47,9 @@ create table if not exists funding_policies (
 alter table issuer_connections drop constraint if exists issuer_connections_provider_check;
 alter table issuer_connections add constraint issuer_connections_provider_check
   check (provider in ('axis','hdfc','icici','enkash','custom'));
+alter table issuer_connections drop constraint if exists issuer_connections_tenant_id_key;
+create unique index if not exists issuer_connections_tenant_provider_uidx
+  on issuer_connections(tenant_id,provider);
 
 alter table addresses add column if not exists customer_id uuid references customers(id);
 alter table checkout_baskets add column if not exists customer_id uuid references customers(id);
