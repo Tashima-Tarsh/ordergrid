@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { allowedHandoff, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { prepareBasket } from "./cdp.mjs";
+import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
+import { executeBasket } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -29,8 +29,8 @@ async function api(path,options={}){
   return {body,response};
 }
 async function login(){
-  const email=process.env.ORDERGRID_EMAIL||await ask("OrderGrid operator email: ");
-  let password=process.env.ORDERGRID_PASSWORD||await readSecret("OrderGrid operator password: ");
+  const email=process.env.ORDERGRID_EMAIL||await ask("OrderGrid worker email: ");
+  let password=process.env.ORDERGRID_PASSWORD||await readSecret("OrderGrid worker password: ");
   const {response}=await api("/api/login",{method:"POST",body:JSON.stringify({email,password})});
   password="";
   const setCookies=response.headers.getSetCookie?.()||[response.headers.get("set-cookie")];
@@ -41,28 +41,12 @@ async function login(){
 async function heartbeat(workerId){
   await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode:"BULK"})});
 }
-async function prepareOne(chrome,basket){
-  const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:"{}"});
-  if(!body.items?.length)throw new Error("Basket contains no checkout items");
-  for(const item of body.items)if(!allowedHandoff(item.actionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
-  const stableReference=`${body.accountReference||basket.id}:${basket.retailer}`;
-  const directory=join(profileRoot(),profileKey(stableReference));
-  await mkdir(directory,{recursive:true,mode:0o700});
-  output.write(`\nPreparing ${basket.recipient} · ${basket.retailer} · ${body.items.length} item(s)...\n`);
-  const result=await prepareBasket({chrome,directory,retailer:basket.retailer,items:body.items});
-  output.write(`Basket prepared: ${result.added}/${body.items.length} item(s) added automatically.\n`);
-  if(result.requiresAction)output.write(`${result.requiresAction} item(s) need retailer-page review; their tabs remain visible.\n`);
-  output.write("The retailer cart is open in the isolated customer profile. Complete only retailer-required login/OTP/CAPTCHA/3DS/payment steps, then record the retailer order ID in OrderGrid Bulk Checkout.\n");
-  return result;
+async function postProgress(workerId,basketId,state,code,message){
+  await api(`/api/bulk-queue/${basketId}/progress`,{method:"POST",body:JSON.stringify({workerId,state,code,message})});
 }
 async function runPool(groups,limit,handler){
   let next=0;
-  const workers=Array.from({length:Math.min(limit,groups.length)},async()=>{
-    while(next<groups.length){
-      const group=groups[next++];
-      await handler(group);
-    }
-  });
+  const workers=Array.from({length:Math.min(limit,groups.length)},async()=>{while(next<groups.length)await handler(groups[next++])});
   await Promise.all(workers);
 }
 function groupByProfile(queue){
@@ -74,53 +58,69 @@ function groupByProfile(queue){
   }
   return [...groups.values()];
 }
+
 async function main(){
-  output.write("\nOrderGrid Bulk Execution Worker\n");
-  output.write("Keep this worker running once per operator workstation. Bulk runs are started and monitored from the OrderGrid web workspace.\n");
-  output.write("The worker prepares grouped retailer baskets in isolated visible Chrome profiles and never bypasses OTP, CAPTCHA, 3DS or retailer authentication.\n\n");
+  output.write("\nOrderGrid Native Bulk Ordering Worker\n");
+  output.write("Approved baskets are executed from OrderGrid. The worker drives retailer checkout and reports only genuine authentication/payment challenges.\n");
+  output.write("It does not bypass OTP, CAPTCHA, 3DS, passwords or retailer security controls.\n\n");
   const chrome=findChrome();
   if(!chrome)throw new Error("Google Chrome was not found. Install Chrome and run again.");
   await login();
 
-  const requested=Number(process.env.ORDERGRID_BASKETS||"10");
-  const claimLimit=Number.isInteger(requested)&&requested>=1&&requested<=25?requested:10;
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");
   const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=8?parallelRequested:4;
+  const claimRequested=Number(process.env.ORDERGRID_BASKETS||"25");
+  const claimLimit=Number.isInteger(claimRequested)&&claimRequested>=1&&claimRequested<=25?claimRequested:25;
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
-  const autoClaim=process.env.ORDERGRID_AUTO_CLAIM==="1";
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
-  const prepared=new Set();
+  const started=new Set();
 
   await heartbeat(workerId);
-  output.write(`Worker online · ${parallel} parallel profile worker(s) · ${autoClaim?"auto-claim enabled":"waiting for OrderGrid Start bulk run"}\n`);
+  output.write(`Worker online · ${workerId} · ${parallel} parallel customer profiles\n`);
 
   while(true){
     try{
       await heartbeat(workerId);
-      let queue=(await api("/api/bulk-queue")).body.baskets||[];
+      await api(`/api/execution-worker/${encodeURIComponent(workerId)}/claim`,{method:"POST",body:JSON.stringify({limit:claimLimit})});
+      const queue=(await api(`/api/bulk-queue?workerId=${encodeURIComponent(workerId)}`)).body.baskets||[];
       const currentIds=new Set(queue.map(x=>x.id));
-      for(const id of [...prepared])if(!currentIds.has(id))prepared.delete(id);
+      for(const id of [...started])if(!currentIds.has(id))started.delete(id);
 
-      if(!queue.length&&autoClaim){
-        await api("/api/bulk-queue/claim",{method:"POST",body:JSON.stringify({limit:claimLimit})});
-        queue=(await api("/api/bulk-queue")).body.baskets||[];
-      }
-      const pending=queue.filter(x=>!prepared.has(x.id));
-      if(pending.length){
-        output.write(`\nOrderGrid assigned ${pending.length} new basket(s).\n`);
-        const groups=groupByProfile(pending);
+      if(queue.length){
+        const groups=groupByProfile(queue);
         await runPool(groups,parallel,async group=>{
           for(const basket of group){
-            try{await prepareOne(chrome,basket)}
-            catch(error){output.write(`Basket error (${basket.recipient||basket.id}): ${error.message}\n`)}
-            finally{prepared.add(basket.id)}
+            const resume=started.has(basket.id)||basket.status==="OPENED"||basket.status==="REQUIRES_ACTION";
+            try{
+              const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:JSON.stringify({workerId})});
+              for(const item of body.items||[])if(!allowedRetailerUrl(item.executionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
+              const directory=join(profileRoot(),profileKey(`${body.accountReference||basket.id}:${basket.retailer}`));
+              await mkdir(directory,{recursive:true,mode:0o700});
+              started.add(basket.id);
+              const result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,resume});
+              if(result.state==="CONFIRMED"&&result.orderId){
+                await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
+                started.delete(basket.id);
+                output.write(`Confirmed ${basket.recipient} · ${basket.retailer} · ${result.orderId}\n`);
+              }else if(result.state==="CHALLENGE"){
+                await postProgress(workerId,basket.id,"CHALLENGE",result.code||"RETAILER_CHALLENGE",result.message||"Retailer action is required");
+                output.write(`Challenge ${basket.recipient} · ${basket.retailer}: ${result.code||"REVIEW_REQUIRED"}\n`);
+              }else if(result.state==="FAILED"){
+                await postProgress(workerId,basket.id,"FAILED",result.code||"EXECUTION_FAILED",result.message||"Checkout execution failed");
+                started.delete(basket.id);
+                output.write(`Failed ${basket.recipient} · ${basket.retailer}: ${result.message||result.code}\n`);
+              }else{
+                await postProgress(workerId,basket.id,"RUNNING",result.code,result.message);
+              }
+            }catch(error){
+              await postProgress(workerId,basket.id,"FAILED","WORKER_ERROR",String(error.message).slice(0,400)).catch(()=>{});
+              started.delete(basket.id);
+              output.write(`Worker error ${basket.recipient||basket.id}: ${error.message}\n`);
+            }
           }
         });
-        output.write("\nBasket preparation cycle complete. Confirm retailer order IDs from OrderGrid → Bulk checkout.\n");
       }
-    }catch(error){
-      output.write(`Worker cycle error: ${error.message}\n`);
-    }
+    }catch(error){output.write(`Worker cycle error: ${error.message}\n`)}
     if(!daemon)break;
     await sleep(3000);
   }

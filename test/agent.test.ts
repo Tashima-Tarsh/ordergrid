@@ -1,20 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 // @ts-expect-error JavaScript module intentionally has no declaration file.
-import { allowedHandoff, profileKey } from "../agent/lib.mjs";
+import { allowedRetailerUrl, profileKey } from "../agent/lib.mjs";
 // @ts-expect-error JavaScript module intentionally has no declaration file.
 import { cartUrlFor } from "../agent/cdp.mjs";
 
-test("operator companion accepts supported HTTPS retailers", () => {
-  assert.equal(allowedHandoff("https://www.amazon.in/dp/B000000000"), true);
-  assert.equal(allowedHandoff("https://www.flipkart.com/item/p/abc"), true);
-  assert.equal(allowedHandoff("https://shop.example/products/widget"), true);
+test("OrderGrid worker accepts supported HTTPS retailers", () => {
+  assert.equal(allowedRetailerUrl("https://www.amazon.in/dp/B000000000"), true);
+  assert.equal(allowedRetailerUrl("https://www.flipkart.com/item/p/abc"), true);
+  assert.equal(allowedRetailerUrl("https://shop.example/products/widget"), true);
 });
 
-test("operator companion rejects lookalikes and credential URLs", () => {
-  assert.equal(allowedHandoff("https://amazon.in.evil.example/item"), false);
-  assert.equal(allowedHandoff("http://amazon.in/item"), false);
-  assert.equal(allowedHandoff("https://user:pass@flipkart.com/item"), false);
+test("OrderGrid worker rejects lookalikes and credential URLs", () => {
+  assert.equal(allowedRetailerUrl("https://amazon.in.evil.example/item"), false);
+  assert.equal(allowedRetailerUrl("http://amazon.in/item"), false);
+  assert.equal(allowedRetailerUrl("https://user:pass@flipkart.com/item"), false);
 });
 
 test("profile keys are stable and do not expose the reference", () => {

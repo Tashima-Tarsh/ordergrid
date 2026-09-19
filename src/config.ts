@@ -13,7 +13,16 @@ const schema = z.object({
   SHOPIFY_STOREFRONT_TOKEN: z.string().optional(),
   CARD_PROVIDER: z.enum(["disabled", "m2p", "enkash", "custom"]).default("disabled"),
   CARD_PROVIDER_API_KEY: z.string().optional(),
-  CARD_PROVIDER_WEBHOOK_SECRET: z.string().optional()
+  CARD_PROVIDER_WEBHOOK_SECRET: z.string().optional(),
+  ENKASH_BASE_URL: z.string().url().optional(),
+  ENKASH_TOKEN_URL: z.string().url().optional(),
+  ENKASH_PARTNER_ID: z.string().optional(),
+  ENKASH_BASIC_AUTH: z.string().optional(),
+  ENKASH_USERNAME: z.string().optional(),
+  ENKASH_PASSWORD: z.string().optional(),
+  ENKASH_CLIENT_ID: z.string().optional(),
+  ENKASH_COMPANY_ID: z.string().optional(),
+  ENKASH_CARD_ACCOUNT_ID: z.string().optional()
 });
 export type Config = z.infer<typeof schema>;
 export const loadConfig = (): Config => schema.parse(process.env);
