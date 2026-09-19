@@ -22,4 +22,4 @@ $('#batchForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.cur
 $('#checkoutAll').onclick=()=>{document.querySelector('[data-view="assisted"]')?.click();toast('Complete retailer confirmation from the queue')};
 $('#reset').onclick=()=>refresh().catch(err=>toast(err.message));
 $('#closePayment').onclick=()=>$('#paymentDialog').close();$('#retailerPage').onclick=()=>{};$('#humanCheck').onchange=()=>{};$('#runPayment').onclick=()=>{};
-refresh().then(()=>$('#login').classList.add('hidden')).catch(()=>$('#login').classList.remove('hidden'));
+window.addEventListener('ordergrid:refresh',()=>refresh().catch(err=>toast(err.message)));refresh().then(()=>$('#login').classList.add('hidden')).catch(()=>$('#login').classList.remove('hidden'));
