@@ -216,45 +216,95 @@ return reply.code(cards.length?201:502).send({created:cards.length,failed:failur
 });
 app.post("/api/cards/:id/load",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const state=await loadTenantIssuer(db,config,p.tenantId),cardIssuer=state.issuer;if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});const id=z.string().uuid().parse((req.params as any).id),body=z.object({amountMinor:z.number().int().min(100)}).parse(req.body);const {rows}=await db.query("select id,provider_card_id,provider_account_id from virtual_cards where id=$1 and tenant_id=$2",[id,p.tenantId]);if(!rows[0])return reply.code(404).send({error:"card_not_found"});await cardIssuer.loadCard({providerCardId:rows[0].provider_card_id,providerAccountId:rows[0].provider_account_id,amountMinor:body.amountMinor,reference:`ordergrid-load-${id}-${Date.now()}`});const updated=await db.query("update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2 returning id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,currency,merchant_control,created_at",[body.amountMinor,id]);await audit(db,p.tenantId,p.id,"virtual_card.loaded","virtual_card",id,{amountMinor:body.amountMinor});return updated.rows[0];});
 
-app.get("/api/bulk-baskets",async(req)=>{const p=req.principal!;await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const {rows}=await db.query(`
-  select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
-         a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
-         count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
-  from checkout_baskets cb
-  join order_batches b on b.id=cb.batch_id
-  join addresses a on a.id=cb.address_id
-  left join purchase_orders po on po.checkout_basket_id=cb.id
-  where cb.tenant_id=$1
-  group by cb.id,a.recipient,a.city,a.postal_code,b.name,b.payment_route
-  order by cb.created_at desc limit 250
-`,[p.tenantId]);return {baskets:rows};});
+app.get("/api/bulk-baskets",async(req)=>{
+  const p=req.principal!;
+  await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
+  const {rows}=await db.query(`
+    select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
+           cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,
+           c.external_reference customer_reference,
+           ra.profile_key,ra.auth_status,
+           a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
+           count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
+    from checkout_baskets cb
+    join order_batches b on b.id=cb.batch_id
+    join addresses a on a.id=cb.address_id
+    join customers c on c.id=cb.customer_id
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join purchase_orders po on po.checkout_basket_id=cb.id
+    where cb.tenant_id=$1
+    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
+    order by cb.created_at desc limit 500
+  `,[p.tenantId]);
+  return {baskets:rows};
+});
 
 app.post("/api/bulk-queue/claim",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});const client=await db.connect();try{await client.query("begin");await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[p.tenantId,limit]);const ids:string[]=[];for(const row of picked.rows){await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[p.id,row.id]);ids.push(row.id);}await client.query("commit");await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:ids.length});return {claimed:ids.length,ids};}catch(e){await client.query("rollback");throw e}finally{client.release()}});
 
-app.get("/api/bulk-queue",async(req,reply)=>{const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);if(!worker.success)return reply.code(400).send({error:"worker_id_required"});await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const {rows}=await db.query(`
-  select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
-         a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
-         count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
-  from checkout_baskets cb
-  join order_batches b on b.id=cb.batch_id
-  join addresses a on a.id=cb.address_id
-  left join purchase_orders po on po.checkout_basket_id=cb.id
-  where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
-  group by cb.id,a.recipient,a.city,a.postal_code,b.name,b.payment_route
-  order by cb.created_at
-`,[p.tenantId,worker.data]);return {baskets:rows};});
-app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);const {rows}=await db.query(`
-  update checkout_baskets cb set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',failure_code=null,failure_message=null,updated_at=now()
-  from addresses a,order_batches b
-  where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION') and (cb.expires_at>now() or cb.status='REQUIRES_ACTION')
-    and a.id=cb.address_id and b.id=cb.batch_id
-  returning cb.id,cb.retailer,cb.account_reference,a.recipient,a.line1,a.line2,a.city,a.state,a.postal_code,a.country,b.payment_route
-`,[id,p.tenantId,body.workerId]);if(!rows[0])return reply.code(409).send({error:"basket_unavailable_or_expired"});const items=await db.query(`
-  select po.id purchase_order_id,bi.product_url,bi.title,bi.requested_quantity,po.amount_minor
-  from purchase_orders po join batch_items bi on bi.id=po.batch_item_id
-  where po.checkout_basket_id=$1 and po.tenant_id=$2
-  order by po.created_at
-`,[id,p.tenantId]);const prepared=items.rows.map(item=>({...item,executionUrl:verifiedRetailerUrl(item.product_url)}));await audit(db,p.tenantId,p.id,"bulk_basket.execution_started","checkout_basket",id,{workerId:body.workerId,items:prepared.length});reply.header("cache-control","no-store");return {basketId:id,retailer:rows[0].retailer,accountReference:rows[0].account_reference,paymentRoute:rows[0].payment_route,address:{recipient:rows[0].recipient,line1:rows[0].line1,line2:rows[0].line2,city:rows[0].city,state:rows[0].state,postalCode:rows[0].postal_code,country:rows[0].country},items:prepared};});
+app.get("/api/bulk-queue",async(req,reply)=>{
+  const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);
+  if(!worker.success)return reply.code(400).send({error:"worker_id_required"});
+  await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
+  const {rows}=await db.query(`
+    select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
+           cb.customer_id,cb.retailer_account_id,
+           c.external_reference customer_reference,
+           ra.profile_key,ra.auth_status,
+           a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
+           count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
+    from checkout_baskets cb
+    join order_batches b on b.id=cb.batch_id
+    join addresses a on a.id=cb.address_id
+    join customers c on c.id=cb.customer_id
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join purchase_orders po on po.checkout_basket_id=cb.id
+    where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
+    order by cb.created_at
+  `,[p.tenantId,worker.data]);
+  return {baskets:rows};
+});
+
+app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);
+  const {rows}=await db.query(`
+    update checkout_baskets cb
+    set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',failure_code=null,failure_message=null,updated_at=now()
+    from addresses a,order_batches b,customers c,retailer_accounts ra
+    where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3
+      and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+      and (cb.expires_at>now() or cb.status='REQUIRES_ACTION')
+      and a.id=cb.address_id and b.id=cb.batch_id
+      and c.id=cb.customer_id and ra.id=cb.retailer_account_id
+    returning cb.id,cb.customer_id,cb.retailer_account_id,cb.retailer,cb.account_reference,
+      c.external_reference customer_reference,ra.profile_key,ra.auth_status,
+      a.recipient,a.line1,a.line2,a.city,a.state,a.postal_code,a.country,b.payment_route
+  `,[id,p.tenantId,body.workerId]);
+  if(!rows[0])return reply.code(409).send({error:"basket_unavailable_or_expired"});
+  const items=await db.query(`
+    select po.id purchase_order_id,bi.product_url,bi.title,bi.requested_quantity,po.amount_minor
+    from purchase_orders po join batch_items bi on bi.id=po.batch_item_id
+    where po.checkout_basket_id=$1 and po.tenant_id=$2
+    order by po.created_at
+  `,[id,p.tenantId]);
+  const prepared=items.rows.map(item=>({...item,executionUrl:verifiedRetailerUrl(item.product_url)}));
+  await audit(db,p.tenantId,p.id,"bulk_basket.execution_started","checkout_basket",id,{workerId:body.workerId,customerId:rows[0].customer_id,retailerAccountId:rows[0].retailer_account_id,items:prepared.length});
+  reply.header("cache-control","no-store");
+  return {
+    basketId:id,
+    customerId:rows[0].customer_id,
+    customerReference:rows[0].customer_reference,
+    retailerAccountId:rows[0].retailer_account_id,
+    profileKey:rows[0].profile_key,
+    accountReference:rows[0].account_reference,
+    retailer:rows[0].retailer,
+    authStatus:rows[0].auth_status,
+    paymentRoute:rows[0].payment_route,
+    address:{recipient:rows[0].recipient,line1:rows[0].line1,line2:rows[0].line2,city:rows[0].city,state:rows[0].state,postalCode:rows[0].postal_code,country:rows[0].country},
+    items:prepared
+  };
+});
+
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);const status=body.state==="RUNNING"?"OPENED":body.state==="CHALLENGE"?"REQUIRES_ACTION":"FAILED";const {rows}=await db.query("update checkout_baskets set status=$1,failure_code=$2,failure_message=$3,expires_at=case when $1='OPENED' then now()+interval '20 minutes' else expires_at end,updated_at=now() where id=$4 and tenant_id=$5 and execution_worker_id=$6 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') returning id,status",[status,body.code??null,body.message??null,id,p.tenantId,body.workerId]);if(!rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});await audit(db,p.tenantId,p.id,"bulk_basket.progress","checkout_basket",id,{workerId:body.workerId,state:body.state,code:body.code??null});return rows[0];});
 
 app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {rows}=await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,opened_at=null,failure_code=null,failure_message=null,updated_at=now() where id=$1 and tenant_id=$2 and status in ('REQUIRES_ACTION','FAILED') returning id,status",[id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"basket_not_retryable"});await audit(db,p.tenantId,p.id,"bulk_basket.retry_requested","checkout_basket",id);return rows[0];});
