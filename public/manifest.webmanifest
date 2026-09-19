@@ -1,0 +1,10 @@
+{
+  "name": "OrderGrid Procurement Operations",
+  "short_name": "OrderGrid",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#071522",
+  "theme_color": "#071522",
+  "description": "Offline-capable bulk procurement and checkout operations workspace.",
+  "icons": [{"src":"app-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
