@@ -22,6 +22,7 @@ export type IssuedCard={
 export interface VirtualCardIssuer {
   provider:string;
   configured():boolean;
+  testConnection():Promise<void>;
   createCard(input:{cardholder:CardholderInput;label?:string}):Promise<IssuedCard>;
   loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}):Promise<void>;
 }
@@ -29,6 +30,7 @@ export interface VirtualCardIssuer {
 export class DisabledVirtualCardIssuer implements VirtualCardIssuer {
   provider="disabled";
   configured(){return false}
+  async testConnection(){throw new Error("card_issuer_not_connected")}
   async createCard():Promise<IssuedCard>{throw new Error("card_issuer_not_connected")}
   async loadCard():Promise<void>{throw new Error("card_issuer_not_connected")}
 }
@@ -42,6 +44,7 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
   configured(){
     return Boolean(this.config.ENKASH_BASE_URL&&this.config.ENKASH_TOKEN_URL&&this.config.ENKASH_PARTNER_ID&&this.config.ENKASH_BASIC_AUTH&&this.config.ENKASH_USERNAME&&this.config.ENKASH_PASSWORD&&this.config.ENKASH_CLIENT_ID&&this.config.ENKASH_COMPANY_ID&&this.config.ENKASH_CARD_ACCOUNT_ID);
   }
+  async testConnection(){await this.accessToken()}
   private async accessToken(){
     if(this.token&&this.token.expiresAt>Date.now()+60_000)return this.token.value;
     if(!this.config.ENKASH_TOKEN_URL)throw new Error("enkash_token_url_missing");
