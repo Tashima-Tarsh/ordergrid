@@ -22,6 +22,7 @@ export async function syncCheckoutBaskets(db:Pool, tenantId:string, batchId:stri
       where po.tenant_id=$1
         and bi.batch_id=$2
         and bi.address_id is not null
+        and po.status='REQUIRES_ACTION'
       on conflict(batch_id,address_id,retailer)
       do update set account_reference=excluded.account_reference,updated_at=now()
     `,[tenantId,batchId]);
