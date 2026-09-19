@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/",
@@ -34,5 +36,8 @@
   "devDependencies": {
     "tsx": "^4.20.5"
   },
-  "overrides": { "uuid": "^11.1.1" }
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "license": "MIT OR Apache-2.0"
 }
