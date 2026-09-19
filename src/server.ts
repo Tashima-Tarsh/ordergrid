@@ -15,8 +15,9 @@ import { hashPassword, tokenHash, verifyPassword } from "./security.js";
 import { createOrderQueue } from "./queue.js";
 import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
+import { createVirtualCardIssuer } from "./card-issuer.js";
 
-const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null, cardIssuer=createVirtualCardIssuer(config);
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:120,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
@@ -36,6 +37,46 @@ app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=a
 
 app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
 app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,last_seen from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId]);return {workers:rows};});
+
+
+app.get("/api/cards/provider",async()=>({provider:cardIssuer.provider,configured:cardIssuer.configured()}));
+app.get("/api/cards",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,currency,merchant_control,created_at from virtual_cards where tenant_id=$1 order by created_at desc limit 500",[p.tenantId]);return {cards:rows,provider:cardIssuer.provider,configured:cardIssuer.configured()};});
+app.post("/api/cards",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});const input=z.object({
+  quantity:z.number().int().min(1).max(100),
+  amountMinor:z.number().int().min(100),
+  merchantControl:z.string().min(1).max(120).default("Approved retailers"),
+  label:z.string().max(120).optional(),
+  cardholder:z.object({
+    email:z.string().email(),
+    mobile:z.string().regex(/^\d{10,15}$/),
+    firstName:z.string().min(1).max(60),
+    lastName:z.string().min(1).max(60),
+    gender:z.enum(["M","F","O"]),
+    pan:z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/),
+    specialDate:z.string().regex(/^\d{2}-\d{2}-\d{4}$/)
+  })
+}).parse(req.body);
+const cards:any[]=[],failures:any[]=[];
+for(let i=0;i<input.quantity;i++){
+  try{
+    const issued=await cardIssuer.createCard({cardholder:input.cardholder,label:input.label||`OrderGrid card ${i+1}`});
+    const inserted=await db.query("insert into virtual_cards(tenant_id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,merchant_control,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,currency,merchant_control,created_at",[p.tenantId,issued.provider,issued.providerCardId,issued.providerAccountId,input.label||`Procurement card ${i+1}`,issued.maskedNumber??null,issued.status,issued.balanceMinor,input.merchantControl,p.id]);
+    const card=inserted.rows[0];
+    try{
+      await cardIssuer.loadCard({providerCardId:issued.providerCardId,providerAccountId:issued.providerAccountId,amountMinor:input.amountMinor,reference:`ordergrid-${card.id}`});
+      const loaded=await db.query("update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2 returning id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,currency,merchant_control,created_at",[input.amountMinor,card.id]);
+      cards.push(loaded.rows[0]);
+      await audit(db,p.tenantId,p.id,"virtual_card.created_and_loaded","virtual_card",card.id,{provider:issued.provider,amountMinor:input.amountMinor,merchantControl:input.merchantControl});
+    }catch(error:any){
+      await db.query("update virtual_cards set status='LOAD_FAILED',updated_at=now() where id=$1",[card.id]);
+      failures.push({index:i+1,providerCardId:issued.providerCardId,error:String(error.message).slice(0,180)});
+      await audit(db,p.tenantId,p.id,"virtual_card.load_failed","virtual_card",card.id,{provider:issued.provider,error:String(error.message).slice(0,180)});
+    }
+  }catch(error:any){failures.push({index:i+1,error:String(error.message).slice(0,180)})}
+}
+return reply.code(cards.length?201:502).send({created:cards.length,failed:failures.length,cards,failures});
+});
+app.post("/api/cards/:id/load",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});const id=z.string().uuid().parse((req.params as any).id),body=z.object({amountMinor:z.number().int().min(100)}).parse(req.body);const {rows}=await db.query("select id,provider_card_id,provider_account_id from virtual_cards where id=$1 and tenant_id=$2",[id,p.tenantId]);if(!rows[0])return reply.code(404).send({error:"card_not_found"});await cardIssuer.loadCard({providerCardId:rows[0].provider_card_id,providerAccountId:rows[0].provider_account_id,amountMinor:body.amountMinor,reference:`ordergrid-load-${id}-${Date.now()}`});const updated=await db.query("update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2 returning id,provider,provider_card_id,provider_account_id,label,masked_number,status,balance_minor,currency,merchant_control,created_at",[body.amountMinor,id]);await audit(db,p.tenantId,p.id,"virtual_card.loaded","virtual_card",id,{amountMinor:body.amountMinor});return updated.rows[0];});
 
 app.get("/api/bulk-baskets",async(req)=>{const p=req.principal!;await db.query("update checkout_baskets set status='READY',claimed_by=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const {rows}=await db.query(`
   select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
