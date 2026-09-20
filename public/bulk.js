@@ -48,17 +48,19 @@
     return ({READY:'READY',CLAIMED:'QUEUED',OPENED:'RUNNING',REQUIRES_ACTION:'AUTHORIZATION REQUIRED',CONFIRMED:'CONFIRMED',FAILED:'FAILED'})[status]||status;
   }
   function render(){
-    const running=baskets.filter(b=>['READY','CLAIMED','OPENED','REQUIRES_ACTION'].includes(b.status)).length;
+    const ready=baskets.filter(b=>b.status==='READY').length;
+    const queued=baskets.filter(b=>b.status==='CLAIMED').length;
+    const running=baskets.filter(b=>['OPENED','REQUIRES_ACTION'].includes(b.status)).length;
     const confirmed=baskets.filter(b=>b.status==='CONFIRMED').length;
     const lines=baskets.reduce((n,b)=>n+Number(b.item_count||0),0);
     document.querySelector('#bulkBasketCount').textContent=baskets.length;
     document.querySelector('#bulkLineCount').textContent=lines;
-    document.querySelector('#bulkReadyCount').textContent=running;
+    document.querySelector('#bulkReadyCount').textContent=ready+queued+running;
     document.querySelector('#bulkConfirmedCount').textContent=confirmed;
     document.querySelector('#bulkWorkerCount').textContent=workers.length?workers.length+' ONLINE':'OFFLINE';
     const runButton=document.querySelector('#bulkRun');
-    runButton.disabled=!workers.length;
-    runButton.title=workers.length?'Place approved baskets through OrderGrid':'Start an OrderGrid execution worker on an authorized workstation first';
+    runButton.disabled=!ready;
+    runButton.title=ready?(workers.length?'Queue ready baskets for the online OrderGrid worker':'Queue ready baskets now; the Windows worker can connect afterwards'):'No READY baskets to queue';
     document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>`
       <div class="bulk-row" data-basket="${b.id}">
         <div><strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong><small>${esc(b.recipient)} · account ${esc(b.account_reference||'unbound')} · auth ${esc(b.auth_status||'unknown')}</small><small>${esc(b.batch_name)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>${b.failure_message?`<div class="bulk-exception"><b>${esc(b.failure_code||'ACTION REQUIRED')}</b> · ${esc(b.failure_message)}</div>`:''}</div>
@@ -75,14 +77,13 @@
   }
   document.querySelector('#bulkRun').onclick=async()=>{
     const button=document.querySelector('#bulkRun');
-    if(!workers.length){alert('No OrderGrid execution worker is online. Start the worker on an authorized workstation first.');return}
     button.disabled=true;button.textContent='Queuing baskets…';
     try{
       const result=await request('/api/bulk-queue/claim',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({limit:Number(document.querySelector('#bulkClaimSize').value)})});
       await load();
-      if(window.toast)window.toast(`${result.claimed} basket(s) sent to OrderGrid execution`);
+      if(window.toast){const message=result.claimed?(workers.length?result.claimed+' basket(s) queued for OrderGrid execution':result.claimed+' basket(s) queued · start Windows worker to execute'):'No READY baskets were available to queue';window.toast(message)}
     }catch(error){alert(error.message)}
-    finally{button.disabled=!workers.length;button.textContent='Place bulk orders'}
+    finally{button.textContent='Place bulk orders';await load()}
   };
   document.querySelector('#bulkRefresh').onclick=load;
   host.onclick=async event=>{
