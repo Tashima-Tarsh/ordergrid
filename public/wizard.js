@@ -39,11 +39,11 @@
   const back=nav.querySelector('#wizardBack'),next=nav.querySelector('#wizardNext');
 
   function productMarkup(){
-    return '<div class="two"><label>Flipkart mobile URL<input name="url" type="url" required placeholder="https://www.flipkart.com/.../p/itm...?pid=MOB..."></label><label>Verified Flipkart price (₹)<input name="price" type="number" min="1" step="0.01" placeholder="Run Check product" required readonly></label></div>'+
-      '<div class="flipkart-product-check"><label>Saved Flipkart account<select name="retailerAccountId"><option value="">Loading accounts…</option></select></label><button type="button" class="secondary" data-check-flipkart>Check product</button><span class="product-check-state">NOT CHECKED</span><input name="productCheckId" type="hidden"><div class="product-check-result"><span>Paste a Flipkart mobile link, choose the saved account, then check the live price and maximum quantity.</span></div></div>'+
-      '<div class="gst-product-grid"><label>Quantity per recipient<input name="quantity" type="number" min="1" max="1" value="1" required><small class="verified-quantity-note">Maximum is set by the live Flipkart account check.</small></label><label>HSN / SAC<input name="hsnSac" maxlength="16" placeholder="e.g. 8517" required><small>Use the supplier or retailer tax classification. OrderGrid does not infer HSN/SAC from the URL.</small></label><label>GST rate<select name="gstRate" required><option value="0">0%</option><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="1.5">1.5%</option><option value="3">3%</option><option value="5">5%</option><option value="7.5">7.5%</option><option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option><option value="40">40%</option></select></label><label>Cess %<input name="cessRate" type="number" min="0" max="100" step="0.01" value="0"></label><label class="gst-inclusive"><input name="priceIncludesGst" type="checkbox" checked> Price includes GST</label><button type="button" class="secondary remove-product" data-remove-product>Remove product</button></div>';
+    return '<div class="two"><label>Flipkart mobile URL<input name="url" type="url" required placeholder="https://www.flipkart.com/.../p/itm...?pid=MOB..."></label><label>Verified Flipkart price (₹)<input name="price" type="number" min="1" step="0.01" placeholder="Run product allocation" required readonly></label></div>'+
+      '<div class="flipkart-pool-allocation"><div><strong>Multi-account allocation</strong><span>OrderGrid verifies each ready Flipkart user and stops when total verified capacity reaches your requested units.</span></div><button type="button" data-allocate-flipkart>Allocate across ready accounts</button><span class="allocation-state">NOT PLANNED</span><div class="allocation-result"><span>Example: 40 units with a verified limit of 2/account uses 20 accounts × 2 units.</span></div></div>'+
+      '<div class="flipkart-product-check"><label>Single-account check<select name="retailerAccountId"><option value="">Loading accounts…</option></select></label><button type="button" class="secondary" data-check-flipkart>Check one account</button><span class="product-check-state">NOT CHECKED</span><input name="productCheckId" type="hidden"><div class="product-check-result"><span>Optional manual mode: choose one saved account and verify that account only.</span></div></div>'+
+      '<div class="gst-product-grid"><label>Total units required<input name="quantity" type="number" min="1" max="5000" value="1" required><small class="verified-quantity-note">Pool allocation will split this total across verified account limits.</small></label><label>HSN / SAC<input name="hsnSac" maxlength="16" placeholder="e.g. 8517" required><small>Use the supplier or retailer tax classification. OrderGrid does not infer HSN/SAC from the URL.</small></label><label>GST rate<select name="gstRate" required><option value="0">0%</option><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="1.5">1.5%</option><option value="3">3%</option><option value="5">5%</option><option value="7.5">7.5%</option><option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option><option value="40">40%</option></select></label><label>Cess %<input name="cessRate" type="number" min="0" max="100" step="0.01" value="0"></label><label class="gst-inclusive"><input name="priceIncludesGst" type="checkbox" checked> Price includes GST</label><button type="button" class="secondary remove-product" data-remove-product>Remove product</button></div>';
   }
-
   function productEntry(){
     const node=document.createElement('div');
     node.className='product-entry';
@@ -62,16 +62,21 @@
     const select=row.querySelector('[name="retailerAccountId"]');
     if(select)select.innerHTML=accountOptionHtml();
   }
-  function invalidateRow(row,message='Run Check product after changing the URL or account.'){
+  function invalidateRow(row,message='Run product allocation after changing the URL, quantity or account.'){
     row.dataset.productVerified='false';
     row.dataset.productTitle='';
     row.dataset.maxQuantity='';
+    delete row.dataset.allocationPlan;
     const checkId=row.querySelector('[name="productCheckId"]');if(checkId)checkId.value='';
     const price=row.querySelector('[name="price"]');if(price)price.value='';
-    const qty=row.querySelector('[name="quantity"]');if(qty){qty.max='1';qty.value='1'}
+    const qty=row.querySelector('[name="quantity"]');if(qty){qty.max='5000';if(Number(qty.value)<1)qty.value='1'}
+    const account=row.querySelector('[name="retailerAccountId"]');if(account)account.disabled=false;
     const state=row.querySelector('.product-check-state');if(state){state.textContent='NOT CHECKED';state.className='product-check-state'}
     const result=row.querySelector('.product-check-result');if(result)result.innerHTML='<span>'+esc(message)+'</span>';
-    const note=row.querySelector('.verified-quantity-note');if(note)note.textContent='Maximum is set by the live Flipkart account check.';
+    const allocationState=row.querySelector('.allocation-state');if(allocationState){allocationState.textContent='NOT PLANNED';allocationState.className='allocation-state'}
+    const allocationResult=row.querySelector('.allocation-result');if(allocationResult)allocationResult.innerHTML='<span>Set total units, then let OrderGrid verify enough ready accounts to cover the quantity.</span>';
+    const note=row.querySelector('.verified-quantity-note');if(note)note.textContent='Pool allocation will split this total across verified account limits.';
+    if(preview?.dataset.poolGenerated==='true'){preview.textContent='';delete preview.dataset.poolGenerated}
   }
   function enhanceRow(row){
     if(!row.querySelector('.flipkart-product-check')){
@@ -93,7 +98,7 @@
     }catch{flipkartAccounts=[]}
     for(const row of productRows.querySelectorAll('.product-entry'))populateAccountSelect(row);
   }
-  async function pollProductCheck(commandId,timeoutMs=90000){
+  async function pollProductCheck(commandId,timeoutMs=180000){
     const deadline=Date.now()+timeoutMs;
     while(Date.now()<deadline){
       const data=await request('/api/products/flipkart/mobile/check/'+encodeURIComponent(commandId));
