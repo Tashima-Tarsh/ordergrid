@@ -24,5 +24,7 @@ jobs:
       - run: npm run build
       - name: End-to-end showroom checkout smoke test
         run: npm run smoke:demo
+      - name: Dealer hierarchy isolation smoke test
+        run: node scripts/smoke-dealers.mjs
       - name: Audit production dependencies
         run: npm run audit:ci
