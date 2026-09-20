@@ -42,19 +42,26 @@ export async function getUserDashboard(db:Db,tenantId:string,filters:UserDashboa
       where b.tenant_id=$1 ${batchDate.length?"and "+batchDate.join(" and "):""}
       group by b.created_by
     ),
+    basket_orders as (
+      select cb.id,b.created_by,cb.status,cb.created_at,
+        coalesce(sum(po.amount_minor),0)::bigint amount_minor,
+        bool_or(po.status in ('CANCELLED','REFUNDED')) cancelled_or_refunded
+      from checkout_baskets cb
+      join order_batches b on b.id=cb.batch_id
+      left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+      where cb.tenant_id=$1 ${orderDate.length?"and "+orderDate.map(x=>x.replaceAll("po.created_at","cb.created_at")).join(" and "):""}
+      group by cb.id,b.created_by,cb.status,cb.created_at
+    ),
     order_stats as (
-      select b.created_by user_id,
-        count(po.id)::int orders,
-        count(po.id) filter(where po.status in ('CONFIRMED','SHIPPED','DELIVERED'))::int confirmed_orders,
-        count(po.id) filter(where po.status in ('CANCELLED','REFUNDED'))::int cancelled_refunded_orders,
-        count(po.id) filter(where po.status in ('FAILED','REQUIRES_ACTION'))::int attention_orders,
-        coalesce(sum(po.amount_minor),0)::bigint order_value_minor,
-        coalesce(sum(po.amount_minor) filter(where po.status in ('CONFIRMED','SHIPPED','DELIVERED')),0)::bigint confirmed_value_minor
-      from purchase_orders po
-      join batch_items bi on bi.id=po.batch_item_id
-      join order_batches b on b.id=bi.batch_id
-      where po.tenant_id=$1 ${orderDate.length?"and "+orderDate.join(" and "):""}
-      group by b.created_by
+      select created_by user_id,
+        count(*)::int orders,
+        count(*) filter(where status='CONFIRMED')::int confirmed_orders,
+        count(*) filter(where cancelled_or_refunded)::int cancelled_refunded_orders,
+        count(*) filter(where status in ('FAILED','REQUIRES_ACTION'))::int attention_orders,
+        coalesce(sum(amount_minor),0)::bigint order_value_minor,
+        coalesce(sum(amount_minor) filter(where status='CONFIRMED'),0)::bigint confirmed_value_minor
+      from basket_orders
+      group by created_by
     ),
     refund_stats as (
       select b.created_by user_id,
@@ -137,29 +144,28 @@ export async function getUserDashboard(db:Db,tenantId:string,filters:UserDashboa
   const users=(await db.query(sql,params)).rows;
 
   const detailParams:any[]=[tenantId];
-  const detailClauses=["po.tenant_id=$1"];
-  if(filters.from){detailParams.push(filters.from);detailClauses.push(`po.created_at >= $${detailParams.length}::date`)}
-  if(filters.to){detailParams.push(filters.to);detailClauses.push(`po.created_at < ($${detailParams.length}::date + interval '1 day')`)}
+  const detailClauses=["cb.tenant_id=$1"];
+  if(filters.from){detailParams.push(filters.from);detailClauses.push(`cb.created_at >= $${detailParams.length}::date`)}
+  if(filters.to){detailParams.push(filters.to);detailClauses.push(`cb.created_at < ($${detailParams.length}::date + interval '1 day')`)}
   if(filters.userId){detailParams.push(filters.userId);detailClauses.push(`b.created_by=$${detailParams.length}::uuid`)}
   const recentOrders=(await db.query(`
-    select po.id order_id,po.status,po.retailer,po.retailer_order_id,po.amount_minor,po.failure_code,po.created_at,po.updated_at,
+    select cb.id order_id,cb.status,cb.retailer,cb.retailer_order_id,cb.failure_code,cb.created_at,cb.updated_at,
       b.id batch_id,b.name batch_name,u.id user_id,u.email::text user_email,
       c.external_reference customer_reference,a.recipient,a.city,a.postal_code,
       ra.account_reference retailer_account_reference,vc.masked_number virtual_card_masked,
-      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.purchase_order_id=po.id or (rf.purchase_order_id is null and rf.checkout_basket_id=po.checkout_basket_id)),0)::bigint refund_minor,
-      coalesce((select max(rf.status) from retailer_refunds rf where rf.purchase_order_id=po.id or (rf.purchase_order_id is null and rf.checkout_basket_id=po.checkout_basket_id)),'') refund_status,
-      coalesce((select sum(${signedRewardExpression("re")}) from retailer_reward_events re where re.purchase_order_id=po.id or (re.purchase_order_id is null and re.checkout_basket_id=po.checkout_basket_id)),0)::bigint reward_units
-    from purchase_orders po
-    join batch_items bi on bi.id=po.batch_item_id
-    join order_batches b on b.id=bi.batch_id
+      coalesce((select sum(po.amount_minor) from purchase_orders po where po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id),0)::bigint amount_minor,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.checkout_basket_id=cb.id),0)::bigint refund_minor,
+      coalesce((select max(rf.status) from retailer_refunds rf where rf.checkout_basket_id=cb.id),'') refund_status,
+      coalesce((select sum(${signedRewardExpression("re")}) from retailer_reward_events re where re.checkout_basket_id=cb.id),0)::bigint reward_units
+    from checkout_baskets cb
+    join order_batches b on b.id=cb.batch_id
     join users u on u.id=b.created_by
-    left join addresses a on a.id=bi.address_id
-    left join customers c on c.id=a.customer_id
-    left join checkout_baskets cb on cb.id=po.checkout_basket_id
+    left join addresses a on a.id=cb.address_id
+    left join customers c on c.id=cb.customer_id
     left join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join virtual_cards vc on vc.id=cb.virtual_card_id
     where ${detailClauses.join(" and ")}
-    order by po.created_at desc
+    order by cb.created_at desc
     limit 250
   `,detailParams)).rows;
 
@@ -174,28 +180,27 @@ export async function getUserDashboard(db:Db,tenantId:string,filters:UserDashboa
 }
 
 async function reportDetails(db:Db,tenantId:string,filters:UserDashboardFilters={}){
-  const params:any[]=[tenantId],clauses=["po.tenant_id=$1"];
-  if(filters.from){params.push(filters.from);clauses.push(`po.created_at >= $${params.length}::date`)}
-  if(filters.to){params.push(filters.to);clauses.push(`po.created_at < ($${params.length}::date + interval '1 day')`)}
+  const params:any[]=[tenantId],clauses=["cb.tenant_id=$1"];
+  if(filters.from){params.push(filters.from);clauses.push(`cb.created_at >= $${params.length}::date`)}
+  if(filters.to){params.push(filters.to);clauses.push(`cb.created_at < ($${params.length}::date + interval '1 day')`)}
   if(filters.userId){params.push(filters.userId);clauses.push(`b.created_by=$${params.length}::uuid`)}
   const orders=await db.query(`
-    select u.email::text user_email,b.name batch_name,po.id order_id,po.created_at,po.retailer,po.retailer_order_id,po.status,
-      po.amount_minor,c.external_reference customer_reference,a.recipient,a.city,a.postal_code,
+    select u.email::text user_email,b.name batch_name,cb.id order_id,cb.created_at,cb.retailer,cb.retailer_order_id,cb.status,
+      coalesce((select sum(po.amount_minor) from purchase_orders po where po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id),0)::bigint amount_minor,
+      c.external_reference customer_reference,a.recipient,a.city,a.postal_code,
       ra.account_reference retailer_account_reference,vc.masked_number virtual_card_masked,
-      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.purchase_order_id=po.id or (rf.purchase_order_id is null and rf.checkout_basket_id=po.checkout_basket_id)),0)::bigint refund_minor,
-      coalesce((select max(rf.status) from retailer_refunds rf where rf.purchase_order_id=po.id or (rf.purchase_order_id is null and rf.checkout_basket_id=po.checkout_basket_id)),'') refund_status,
-      coalesce((select sum(${signedRewardExpression("re")}) from retailer_reward_events re where re.purchase_order_id=po.id or (re.purchase_order_id is null and re.checkout_basket_id=po.checkout_basket_id)),0)::bigint reward_units
-    from purchase_orders po
-    join batch_items bi on bi.id=po.batch_item_id
-    join order_batches b on b.id=bi.batch_id
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.checkout_basket_id=cb.id),0)::bigint refund_minor,
+      coalesce((select max(rf.status) from retailer_refunds rf where rf.checkout_basket_id=cb.id),'') refund_status,
+      coalesce((select sum(${signedRewardExpression("re")}) from retailer_reward_events re where re.checkout_basket_id=cb.id),0)::bigint reward_units
+    from checkout_baskets cb
+    join order_batches b on b.id=cb.batch_id
     join users u on u.id=b.created_by
-    left join addresses a on a.id=bi.address_id
-    left join customers c on c.id=a.customer_id
-    left join checkout_baskets cb on cb.id=po.checkout_basket_id
+    left join addresses a on a.id=cb.address_id
+    left join customers c on c.id=cb.customer_id
     left join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join virtual_cards vc on vc.id=cb.virtual_card_id
     where ${clauses.join(" and ")}
-    order by u.email,po.created_at desc
+    order by u.email,cb.created_at desc
   `,params);
 
   const refundParams:any[]=[tenantId],refundClauses=["rf.tenant_id=$1"];
