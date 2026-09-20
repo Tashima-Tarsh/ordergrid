@@ -71,6 +71,25 @@ async function evaluate(connection,expression){
   if(result.exceptionDetails)throw new Error("Retailer page automation script failed");
   return result.result?.value;
 }
+function productAvailabilityScript(){
+  return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,90000);
+    const lower=text.toLowerCase();
+    const valueOf=e=>String(e?.value||e?.innerText||e?.textContent||e?.getAttribute?.('aria-label')||'').trim();
+    const selectors=['#add-to-cart-button','input[name="submit.add-to-cart"]','button[name="add"]','button[data-testid*="add-to-cart" i]','button[id*="add-to-cart" i]','button[class*="add-to-cart" i]'];
+    let add=selectors.map(s=>document.querySelector(s)).find(Boolean);
+    if(!add){
+      const candidates=[...document.querySelectorAll('button,input[type="button"],input[type="submit"],a')];
+      add=candidates.find(x=>/^(add to cart|add to bag|add to basket)$/i.test(valueOf(x)))||candidates.find(x=>/(add to cart|add to bag|add to basket)/i.test(valueOf(x)));
+    }
+    const explicitOos=/(currently unavailable|out of stock|sold out|temporarily unavailable|not available for purchase|notify me when available|notify me|coming soon)/i.test(lower);
+    const disabled=Boolean(add&&(add.disabled||add.getAttribute('aria-disabled')==='true'));
+    const priceMatch=text.replace(/,/g,'').match(/(?:₹|rs\\.?|inr)\\s*([0-9]+(?:\\.[0-9]{1,2})?)/i);
+    const observedPriceMinor=priceMatch?Math.round(Number(priceMatch[1])*100):null;
+    if(explicitOos||(disabled&&/(unavailable|out of stock|sold out|notify me)/i.test(lower)))return {available:false,reason:'OUT_OF_STOCK',observedPriceMinor,href:location.href};
+    if(add&&!disabled)return {available:true,reason:'ADD_CONTROL_READY',observedPriceMinor,href:location.href};
+    return {available:null,reason:add?'ADD_CONTROL_DISABLED':'AVAILABILITY_UNKNOWN',observedPriceMinor,href:location.href};
+  })()`;
+}
 function addToCartScript(quantity){
   return `(()=>{const qty=${JSON.stringify(Number(quantity)||1)};
     const select=document.querySelector('#quantity,select[name="quantity"],select[aria-label*="quantity" i]');
@@ -252,8 +271,31 @@ async function driveCheckout(port,{address,paymentRoute,accountCredentials,comme
 
 export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,commercialApprovedAmountMinor=null,resume=false}){
   const port=await ensureChrome(chrome,directory);
-  const results=[];
+  const results=[],availability=[];
   if(!resume){
+    // Observe every product before clicking anything. This prevents partially
+    // mutating the cart when one line is unavailable.
+    for(const item of items){
+      const target=await createTarget(port,item.executionUrl);
+      const connection=new CdpConnection(target.webSocketDebuggerUrl);
+      try{
+        await waitReady(connection);
+        const result=await evaluate(connection,productAvailabilityScript());
+        availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(result||{available:null,reason:"NO_RESULT"})});
+      }catch(error){
+        availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,available:null,reason:String(error.message)});
+      }finally{connection.close();await closeTarget(port,target)}
+    }
+    const unavailable=availability.filter(x=>x.available===false&&x.reason==="OUT_OF_STOCK");
+    if(unavailable.length){
+      return {
+        state:"OUT_OF_STOCK",
+        code:"OUT_OF_STOCK",
+        message:`${unavailable.length} item(s) are currently unavailable. OrderGrid can keep the approved order on stock watch.`,
+        unavailable,availability,results
+      };
+    }
+
     for(const item of items){
       const target=await createTarget(port,item.executionUrl);
       const connection=new CdpConnection(target.webSocketDebuggerUrl);
@@ -266,12 +308,12 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
       finally{connection.close()}
     }
     const failures=results.filter(x=>!x.ok);
-    if(failures.length)return {state:"CHALLENGE",code:"CART_PREPARATION_REVIEW",message:`${failures.length} item(s) could not be added automatically`,results};
+    if(failures.length)return {state:"CHALLENGE",code:"CART_PREPARATION_REVIEW",message:`${failures.length} item(s) could not be added automatically`,results,availability};
     const cartUrl=cartUrlFor(retailer,items[0]?.executionUrl);
     if(cartUrl)await createTarget(port,cartUrl);
   }
   const state=await driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
-  return {...state,results};
+  return {...state,results,availability};
 }
 
 
@@ -385,4 +427,33 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
     result.orderError=String(error.message).slice(0,240);
   }finally{connection.close();await closeTarget(port,ordersTarget)}
   return result;
+}
+
+
+export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials}){
+  const port=await ensureChrome(chrome,directory);
+  const url=retailer==="flipkart"
+    ?"https://www.flipkart.com/account/orders"
+    :retailer==="amazon-in"
+      ?"https://www.amazon.in/gp/your-account/order-history"
+      :null;
+  if(!url)return {status:"ERROR",code:"SESSION_CHECK_UNSUPPORTED",message:"Session preparation is currently available for Amazon India and Flipkart."};
+  const target=await createTarget(port,url);
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    for(let round=0;round<6;round++){
+      await waitReady(connection);await sleep(round?1100:1600);
+      const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
+      if(acted?.acted){await sleep(1500);continue}
+      const challenge=await evaluate(connection,authChallengeScript());
+      if(challenge)return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url};
+      const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
+      const href=String(state?.url||"");
+      if(/\/signin|\/login|\/ap\/signin/i.test(href))return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
+      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
+    }
+    return {status:"REAUTH_REQUIRED",code:"SESSION_VERIFY_TIMEOUT",message:"Retailer session needs manual verification.",url};
+  }catch(error){
+    return {status:"ERROR",code:"SESSION_CHECK_ERROR",message:String(error.message).slice(0,300),url};
+  }finally{connection.close()}
 }
