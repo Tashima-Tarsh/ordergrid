@@ -66,7 +66,7 @@
         <div><strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong><small>${esc(b.recipient)} · account ${esc(b.account_reference||'unbound')} · auth ${esc(b.auth_status||'unknown')}</small><small>${esc(b.batch_name)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>${b.failure_message?`<div class="bulk-exception"><b>${esc(b.failure_code||'ACTION REQUIRED')}</b> · ${esc(b.failure_message)}</div>`:''}</div>
         <div><small>Items</small><strong>${b.item_count}</strong></div>
         <div><small>Basket value</small><strong>${money(b.amount_minor)}</strong></div>
-        <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${b.retailer==='amazon-in'?'<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1" target="_blank" rel="noopener">Open in my Amazon account</a>':''}${['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Retry basket</button>':''}</div></div>
+        <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${b.retailer==='amazon-in'?'<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1">Continue to real Amazon cart</a>':''}${['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Retry basket</button>':''}</div></div>
       </div>`).join(''):'<p class="muted">No baskets yet. Create and approve a fulfilment batch.</p>';
   }
   async function load(){
