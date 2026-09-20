@@ -182,7 +182,7 @@
 
   section.addEventListener('click',async event=>{
     const go=event.target.closest('[data-go]');
-    if(go){document.querySelector('[data-view="'+go.dataset.go+'"]')?.click();return}
+    if(go){if(typeof window.ordergridNavigate==='function')window.ordergridNavigate(go.dataset.go);else document.querySelector('.app-sidebar button[data-view="'+go.dataset.go+'"]')?.click();return}
     if(event.target.closest('[data-action="new"]')){document.querySelector('#newBatch')?.click();return}
     if(event.target.closest('#ccAddDealer')){dialog.showModal();return}
     if(event.target.closest('#ccManageUsers')){usersDialog.showModal();await loadUsers();return}
@@ -238,6 +238,6 @@
   async function load(){await Promise.all([loadNetwork(),loadControl()])}
   window.addEventListener('ordergrid:update',load);
   window.addEventListener('ordergrid:bulk-refresh',load);
-  setInterval(load,5000);
+  setInterval(load,15000);
   load();
 })();
