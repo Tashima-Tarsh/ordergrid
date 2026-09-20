@@ -77,8 +77,9 @@
 
     document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>{
       const note=attentionText(b);
-      const action='<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1">Continue checkout</a>';
-      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Try again</button>':'';
+      const actionable=['OPENED','REQUIRES_ACTION','FAILED'].includes(b.status);
+      const action=actionable?'<button type="button" class="secondary" data-focus-session>Resume exact session</button>':'';
+      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Requeue task</button>':'';
       return `
         <div class="bulk-row" data-basket="${esc(b.id)}">
           <div class="bulk-order-copy">
@@ -115,6 +116,17 @@
 
   document.querySelector('#bulkRefresh').onclick=load;
   host.onclick=async event=>{
+    const focus=event.target.closest('[data-focus-session]');
+    if(focus){
+      const row=focus.closest('[data-basket]');if(!row)return;
+      focus.disabled=true;const previous=focus.textContent;focus.textContent='Opening live session…';
+      try{
+        await request('/api/human-actions/'+row.dataset.basket+'/focus',{method:'POST'});
+        if(window.toast)window.toast('The exact retailer session is being brought forward by the worker');
+      }catch(error){alert(error.message)}
+      finally{focus.textContent=previous;setTimeout(()=>{focus.disabled=false},1200)}
+      return;
+    }
     const retry=event.target.closest('[data-retry]');
     if(!retry)return;
     const row=retry.closest('[data-basket]');
@@ -122,7 +134,7 @@
     try{
       await request('/api/bulk-queue/'+row.dataset.basket+'/retry',{method:'POST'});
       await load();
-      if(window.toast)window.toast('Order is ready to continue');
+      if(window.toast)window.toast('Order task requeued');
     }catch(error){alert(error.message)}
     finally{retry.disabled=false}
   };
