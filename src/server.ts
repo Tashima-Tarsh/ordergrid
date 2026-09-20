@@ -21,6 +21,7 @@ import { ensureBasketVirtualCard } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
 import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
+import { buildFlipkartAllocation } from "./flipkart-allocation.js";
 import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } from "./user-dashboard-reporting.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
@@ -1027,6 +1028,124 @@ app.get("/api/products/flipkart/mobile/check/:commandId",async(req,reply)=>{
   );
   if(!rows[0])return reply.code(404).send({error:"product_check_not_found"});
   return rows[0];
+});
+
+
+app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    productUrl:z.string().url().max(2048),
+    totalQuantity:z.number().int().min(1).max(5000)
+  }).parse(req.body);
+  let productUrl:string;
+  try{productUrl=flipkartProductCandidateUrl(body.productUrl)}
+  catch(error){return reply.code(400).send({error:"invalid_flipkart_product_url",message:error instanceof Error?error.message:"Invalid Flipkart product URL"})}
+
+  const {rows}=await db.query(
+    `select ra.id retailer_account_id,ra.account_reference,ra.label,ra.customer_id,c.external_reference customer_reference,
+       addr.id address_id,addr.recipient,addr.postal_code,
+       ra.last_assigned_at,ra.session_status,ra.session_worker_id,ew.last_seen,
+       pc.id product_check_id,pc.status product_check_status,pc.error product_check_error,
+       pc.result product_check_result,pc.requested_at product_check_requested_at,pc.completed_at product_check_completed_at
+     from retailer_accounts ra
+     join customers c on c.id=ra.customer_id and c.tenant_id=ra.tenant_id and c.active
+     join lateral (
+       select a.id,a.recipient,a.postal_code
+       from addresses a
+       join address_books ab on ab.id=a.address_book_id
+       where a.customer_id=ra.customer_id and ab.tenant_id=ra.tenant_id
+       order by a.id
+       limit 1
+     ) addr on true
+     join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     left join lateral (
+       select cmd.id,cmd.status,cmd.error,cmd.result,cmd.requested_at,cmd.completed_at
+       from execution_worker_commands cmd
+       where cmd.tenant_id=ra.tenant_id
+         and cmd.command='PRODUCT_CHECK'
+         and cmd.payload->>'retailerAccountId'=ra.id::text
+         and cmd.payload->>'productUrl'=$2
+       order by cmd.requested_at desc
+       limit 1
+     ) pc on true
+     where ra.tenant_id=$1
+       and ra.retailer='flipkart'
+       and ra.active
+       and ra.auth_status not in ('LOCKED','DISABLED')
+       and ra.session_status='READY'
+       and (ra.session_target_expires_at is null or ra.session_target_expires_at>now())
+       and ew.last_seen>now()-interval '30 seconds'
+     order by ra.last_assigned_at nulls first,ra.created_at,ra.id`,
+    [p.tenantId,productUrl]
+  );
+
+  const now=Date.now(),verified:any[]=[],checking:any[]=[],checkRequired:any[]=[],unavailable:any[]=[];
+  for(const row of rows){
+    const result=row.product_check_result??{};
+    const checkedAt=Date.parse(String(result.checkedAt||row.product_check_completed_at||""));
+    const fresh=Number.isFinite(checkedAt)&&now-checkedAt<=10*60_000;
+    const ready=row.product_check_status==="COMPLETED"&&fresh&&result.state==="READY"&&result.isMobile===true&&result.maxQuantityVerified===true&&Number(result.maxQuantity)>=1&&Number(result.sellingPriceMinor)>=1;
+    if(ready){
+      verified.push({
+        retailerAccountId:String(row.retailer_account_id),
+        addressId:String(row.address_id),
+        accountReference:String(row.account_reference),
+        customerReference:row.customer_reference??null,
+        recipient:row.recipient??null,
+        postalCode:row.postal_code??null,
+        productCheckId:String(row.product_check_id),
+        maxQuantity:Number(result.maxQuantity),
+        sellingPriceMinor:Number(result.sellingPriceMinor),
+        title:result.title??null,
+        seller:result.seller??null,
+        checkedAt:result.checkedAt??row.product_check_completed_at??null
+      });
+      continue;
+    }
+    if(["PENDING","PROCESSING"].includes(String(row.product_check_status||""))){
+      checking.push({
+        retailerAccountId:String(row.retailer_account_id),
+        accountReference:String(row.account_reference),
+        commandId:String(row.product_check_id)
+      });
+      continue;
+    }
+    if(row.product_check_id&&fresh){
+      unavailable.push({
+        retailerAccountId:String(row.retailer_account_id),
+        accountReference:String(row.account_reference),
+        state:String(result.state||row.product_check_status||"FAILED"),
+        message:String(result.message||row.product_check_error||"Product check did not produce verified capacity.")
+      });
+      continue;
+    }
+    checkRequired.push({
+      retailerAccountId:String(row.retailer_account_id),
+      accountReference:String(row.account_reference),
+      customerReference:row.customer_reference??null,
+      recipient:row.recipient??null,
+      postalCode:row.postal_code??null
+    });
+  }
+
+  const allocation=buildFlipkartAllocation(verified,body.totalQuantity);
+  const prices=verified.map(x=>x.sellingPriceMinor).filter(x=>Number.isFinite(x)&&x>0);
+  return {
+    productUrl,
+    totalQuantity:body.totalQuantity,
+    eligibleAccounts:rows.length,
+    verifiedAccounts:verified.length,
+    checkingAccounts:checking.length,
+    checkRequiredAccounts:checkRequired.length,
+    unavailableAccounts:unavailable.length,
+    ...allocation,
+    allocations:allocation.allocations,
+    checking,
+    checkRequired,
+    unavailable,
+    priceRangeMinor:prices.length?{min:Math.min(...prices),max:Math.max(...prices)}:null
+  };
 });
 
 app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)=>{
@@ -2539,6 +2658,7 @@ app.post("/api/batches",async(req,reply)=>{
       productUrl:z.string().url(),
       quantity:z.number().int().positive().max(10000),
       addressId:z.string().uuid().optional(),
+      retailerAccountId:z.string().uuid().optional(),
       estimatedUnitPriceMinor:z.number().int().positive().optional(),
       productCheckId:z.string().uuid().optional(),
       hsnSac:z.string().trim().min(2).max(16).optional(),
@@ -2569,6 +2689,9 @@ app.post("/api/batches",async(req,reply)=>{
       if(String(command.payload?.productUrl||"")!==verifiedUrl){
         return reply.code(409).send({error:"flipkart_product_url_changed",message:"The Flipkart URL changed after verification. Run Check product again."});
       }
+      if(item.retailerAccountId&&String(command.payload?.retailerAccountId||"")!==item.retailerAccountId){
+        return reply.code(409).send({error:"flipkart_product_check_account_mismatch",message:"This product check belongs to a different Flipkart account. Re-run the allocation check."});
+      }
       const checkedAt=Date.parse(String(result.checkedAt||command.completed_at||""));
       if(!Number.isFinite(checkedAt)||Date.now()-checkedAt>10*60_000){
         return reply.code(409).send({error:"flipkart_product_check_stale",message:"The Flipkart price/quantity check is older than 10 minutes. Refresh it before approval."});
@@ -2579,6 +2702,20 @@ app.post("/api/batches",async(req,reply)=>{
       }
       if(!Number.isInteger(maxQuantity)||maxQuantity<1||item.quantity>maxQuantity){
         return reply.code(409).send({error:"flipkart_quantity_exceeds_verified_limit",message:"Requested quantity exceeds the maximum verified for this Flipkart account.",maxQuantity});
+      }
+      if(item.retailerAccountId){
+        if(!item.addressId)return reply.code(409).send({error:"flipkart_allocation_address_required",message:"A pinned Flipkart account allocation requires its bound delivery address."});
+        const pinned=await db.query(
+          `select 1
+           from retailer_accounts ra
+           join addresses a on a.customer_id=ra.customer_id
+           join address_books ab on ab.id=a.address_book_id and ab.tenant_id=ra.tenant_id
+           where ra.id=$1 and ra.tenant_id=$2 and ra.retailer='flipkart' and ra.active
+             and ra.session_status='READY' and a.id=$3
+           limit 1`,
+          [item.retailerAccountId,p.tenantId,item.addressId]
+        );
+        if(!pinned.rows[0])return reply.code(409).send({error:"flipkart_allocation_account_address_mismatch",message:"The selected delivery address is not bound to the Flipkart account that was verified."});
       }
     }
     preparedItems.push({...item,retailer});
@@ -2605,8 +2742,8 @@ app.post("/api/batches",async(req,reply)=>{
     );
     for(const item of preparedItems){
       await c.query(
-        "insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,unit_price_minor,pricing_status,pricing_checked_at,hsn_sac,gst_rate,cess_rate,price_includes_gst) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        [b.rows[0].id,item.productUrl,item.retailer,item.quantity,item.addressId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null,item.hsnSac??null,item.gstRate??null,item.cessRate??0,item.priceIncludesGst]
+        "insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,retailer_account_id,unit_price_minor,pricing_status,pricing_checked_at,hsn_sac,gst_rate,cess_rate,price_includes_gst) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [b.rows[0].id,item.productUrl,item.retailer,item.quantity,item.addressId??null,item.retailerAccountId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null,item.hsnSac??null,item.gstRate??null,item.cessRate??0,item.priceIncludesGst]
       );
     }
     await c.query("commit");

@@ -100,20 +100,22 @@ export async function syncCheckoutBaskets(db:Pool, tenantId:string, batchId:stri
     await client.query(`
       insert into checkout_baskets(
         tenant_id,batch_id,address_id,customer_id,
-        account_reference,retailer,status,updated_at
+        retailer_account_id,account_reference,retailer,status,updated_at
       )
       select distinct
         po.tenant_id,
         bi.batch_id,
         bi.address_id,
         a.customer_id,
-        null,
+        bi.retailer_account_id,
+        ra.account_reference,
         po.retailer,
         'READY',
         now()
       from purchase_orders po
       join batch_items bi on bi.id=po.batch_item_id
       join addresses a on a.id=bi.address_id
+      left join retailer_accounts ra on ra.id=bi.retailer_account_id and ra.tenant_id=po.tenant_id
       where po.tenant_id=$1
         and bi.batch_id=$2
         and bi.address_id is not null
@@ -122,6 +124,8 @@ export async function syncCheckoutBaskets(db:Pool, tenantId:string, batchId:stri
       on conflict(batch_id,address_id,retailer)
       do update set
         customer_id=excluded.customer_id,
+        retailer_account_id=coalesce(excluded.retailer_account_id,checkout_baskets.retailer_account_id),
+        account_reference=coalesce(excluded.account_reference,checkout_baskets.account_reference),
         updated_at=now()
     `,[tenantId,batchId]);
 
