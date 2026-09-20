@@ -3,98 +3,94 @@ const command=document.querySelector('.command-dashboard');
 if(!command)return;
 command.classList.add('premium-overview');
 command.innerHTML=`
-  <div class="overview-shell">
-    <section class="overview-hero">
-      <div class="overview-hero-top">
-        <div class="overview-brandline">
-          <span class="overview-live-mark" aria-hidden="true"><i></i></span>
-          <div><p class="eyebrow">LIVE EXECUTIVE DASHBOARD</p><h2>OrderGrid command</h2></div>
-        </div>
+  <div class="overview-shell premium-dashboard-shell">
+    <section class="overview-commandbar">
+      <div class="overview-command-identity">
+        <span class="overview-live-mark" aria-hidden="true"><i></i></span>
+        <div><p class="eyebrow">ORDERGRID COMMAND</p><h2>Procurement overview</h2><p id="brainAnswer">Loading live operational state…</p></div>
+      </div>
+      <div class="overview-command-actions">
         <span id="brainStatus" class="overview-status">CHECKING</span>
-      </div>
-      <div class="overview-primary">
-        <div class="overview-primary-copy">
-          <h3>Procurement command,<br>without the noise.</h3>
-          <p id="brainAnswer">Loading live orders, users and automation status…</p>
-        </div>
-        <div class="overview-exposure">
-          <span>APPROVED EXPOSURE</span>
-          <strong id="ovExposure">₹0</strong>
-          <small id="ovExposureMeta">Across active procurement</small>
-        </div>
-      </div>
-      <div class="overview-kpis">
-        <div class="overview-kpi"><span>ORDER STATUS</span><strong id="networkStatus">Live</strong></div>
-        <div class="overview-kpi"><span>READY TO PLACE</span><strong id="queueCount">0 orders</strong></div>
-        <div class="overview-kpi"><span>AUTOMATION</span><strong id="automationCount">Checking</strong></div>
-        <div class="overview-kpi"><span>NEEDS ATTENTION</span><strong id="exceptionCount">0 open</strong></div>
-      </div>
-      <div class="overview-hero-actions">
-        <button id="syncNow" class="secondary">Refresh dashboard</button>
-        <button id="healthCheck">Review operations</button>
-        <button id="ovNewBatch" class="secondary">＋ New batch</button>
+        <button id="syncNow" class="secondary premium-icon-button" title="Refresh dashboard">↻</button>
+        <button id="healthCheck" class="secondary">Review operations</button>
+        <button id="ovNewBatch">＋ New procurement</button>
       </div>
     </section>
 
-    <section class="overview-healthbar" aria-label="Operational readiness">
-      <div class="overview-health-item"><span class="overview-health-icon">A</span><div><span>AUTOPILOT</span><strong id="ovAutopilot">Checking</strong></div></div>
-      <div class="overview-health-item"><span class="overview-health-icon">₹</span><div><span>PRICE GUARD</span><strong id="ovPriceGuard">Checking</strong></div></div>
-      <div class="overview-health-item"><span class="overview-health-icon">◆</span><div><span>CARD PROGRAMME</span><strong id="ovCards">Checking</strong></div></div>
-      <div class="overview-health-item"><span class="overview-health-icon">ID</span><div><span>RETAILER ACCOUNTS</span><strong id="ovAccounts">Checking</strong></div></div>
+    <section class="overview-kpi-strip" aria-label="Procurement metrics">
+      <article class="overview-kpi-feature"><span>APPROVED EXPOSURE</span><strong id="ovExposure">₹0</strong><small id="ovExposureMeta">Across active procurement</small></article>
+      <article><span>ORDER STATUS</span><strong id="networkStatus">Live</strong><small>Production service</small></article>
+      <article><span>READY TO PLACE</span><strong id="queueCount">0 orders</strong><small>Eligible checkout queue</small></article>
+      <article><span>AUTOMATION</span><strong id="automationCount">Checking</strong><small>Active workflows</small></article>
+      <article><span>NEEDS ATTENTION</span><strong id="exceptionCount">0 open</strong><small>Human intervention</small></article>
     </section>
 
-    <div class="overview-grid">
-      <article class="overview-card">
+    <section class="overview-readiness-strip" aria-label="Operational readiness">
+      <div><span class="overview-health-icon">A</span><span>AUTOPILOT</span><strong id="ovAutopilot">Checking</strong></div>
+      <div><span class="overview-health-icon">₹</span><span>PRICE GUARD</span><strong id="ovPriceGuard">Checking</strong></div>
+      <div><span class="overview-health-icon">◆</span><span>CARD PROGRAMME</span><strong id="ovCards">Checking</strong></div>
+      <div><span class="overview-health-icon">ID</span><span>RETAILER ACCOUNTS</span><strong id="ovAccounts">Checking</strong></div>
+    </section>
+
+    <div class="overview-main-grid">
+      <article class="overview-card overview-portfolio-card">
         <div class="overview-section-head">
-          <div><p class="eyebrow">ORDER PROGRESSION</p><h3>Portfolio movement</h3></div>
+          <div><p class="eyebrow">PORTFOLIO MOVEMENT</p><h3>Orders in motion</h3></div>
           <span id="outcomeBadge" class="overview-chip">LOADING</span>
         </div>
         <div class="overview-progress-grid">
-          <div><strong id="answerRequested">0</strong><span>Total orders</span></div>
-          <div><strong id="answerEligible">0</strong><span>Eligible now</span></div>
+          <div><strong id="answerRequested">0</strong><span>Total</span></div>
+          <div><strong id="answerEligible">0</strong><span>Eligible</span></div>
           <div><strong id="answerPlaced">0</strong><span>Confirmed</span></div>
           <div><strong id="answerPending">0</strong><span>Pending</span></div>
         </div>
         <div class="overview-progress-track" aria-hidden="true"><i id="ovProgressBar"></i></div>
-        <p id="nextAction" class="overview-next">Loading the next recommended operational action.</p>
+        <p id="nextAction" class="overview-next">Loading the next operational action.</p>
       </article>
 
-      <article class="overview-card">
+      <article class="overview-card overview-action-card">
         <div class="overview-section-head">
-          <div><p class="eyebrow">ACTION CENTRE</p><h3>Exceptions & intervention</h3></div>
+          <div><p class="eyebrow">ACTION CENTRE</p><h3>Exceptions</h3></div>
           <span id="exceptionBadge" class="overview-chip">CHECKING</span>
         </div>
         <div id="exceptionList" class="overview-exceptions"><p>Reviewing live controls…</p></div>
       </article>
     </div>
 
-    <div class="overview-network">
-      <section class="overview-network-panel">
+    <section class="overview-batches-card">
+      <div class="overview-section-head">
+        <div><p class="eyebrow">RECENT PROCUREMENT</p><h3>Latest batches</h3></div>
+        <button class="secondary premium-quiet-button" id="ovOpenFulfilment">View fulfilment →</button>
+      </div>
+      <div id="ovRecentBatches" class="overview-batch-rail"><div class="overview-batch-empty">No batches yet.</div></div>
+    </section>
+
+    <div class="overview-lower-grid">
+      <section class="overview-card overview-workspace-card">
         <div class="overview-section-head">
-          <div><p class="eyebrow">WORKSPACE USERS</p><h3>Current operating scope</h3></div>
-          <button class="secondary" id="ovOpenControl">Open users & permissions</button>
+          <div><p class="eyebrow">WORKSPACE</p><h3 id="ovWorkspaceName">OrderGrid workspace</h3></div>
+          <button class="secondary premium-quiet-button" id="ovOpenControl">Users & permissions →</button>
         </div>
-        <h4 class="overview-dealer-name" id="ovWorkspaceName">OrderGrid workspace</h4>
         <p class="overview-dealer-meta" id="ovWorkspaceMeta">Loading users and account readiness…</p>
         <div class="overview-network-stats">
-          <div class="overview-network-stat"><span>USERS</span><strong id="ovUserCount">0</strong></div>
-          <div class="overview-network-stat"><span>CUSTOMERS</span><strong id="ovCustomerCount">0</strong></div>
-          <div class="overview-network-stat"><span>RETAILER ACCOUNTS</span><strong id="ovRetailerCount">0</strong></div>
+          <div><span>USERS</span><strong id="ovUserCount">0</strong></div>
+          <div><span>CUSTOMERS</span><strong id="ovCustomerCount">0</strong></div>
+          <div><span>RETAILER ACCOUNTS</span><strong id="ovRetailerCount">0</strong></div>
         </div>
       </section>
 
-      <section class="overview-pulse">
-        <div class="overview-section-head"><div><p class="eyebrow">OPERATING PULSE</p><h3>Policy & capacity</h3></div></div>
+      <section class="overview-card overview-policy-card">
+        <div class="overview-section-head"><div><p class="eyebrow">OPERATING POLICY</p><h3>Capacity & guardrails</h3></div></div>
         <div class="overview-pulse-list">
-          <div class="overview-pulse-row"><span>RUN MODE</span><strong id="ovRunMode">—</strong></div>
-          <div class="overview-pulse-row"><span>MAX ACTIVE ORDERS</span><strong id="ovConcurrency">—</strong></div>
-          <div class="overview-pulse-row"><span>FAILURE PAUSE</span><strong id="ovFailureGuard">—</strong></div>
-          <div class="overview-pulse-row"><span>BATCH VARIANCE</span><strong id="ovBatchVariance">—</strong></div>
+          <div><span>RUN MODE</span><strong id="ovRunMode">—</strong></div>
+          <div><span>MAX ACTIVE</span><strong id="ovConcurrency">—</strong></div>
+          <div><span>FAILURE PAUSE</span><strong id="ovFailureGuard">—</strong></div>
+          <div><span>BATCH VARIANCE</span><strong id="ovBatchVariance">—</strong></div>
         </div>
         <p class="overview-refresh-time" id="ovRefreshTime">Waiting for first refresh.</p>
       </section>
     </div>
-  </div>`;
+  </div>`
 
 const $=s=>command.querySelector(s);
 const number=v=>new Intl.NumberFormat('en-IN').format(Number(v||0));
@@ -158,6 +154,19 @@ async function load(){
     set('#exceptionCount',exceptions.length+' open');
     set('#ovExposure',money(approvedExposure));
     set('#ovExposureMeta',batches.length?number(batches.length)+' active / historical batches':'No approved batch exposure yet');
+    const recent=$('#ovRecentBatches');
+    if(recent){
+      recent.innerHTML=batches.length?batches.slice(0,6).map(batch=>{
+        const status=String(batch.status||'DRAFT').replaceAll('_',' ');
+        const created=batch.created_at?new Date(batch.created_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
+        return '<button type="button" class="overview-batch-tile" data-open-fulfilment>'+
+          '<span class="overview-batch-top"><b>'+esc(batch.name||'Procurement batch')+'</b><i>'+esc(status)+'</i></span>'+
+          '<strong>'+money(batch.estimated_total_minor||0)+'</strong>'+
+          '<span class="overview-batch-meta">'+number(batch.recipient_count||0)+' recipients · '+number(batch.item_count||0)+' lines · '+esc(created)+'</span>'+
+        '</button>';
+      }).join(''):'<div class="overview-batch-empty">No procurement batches yet. Create the first batch to begin.</div>';
+      recent.querySelectorAll('[data-open-fulfilment]').forEach(button=>button.addEventListener('click',()=>navigate('fulfilment')));
+    }
     set('#brainStatus',exceptions.length?'ATTENTION':'HEALTHY');
     set('#networkStatus',navigator.onLine?'Live':'Offline');
     set('#outcomeBadge',requested===0?'AWAITING INPUT':pending===0?'COMPLETE':exceptions.length?'REVIEW':'IN MOTION');
@@ -209,6 +218,7 @@ async function load(){
 $('#syncNow').onclick=load;
 $('#healthCheck').onclick=()=>navigate(attentionCount?'autopilot':'bulk');
 $('#ovOpenControl').onclick=()=>navigate('control');
+$('#ovOpenFulfilment').onclick=()=>navigate('fulfilment');
 $('#ovNewBatch').onclick=()=>document.querySelector('#newBatch')?.click();
 window.addEventListener('online',load);
 window.addEventListener('ordergrid:update',load);

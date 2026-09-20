@@ -2,46 +2,49 @@
   const section=document.createElement('section');
   section.className='automation-control-center';
   section.innerHTML=`
-    <div class="automation-hero">
-      <div>
-        <p class="eyebrow">ORDERGRID AUTOPILOT</p>
-        <h2>Automation & policy control</h2>
-        <p>Control how approved orders move from account readiness to price validation, payment, checkout and confirmation.</p>
-      </div>
-      <div class="automation-machine">
-        <div class="automation-state">
-          <span class="automation-state-dot"></span>
-          <div><small>AUTOPILOT</small><strong id="autoOverall">ACTIVE</strong></div>
+    <section class="automation-command-surface">
+      <div class="automation-commandbar">
+        <div class="automation-command-copy">
+          <p class="eyebrow">ORDERGRID AUTOPILOT</p>
+          <h2>Automation command</h2>
+          <p>Live workflow state and policy controls, in one operating surface.</p>
         </div>
-        <button id="startAutopilot">Start Autopilot</button>
-        <button class="secondary" id="pauseAutopilot">Pause</button>
+        <div class="automation-machine">
+          <div class="automation-state">
+            <span class="automation-state-dot"></span>
+            <div><small>AUTOPILOT</small><strong id="autoOverall">ACTIVE</strong></div>
+          </div>
+          <button id="startAutopilot">▶ Start</button>
+          <button class="secondary" id="pauseAutopilot">Pause</button>
+          <button class="secondary premium-icon-button" id="autoRefresh" title="Refresh automation">↻</button>
+        </div>
       </div>
-    </div>
 
-    <div class="automation-kpis">
-      <article><span>READY</span><strong id="autoReady">0</strong><small>Orders ready for automation</small></article>
-      <article><span>IN PROGRESS</span><strong id="autoProgress">0</strong><small>Orders currently advancing</small></article>
-      <article><span>NEEDS ATTENTION</span><strong id="autoAttention">0</strong><small>Orders requiring intervention</small></article>
-      <article><span>CONFIRMED</span><strong id="autoConfirmed">0</strong><small>Retailer-confirmed orders</small></article>
-    </div>
+      <div class="automation-kpis">
+        <article><span>READY</span><strong id="autoReady">0</strong><small>Eligible now</small></article>
+        <article><span>IN PROGRESS</span><strong id="autoProgress">0</strong><small>Advancing</small></article>
+        <article><span>ATTENTION</span><strong id="autoAttention">0</strong><small>Human review</small></article>
+        <article><span>CONFIRMED</span><strong id="autoConfirmed">0</strong><small>Retailer-confirmed</small></article>
+      </div>
 
-    <section class="automation-card autopilot-preflight">
-      <div class="automation-card-head">
-        <div><span>PRE-FLIGHT</span><h3>Autopilot readiness</h3></div>
-        <button class="secondary" id="refreshPreflight">Run pre-flight</button>
-      </div>
-      <div class="preflight-grid">
-        <div><span>ELIGIBLE ORDERS</span><strong id="pfEligible">0</strong></div>
-        <div><span>NEEDS ATTENTION</span><strong id="pfAttention">0</strong></div>
-        <div><span>RETAILER ACCOUNTS</span><strong id="pfAccounts">0</strong></div>
-        <div><span>AUTHENTICATED</span><strong id="pfAuthenticated">0</strong></div>
-        <div><span>PRICED LINES</span><strong id="pfPriced">0</strong></div>
-        <div><span>APPROVED EXPOSURE</span><strong id="pfExposure">₹0</strong></div>
-      </div>
-      <div class="preflight-foot">
-        <span id="pfCardProgramme" class="preflight-chip">Card programme checking</span>
-        <span id="pfRunMode" class="preflight-chip">Run mode</span>
-        <span id="pfPriceRule" class="preflight-chip">Price rule</span>
+      <div class="autopilot-preflight">
+        <div class="preflight-head">
+          <div><span>PRE-FLIGHT</span><strong>Readiness</strong></div>
+          <button class="secondary premium-quiet-button" id="refreshPreflight">Run check</button>
+        </div>
+        <div class="preflight-grid">
+          <div><span>ELIGIBLE</span><strong id="pfEligible">0</strong></div>
+          <div><span>ATTENTION</span><strong id="pfAttention">0</strong></div>
+          <div><span>ACCOUNTS</span><strong id="pfAccounts">0</strong></div>
+          <div><span>AUTHENTICATED</span><strong id="pfAuthenticated">0</strong></div>
+          <div><span>PRICED LINES</span><strong id="pfPriced">0</strong></div>
+          <div><span>EXPOSURE</span><strong id="pfExposure">₹0</strong></div>
+        </div>
+        <div class="preflight-foot">
+          <span id="pfCardProgramme" class="preflight-chip">Card programme checking</span>
+          <span id="pfRunMode" class="preflight-chip">Run mode</span>
+          <span id="pfPriceRule" class="preflight-chip">Price rule</span>
+        </div>
       </div>
     </section>
 
@@ -49,7 +52,7 @@
       <section class="automation-card automation-live">
         <div class="automation-card-head">
           <div><span>LIVE AUTOMATION</span><h3>Workflow state</h3></div>
-          <div class="automation-head-actions"><span class="policy-scope" id="autoWorkflowCount">8 automations</span><button class="secondary" id="autoRefresh">Refresh</button></div>
+          <div class="automation-head-actions"><span class="policy-scope" id="autoWorkflowCount">8 automations</span></div>
         </div>
         <div id="automationWorkflowList" class="automation-workflow-list"></div>
       </section>
