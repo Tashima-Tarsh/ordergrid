@@ -77,29 +77,7 @@ async function basketNotificationUser(tenantId:string,basketId:string){
 }
 async function getAutomationPolicy(tenantId:string){
   const local=await readAutomationPolicy(tenantId);
-  const relation=await db.query("select parent_tenant_id from dealer_relationships where child_tenant_id=$1 and status='ACTIVE' limit 1",[tenantId]);
-  const parentTenantId=relation.rows[0]?.parent_tenant_id as string|undefined;
-  if(!parentTenantId||!local.inherit_parent_policy)return {...local,inherited_from_tenant_id:null,effective_source:"LOCAL" as const};
-  const parent=await readAutomationPolicy(parentTenantId);
-  if(parent.allow_child_policy_relaxation){
-    return {...local,inherited_from_tenant_id:parentTenantId,effective_source:"CHILD_OVERRIDE_ALLOWED" as const};
-  }
-  return {
-    ...local,
-    automation_enabled:Boolean(parent.automation_enabled&&local.automation_enabled),
-    auto_assign_virtual_card:Boolean(parent.auto_assign_virtual_card&&local.auto_assign_virtual_card),
-    auto_continue_checkout:Boolean(parent.auto_continue_checkout&&local.auto_continue_checkout),
-    max_active_orders:Math.min(Number(parent.max_active_orders),Number(local.max_active_orders)),
-    failure_pause_percent:Math.min(Number(parent.failure_pause_percent),Number(local.failure_pause_percent)),
-    max_price_increase_percent:Math.min(Number(parent.max_price_increase_percent),Number(local.max_price_increase_percent)),
-    max_order_value_minor:minCap(Number(parent.max_order_value_minor),Number(local.max_order_value_minor)),
-    max_batch_variance_percent:Math.min(Number(parent.max_batch_variance_percent),Number(local.max_batch_variance_percent)),
-    price_breach_action:(parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER") as "PAUSE_ORDER"|"PAUSE_BATCH",
-    run_mode:(parent.run_mode==="MANUAL"?"MANUAL":local.run_mode) as "MANUAL"|"CONTINUOUS",
-    allow_child_policy_relaxation:false,
-    inherited_from_tenant_id:parentTenantId,
-    effective_source:"INHERITED_GUARDRAILS" as const
-  };
+  return {...local,inherit_parent_policy:false,allow_child_policy_relaxation:false,inherited_from_tenant_id:null,effective_source:"LOCAL" as const};
 }
 async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:number,policy:AutomationPolicy){
   if(!policy.automation_enabled)return {error:"autopilot_paused" as const,claimed:0,ids:[] as string[]};
@@ -176,19 +154,10 @@ app.addHook("preHandler",async(req,reply)=>{
   if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
-    select u.id,u.tenant_id home_tenant_id,
-      coalesce(s.active_tenant_id,u.tenant_id) tenant_id,
-      case
-        when coalesce(s.active_tenant_id,u.tenant_id)=u.tenant_id then u.role::text
-        else da.role::text
-      end role
+    select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
     from sessions s
     join users u on u.id=s.user_id
-    left join dealer_access da
-      on da.user_id=u.id
-     and da.tenant_id=coalesce(s.active_tenant_id,u.tenant_id)
     where s.id_hash=$1 and s.expires_at>now() and u.active
-      and (coalesce(s.active_tenant_id,u.tenant_id)=u.tenant_id or da.id is not null)
   `,[tokenHash(raw)]);
   if(!rows[0])return reply.code(401).send({error:"unauthorized"});
   req.principal={id:rows[0].id,homeTenantId:rows[0].home_tenant_id,tenantId:rows[0].tenant_id,role:rows[0].role};
@@ -204,123 +173,19 @@ app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
   reply.setCookie("session",token,{httpOnly:true,secure:config.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});
   const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
-  return {user:{id:u.id,role:u.role},dealer:tenant.rows[0]};
+  return {user:{id:u.id,role:u.role},workspace:tenant.rows[0]};
 });
 app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)await db.query("delete from sessions where id_hash=$1",[tokenHash(raw)]);reply.clearCookie("session",{path:"/"});return {ok:true}});
-app.get("/api/dealer-network",async(req)=>{
+app.get("/api/users",async(req)=>{
   const p=req.principal!;
-  const {rows}=await db.query(`
-    with accessible as (
-      select u.tenant_id
-      from users u
-      where u.id=$1
-      union
-      select da.tenant_id
-      from dealer_access da
-      join dealer_relationships dr on dr.child_tenant_id=da.tenant_id and dr.status='ACTIVE'
-      where da.user_id=$1
-    )
-    select
-      t.id,t.name,
-      case when t.id=$2 then 'MAIN' else 'SUB' end dealer_type,
-      (t.id=$3) active,
-      coalesce((select count(*) from users u where u.tenant_id=t.id and u.active),0)::int user_count,
-      coalesce((select count(*) from customers c where c.tenant_id=t.id and c.active),0)::int customer_count,
-      coalesce((select count(*) from retailer_accounts ra where ra.tenant_id=t.id),0)::int retailer_account_count,
-      coalesce((select count(*) from checkout_baskets cb where cb.tenant_id=t.id),0)::int order_count,
-      coalesce((select count(*) from checkout_baskets cb where cb.tenant_id=t.id and cb.status='CONFIRMED'),0)::int confirmed_count,
-      coalesce((select count(*) from virtual_cards vc where vc.tenant_id=t.id),0)::int virtual_card_count,
-      exists(select 1 from issuer_connections ic where ic.tenant_id=t.id and ic.status='CONNECTED') funding_connected
-    from tenants t
-    join accessible a on a.tenant_id=t.id
-    order by case when t.id=$2 then 0 else 1 end,t.name
-  `,[p.id,p.homeTenantId,p.tenantId]);
-  const parent=await db.query("select parent_tenant_id from dealer_relationships where child_tenant_id=$1 limit 1",[p.homeTenantId]);
-  return {
-    homeTenantId:p.homeTenantId,
-    activeTenantId:p.tenantId,
-    canCreateSubdealer:p.role==="OWNER"&&p.tenantId===p.homeTenantId&&!parent.rows[0],
-    dealers:rows
-  };
-});
-
-app.post("/api/dealer-context",async(req,reply)=>{
-  const p=req.principal!,raw=req.cookies.session;
-  if(!raw)return reply.code(401).send({error:"unauthorized"});
-  const body=z.object({tenantId:z.string().uuid()}).parse(req.body);
-  const access=await db.query(`
-    select t.id,t.name,
-      case when t.id=$2 then u.role::text else da.role::text end role
-    from tenants t
-    join users u on u.id=$1
-    left join dealer_access da on da.user_id=u.id and da.tenant_id=t.id
-    left join dealer_relationships dr on dr.child_tenant_id=t.id
-    where t.id=$3
-      and (t.id=$2 or (da.id is not null and dr.status='ACTIVE'))
-    limit 1
-  `,[p.id,p.homeTenantId,body.tenantId]);
-  if(!access.rows[0])return reply.code(403).send({error:"dealer_access_denied"});
-  await db.query("update sessions set active_tenant_id=$1 where id_hash=$2",[body.tenantId,tokenHash(raw)]);
-  await audit(db,body.tenantId,p.id,"dealer.context_switched","tenant",body.tenantId,{fromTenantId:p.tenantId});
-  return {dealer:{id:access.rows[0].id,name:access.rows[0].name},role:access.rows[0].role};
-});
-
-app.post("/api/dealers",async(req,reply)=>{
-  const p=req.principal!;
-  if(p.role!=="OWNER"||p.tenantId!==p.homeTenantId)return reply.code(403).send({error:"main_dealer_owner_required"});
-  const existingParent=await db.query("select 1 from dealer_relationships where child_tenant_id=$1",[p.homeTenantId]);
-  if(existingParent.rows[0])return reply.code(409).send({error:"subdealer_cannot_create_subdealer"});
-  const body=z.object({
-    name:z.string().min(2).max(120),
-    ownerEmail:z.string().email(),
-    ownerPassword:z.string().min(14).max(200)
-  }).parse(req.body);
-  const existingUser=await db.query("select id from users where lower(email::text)=lower($1) limit 1",[body.ownerEmail]);
-  if(existingUser.rows[0])return reply.code(409).send({error:"email_already_in_use"});
-  const client=await db.connect();
-  try{
-    await client.query("begin");
-    const tenant=await client.query("insert into tenants(name) values($1) returning id,name",[body.name.trim()]);
-    const childTenantId=tenant.rows[0].id;
-    const owner=await client.query(
-      "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,email,role",
-      [childTenantId,body.ownerEmail.toLowerCase(),await hashPassword(body.ownerPassword)]
-    );
-    await client.query(
-      "insert into dealer_relationships(parent_tenant_id,child_tenant_id,created_by) values($1,$2,$3)",
-      [p.tenantId,childTenantId,p.id]
-    );
-    await client.query(
-      `insert into dealer_access(user_id,tenant_id,role,created_by)
-       select id,$1,'OWNER',$2 from users
-       where tenant_id=$3 and active and role='OWNER'
-       on conflict(user_id,tenant_id) do update set role='OWNER',updated_at=now()`,
-      [childTenantId,p.id,p.tenantId]
-    );
-    await client.query("commit");
-    await audit(db,p.tenantId,p.id,"subdealer.created","tenant",childTenantId,{name:tenant.rows[0].name,ownerUserId:owner.rows[0].id});
-    return reply.code(201).send({dealer:tenant.rows[0],owner:{id:owner.rows[0].id,email:owner.rows[0].email,role:owner.rows[0].role}});
-  }catch(error){
-    await client.query("rollback");throw error;
-  }finally{client.release()}
-});
-
-app.get("/api/dealer-users",async(req)=>{
-  const p=req.principal!;
-  const {rows}=await db.query(`
-    select u.id,u.email,
-      case when u.tenant_id=$1 then u.role::text else da.role::text end role,
-      (u.tenant_id=$1) home_user,
-      u.active
-    from users u
-    left join dealer_access da on da.user_id=u.id and da.tenant_id=$1
-    where (u.tenant_id=$1 or da.id is not null)
-    order by case when u.tenant_id=$1 then 0 else 1 end,u.email
-  `,[p.tenantId]);
+  const {rows}=await db.query(
+    "select id,email,role::text role,active,(id=$2) current_user from users where tenant_id=$1 order by active desc,email",
+    [p.tenantId,p.id]
+  );
   return {users:rows};
 });
 
-app.post("/api/dealer-users",async(req,reply)=>{
+app.post("/api/users",async(req,reply)=>{
   const p=req.principal!;
   if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});
   const body=z.object({
@@ -330,45 +195,32 @@ app.post("/api/dealer-users",async(req,reply)=>{
   }).parse(req.body);
   const existing=await db.query("select id,tenant_id,email,active from users where lower(email::text)=lower($1) limit 1",[body.email]);
   if(existing.rows[0]){
-    if(existing.rows[0].tenant_id===p.tenantId){
-      await db.query("update users set role=$1,active=true where id=$2",[body.role,existing.rows[0].id]);
-      await audit(db,p.tenantId,p.id,"dealer_user.updated","user",existing.rows[0].id,{role:body.role});
-      return {user:{id:existing.rows[0].id,email:existing.rows[0].email,role:body.role,homeUser:true}};
-    }
-    await db.query(
-      `insert into dealer_access(user_id,tenant_id,role,created_by)
-       values($1,$2,$3,$4)
-       on conflict(user_id,tenant_id) do update set role=excluded.role,updated_at=now()`,
-      [existing.rows[0].id,p.tenantId,body.role,p.id]
-    );
-    await audit(db,p.tenantId,p.id,"dealer_access.granted","user",existing.rows[0].id,{role:body.role});
-    return {user:{id:existing.rows[0].id,email:existing.rows[0].email,role:body.role,homeUser:false}};
+    if(existing.rows[0].tenant_id!==p.tenantId)return reply.code(409).send({error:"email_in_use_in_another_workspace"});
+    await db.query("update users set role=$1,active=true where id=$2 and tenant_id=$3",[body.role,existing.rows[0].id,p.tenantId]);
+    await audit(db,p.tenantId,p.id,"user.updated","user",existing.rows[0].id,{role:body.role});
+    return {user:{id:existing.rows[0].id,email:existing.rows[0].email,role:body.role,active:true}};
   }
   if(!body.password)return reply.code(400).send({error:"password_required_for_new_user"});
   const {rows}=await db.query(
-    "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,$4) returning id,email,role",
+    "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,$4) returning id,email,role,active",
     [p.tenantId,body.email.toLowerCase(),await hashPassword(body.password),body.role]
   );
-  await audit(db,p.tenantId,p.id,"dealer_user.created","user",rows[0].id,{role:body.role});
-  return reply.code(201).send({user:{...rows[0],homeUser:true}});
+  await audit(db,p.tenantId,p.id,"user.created","user",rows[0].id,{role:body.role});
+  return reply.code(201).send({user:rows[0]});
 });
 
-app.delete("/api/dealer-users/:userId",async(req,reply)=>{
+app.delete("/api/users/:userId",async(req,reply)=>{
   const p=req.principal!;
   if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});
   const userId=z.string().uuid().parse((req.params as any).userId);
   if(userId===p.id)return reply.code(409).send({error:"cannot_remove_current_user"});
-  const target=await db.query("select id,tenant_id from users where id=$1",[userId]);
-  if(!target.rows[0])return reply.code(404).send({error:"user_not_found"});
-  if(target.rows[0].tenant_id===p.tenantId){
-    await db.query("update users set active=false where id=$1 and tenant_id=$2",[userId,p.tenantId]);
-    await db.query("delete from sessions where user_id=$1",[userId]);
-    await audit(db,p.tenantId,p.id,"dealer_user.deactivated","user",userId);
-  }else{
-    const removed=await db.query("delete from dealer_access where user_id=$1 and tenant_id=$2 returning id",[userId,p.tenantId]);
-    if(!removed.rows[0])return reply.code(404).send({error:"dealer_access_not_found"});
-    await audit(db,p.tenantId,p.id,"dealer_access.revoked","user",userId);
-  }
+  const {rows}=await db.query(
+    "update users set active=false where id=$1 and tenant_id=$2 returning id",
+    [userId,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"user_not_found"});
+  await db.query("delete from sessions where user_id=$1",[userId]);
+  await audit(db,p.tenantId,p.id,"user.deactivated","user",userId);
   return {ok:true};
 });
 
@@ -410,7 +262,7 @@ app.get("/api/automation",async(req)=>{
       {name:"Protected verification is never bypassed",status:"ENFORCED"}
     ],
     canEdit:["OWNER","APPROVER"].includes(p.role),
-    canRelaxChildren:p.role==="OWNER"&&p.tenantId===p.homeTenantId
+    canRelaxChildren:false
   };
 });
 
@@ -476,17 +328,14 @@ app.put("/api/automation/policy",async(req,reply)=>{
     maxOrderValueMinor:z.number().int().min(0),
     maxBatchVariancePercent:z.number().min(0).max(100),
     priceBreachAction:z.enum(["PAUSE_ORDER","PAUSE_BATCH"]),
-    runMode:z.enum(["MANUAL","CONTINUOUS"]),
-    inheritParentPolicy:z.boolean(),
-    allowChildPolicyRelaxation:z.boolean().default(false)
+    runMode:z.enum(["MANUAL","CONTINUOUS"])
   }).parse(req.body);
-  const allowRelaxation=p.role==="OWNER"&&p.tenantId===p.homeTenantId?body.allowChildPolicyRelaxation:false;
   const {rows}=await db.query(
     `insert into automation_policies(
       tenant_id,automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,
       max_price_increase_percent,max_order_value_minor,max_batch_variance_percent,price_breach_action,run_mode,
       inherit_parent_policy,allow_child_policy_relaxation,updated_by,updated_at
-    ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
+    ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,false,$12,now())
     on conflict(tenant_id) do update set
       automation_enabled=excluded.automation_enabled,
       auto_assign_virtual_card=excluded.auto_assign_virtual_card,
@@ -498,13 +347,12 @@ app.put("/api/automation/policy",async(req,reply)=>{
       max_batch_variance_percent=excluded.max_batch_variance_percent,
       price_breach_action=excluded.price_breach_action,
       run_mode=excluded.run_mode,
-      inherit_parent_policy=excluded.inherit_parent_policy,
-      allow_child_policy_relaxation=excluded.allow_child_policy_relaxation,
+      inherit_parent_policy=false,
+      allow_child_policy_relaxation=false,
       updated_by=excluded.updated_by,updated_at=now()
     returning *`,
     [p.tenantId,body.automationEnabled,body.autoAssignVirtualCard,body.autoContinueCheckout,body.maxActiveOrders,body.failurePausePercent,
-     body.maxPriceIncreasePercent,body.maxOrderValueMinor,body.maxBatchVariancePercent,body.priceBreachAction,body.runMode,
-     body.inheritParentPolicy,allowRelaxation,p.id]
+     body.maxPriceIncreasePercent,body.maxOrderValueMinor,body.maxBatchVariancePercent,body.priceBreachAction,body.runMode,p.id]
   );
   await audit(db,p.tenantId,p.id,"automation.policy_updated","automation_policy",p.tenantId,body);
   return {localPolicy:rows[0],policy:await getAutomationPolicy(p.tenantId)};
