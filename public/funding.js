@@ -33,31 +33,31 @@
   }
   function render(){
     const previewOnly=provider.source==='showroom';
-    const name=provider.programmeName||provider.bankName||(provider.provider==='enkash'?'EnKash':'No issuer');
-    $('#fundingName').textContent=provider.configured?`${name} card programme connected`:'No card programme connected';
+    const connected=issuers.filter(x=>x.status==='CONNECTED');
+    const name=connected.length===1?(connected[0].programme_name||connected[0].bank_name||connected[0].provider):`${connected.length} bank programmes`;
+    $('#fundingName').textContent=connected.length?`${name} connected`:'No card programme connected';
     $('#fundingMeta').textContent=previewOnly
       ?'Connect an approved card programme to begin.'
-      :provider.configured
-        ?'Virtual cards are created and managed through your approved card programme.'
-        :'Connect a card programme to continue.';
-    $('#issuerStatus').textContent=provider.configured?'CONNECTED':'SETUP REQUIRED';
-    $('#fundingLimit').textContent=provider.configured?'Available':'—';
-    $('#connectIssuer').hidden=provider.configured&&!previewOnly;
+      :connected.length
+        ?'Choose any connected bank programme below. Parent-card programmes create child virtual cards against the approved bank limit.'
+        :'Connect a bank/card programme to continue.';
+    $('#issuerStatus').textContent=connected.length?`${connected.length} CONNECTED`:'SETUP REQUIRED';
+    $('#fundingLimit').textContent=connected.length?'Bank controlled':'—';
+    $('#connectIssuer').hidden=false;
     $('#connectIssuer').disabled=previewOnly;
-    $('#connectIssuer').textContent=provider.configured?'Connected':previewOnly?'Production setup only':'Connect card programme';
-    $('#disconnectIssuer').hidden=!provider.configured||previewOnly;
+    $('#connectIssuer').textContent=previewOnly?'Production setup only':connected.length?'Add / replace bank programme':'Connect bank programme';
+    $('#disconnectIssuer').hidden=!connected.length||previewOnly;
     const issuerSelect=$('#cardIssuer');
     if(issuerSelect){
-      const connected=issuers.filter(x=>x.status==='CONNECTED'&&x.provider==='enkash');
-      issuerSelect.innerHTML=connected.length?connected.map(x=>`<option value="${x.id}">${x.programme_name||x.bank_name||'EnKash'} · ${x.card_network||'card programme'}</option>`).join(''):'<option value="">Connect a programme first</option>';
+      issuerSelect.innerHTML=connected.length?connected.map(x=>`<option value="${x.id}">${x.programme_name||x.bank_name||x.provider} · ${x.card_network||'card programme'}${x.integration_mode==='PARENT_CARD_API'?' · parent-card limit':''}</option>`).join(''):'<option value="">Connect a programme first</option>';
     }
     $('#virtualCardInventory').innerHTML=cards.length?cards.map((card,i)=>`
       <div class="virtual-card-row" data-card="${card.id}">
         <strong>${card.label||'Virtual card '+String(i+1).padStart(2,'0')} · ${card.masked_number||card.provider_card_id}</strong>
-        <span>${inrMinor(card.balance_minor)} loaded</span>
+        <span>${inrMinor(card.balance_minor)} card limit / available allocation</span>
         <span>${card.merchant_control||'Issuer controls'} · ${card.channel_control_status==='APPLIED'?'online-only control applied':'control '+String(card.channel_control_status||'pending').toLowerCase()}</span>
         <span class="card-active">${card.status}</span>
-        <button type="button" class="secondary" data-load>Load funds</button>
+        ${(()=>{const issuer=issuers.find(x=>x.id===card.issuer_connection_id);return issuer?.capabilities?.loadCard===false?'':'<button type="button" class="secondary" data-load>Adjust limit / load</button>'})()}
       </div>`).join(''):'<p class="muted">Created virtual cards will appear here.</p>';
     calculate();
   }
