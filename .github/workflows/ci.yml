@@ -26,5 +26,7 @@ jobs:
         run: npm run smoke:demo
       - name: Dealer hierarchy isolation smoke test
         run: node scripts/smoke-dealers.mjs
+      - name: Autopilot policy enforcement smoke test
+        run: node scripts/smoke-automation.mjs
       - name: Audit production dependencies
         run: npm run audit:ci
