@@ -1,7 +1,11 @@
 (()=>{
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
-  let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[],banks=[];
+  const fallbackBanks=[
+    {code:'hdfc',name:'HDFC Bank',mode:'PARENT_CARD_API',product:'Credit Card Virtual Card Creation',notes:'Production endpoint and credentials require your approved HDFC corporate programme.'},
+    {code:'axis',name:'Axis Bank',mode:'PARENT_CARD_API',product:'Purchase Control Virtual Card',notes:'Use the production API contract supplied during Axis corporate onboarding.'}
+  ];
+  let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[],banks=[...fallbackBanks];
   const issuerSetup=$('#issuerDialog');
 
   async function request(path,options={}){
@@ -9,6 +13,12 @@
     const body=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(String(body.message||body.error||'Request failed').replaceAll('_',' '));
     return body;
+  }
+  async function timedRequest(path,options={},timeoutMs=4000){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    try{return await request(path,{...options,signal:controller.signal})}
+    finally{clearTimeout(timer)}
   }
   function toast(message){
     const node=$('#toast');if(!node)return;node.textContent=message;node.classList.add('show');setTimeout(()=>node.classList.remove('show'),2400);
@@ -82,13 +92,16 @@
   }
   async function load(){
     const results=await Promise.allSettled([
-      request('/api/cards/provider'),request('/api/cards'),request('/api/issuers'),request('/api/cards/banks')
+      timedRequest('/api/cards/provider'),timedRequest('/api/cards'),timedRequest('/api/issuers'),timedRequest('/api/cards/banks')
     ]);
     if(results[0].status==='fulfilled')provider=results[0].value;
     if(results[1].status==='fulfilled')cards=results[1].value.cards||[];
     if(results[2].status==='fulfilled')issuers=results[2].value.issuers||[];
-    if(results[3].status==='fulfilled')banks=results[3].value.banks||[];
-    for(const result of results)if(result.status==='rejected')console.error(result.reason);
+    if(results[3].status==='fulfilled'&&Array.isArray(results[3].value.banks)&&results[3].value.banks.length){
+      const byCode=new Map([...fallbackBanks,...results[3].value.banks].map(x=>[x.code,x]));
+      banks=[...byCode.values()];
+    }
+    for(const result of results)if(result.status==='rejected'&&result.reason?.name!=='AbortError')console.error(result.reason);
     render();
   }
 
@@ -107,6 +120,10 @@
     }else if(isEnKash){
       $('#issuerBankName').value='EnKash';
       $('#bankProfileNote').textContent='Use your approved EnKash corporate-card programme API credentials.';
+    }else{
+      const label=form.elements.provider?.selectedOptions?.[0]?.textContent?.trim()||'Selected bank';
+      if(code!=='custom'&&!$('#issuerBankName').value)$('#issuerBankName').value=label;
+      $('#bankProfileNote').textContent='Enter the API contract and credentials supplied for your approved corporate-card programme.';
     }
     const needsKyc=isEnKash;
     document.querySelectorAll('[data-cardholder-kyc] input,[data-cardholder-kyc] select').forEach(input=>{input.required=needsKyc});
@@ -139,29 +156,26 @@
     if(form.elements.fundingCardExpiryYear)form.elements.fundingCardExpiryYear.value=current.funding_card_expiry_year||'';
     if(form.elements.integrationMode&&current.integration_mode)form.elements.integrationMode.value=current.integration_mode;
   }
-  async function openIssuerConnector(providerCode){
+  function openIssuerConnector(providerCode){
     const panel=$('#issuerDialog');
     if(!panel){toast('Funding card setup is unavailable. Refresh the page.');return}
-    const button=$('#connectIssuer'),previous=button?.textContent;
     const error=$('#issuerError');if(error)error.textContent='';
     panel.hidden=false;
     document.body.classList.add('issuer-connect-open');
-    if(button){button.disabled=true;button.textContent='Loading details…'}
     if(providerCode&&providerCode!=='other'&&$('#issuerProvider')){
       $('#issuerProvider').value=providerCode;
       syncBankConnector();
+    }else{
+      prefillFundingCardIdentity();
     }
+    if($('#issuerModalStatus')&&$('#issuerModalStatus').textContent==='SETUP REQUIRED')$('#issuerModalStatus').textContent='READY TO CONFIGURE';
     setTimeout(()=>$('#issuerProvider')?.focus(),0);
-    try{
-      await load();
+    void load().then(()=>{
       if(providerCode&&providerCode!=='other'&&$('#issuerProvider')){
         $('#issuerProvider').value=providerCode;
         syncBankConnector();
-      }else{
-        prefillFundingCardIdentity();
       }
-    }catch(error){console.error(error)}
-    finally{if(button){button.disabled=false;button.textContent=previous||'Set up / manage card'}}
+    }).catch(error=>console.error(error));
   }
   $('#connectIssuer')?.addEventListener('click',()=>openIssuerConnector());
   $('#openFundingSetupFromCard')?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openIssuerConnector()});

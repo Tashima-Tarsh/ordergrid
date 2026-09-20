@@ -51,12 +51,16 @@ must(html.includes('id="fundingProgramme"'),"frontend contract: funding programm
 must(html.includes('id="fundingCardIdentity"'),"frontend contract: safe funding card identity detail missing");
 must(html.includes('id="issuerModalStatus"'),"frontend contract: setup modal status summary missing");
 must(files["public/finance.css"].includes("#issuerDialog.issuer-connect-overlay"),"frontend contract: real card setup overlay styling missing");
-must(funding.includes("await load()"),"frontend contract: connector must refresh bank state before opening");
+must(funding.includes("timedRequest('/api/cards/provider')"),"frontend contract: Cards refresh must have a timeout");
+must(funding.includes("timedRequest('/api/cards/banks')"),"frontend contract: bank catalog refresh must have a timeout");
+must(funding.includes("fallbackBanks"),"frontend contract: HDFC/Axis setup must work without waiting for bank catalog API");
 must(html.includes('id="openFundingSetupFromCard"'),"frontend contract: funding detail CTA button missing");
 must(html.includes('data-bank-shortcut="hdfc"'),"frontend contract: HDFC setup shortcut missing");
 must(html.includes('data-bank-shortcut="axis"'),"frontend contract: Axis setup shortcut missing");
 must(funding.includes("panel.hidden=false;"),"frontend contract: card setup must open the modal");
-must(funding.indexOf("panel.hidden=false;")<funding.indexOf("await load();"),"frontend contract: card setup modal must open before network refresh");
+must(funding.includes("void load().then("),"frontend contract: Cards API refresh must run in background");
+must(funding.indexOf("panel.hidden=false;")<funding.indexOf("void load().then("),"frontend contract: card setup modal must open before background refresh");
+must(!funding.includes("button.textContent='Loading details…'"),"frontend contract: card setup must never be trapped in Loading details state");
 must(funding.includes("$('#openFundingSetupFromCard')?.addEventListener('click'"),"frontend contract: funding CTA click handler missing");
 must(funding.includes("window.addEventListener('ordergrid:cards-open',()=>openIssuerConnector())"),"frontend contract: Cards nav event must call connector without passing Event as provider code");
 must(funding.includes("'/api/cards/provider/connect'"),"frontend contract: issuer connect API missing from client");
