@@ -244,5 +244,7 @@ must(server.includes("nextOrderGridFlipReference"),"retailer user contract: sequ
 must(server.includes("ordergrid-flip-"),"retailer user contract: generated reference prefix missing");
 must(!server.includes('{header:"reference",key:"reference"'),"retailer user contract: Excel template must not ask for user reference");
 must(!files["public/rewards.js"].includes("form.get('reference')"),"retailer user contract: client must not submit manual user reference");
+must(!files["public/rewards.js"].includes("event.currentTarget.reset()"),"retailer form contract: async submit handlers must not dereference currentTarget after await");
+must(count(files["public/rewards.js"],"formElement.reset()")===3,"retailer form contract: all three async retailer forms must retain and reset their form element safely");
 
 console.log("Frontend/card connector contract OK");
