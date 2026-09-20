@@ -144,6 +144,7 @@ app.get("/api/automation",async()=>{
     summary:{ready,inProgress,needsAttention,confirmed},
     workflows:[
       {id:"accounts",name:"Account authentication",status:needsAttention?"NEEDS_ATTENTION":accounts.length?"ACTIVE":"READY",detail:accounts.length+" retailer accounts in scope"},
+      {id:"preparation",name:"Order validation & preparation",status:ready?"ACTIVE":basketsNow.length?"READY":"IDLE",detail:ready+" orders prepared for next action"},
       {id:"cards",name:"Virtual-card assignment",status:basketsNow.length?"READY":"READY",detail:"One card per corporate-card order"},
       {id:"checkout",name:"Checkout continuation",status:needsAttention?"NEEDS_ATTENTION":inProgress?"ACTIVE":ready?"READY":"IDLE",detail:inProgress+" in progress · "+ready+" ready"},
       {id:"confirmation",name:"Retailer confirmation",status:confirmed?"ACTIVE":"READY",detail:confirmed+" retailer-confirmed orders"},
