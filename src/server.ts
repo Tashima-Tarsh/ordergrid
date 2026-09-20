@@ -921,19 +921,23 @@ app.post("/api/cards",async(req,reply)=>{
     customerId:z.string().uuid().optional(),
     checkoutBasketId:z.string().uuid().optional(),
     cardholder:z.object({
-      email:z.string().email(),
-      mobile:z.string().regex(/^\d{10,15}$/),
-      firstName:z.string().min(1).max(60),
-      lastName:z.string().min(1).max(60),
-      gender:z.enum(["M","F","O"]),
-      pan:z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/),
-      specialDate:z.string().regex(/^\d{2}-\d{2}-\d{4}$/)
-    })
+      email:z.string().email().optional(),
+      mobile:z.string().regex(/^\d{10,15}$/).optional(),
+      firstName:z.string().min(1).max(60).optional(),
+      lastName:z.string().min(1).max(60).optional(),
+      gender:z.enum(["M","F","O"]).optional(),
+      pan:z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
+      specialDate:z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional()
+    }).default({})
   }).parse(req.body);
   const scope=input.merchantScope??{type:"ALL" as const,value:undefined};
   if(scope.type==="RETAILER"&&!scope.value)return reply.code(400).send({error:"merchant_required"});
   const state=await loadTenantIssuer(db,config,p.tenantId,input.issuerConnectionId),cardIssuer=state.issuer;
   if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});
+  if(cardIssuer.provider==="enkash"){
+    const h=input.cardholder;
+    if(!h.email||!h.mobile||!h.firstName||!h.lastName||!h.gender||!h.pan||!h.specialDate)return reply.code(400).send({error:"cardholder_profile_required"});
+  }
 
   let ownerCustomerId=input.customerId??null;
   let ownerBasketId=input.checkoutBasketId??null;
