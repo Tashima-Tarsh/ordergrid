@@ -15,7 +15,7 @@ export const createDb = (config: Config) => {
     port:config.DB_PORT,
     database:config.DB_NAME,
     user:config.DB_USER,
-    password:config.DB_PASSWORD
+    password:config.DB_PASSWORD??config.ORDERGRID_DB_TOKEN
   });
 };
 
