@@ -150,6 +150,94 @@
     }finally{button.disabled=false;button.textContent='Check product'}
   }
 
+  function parseAllocation(row){
+    try{return row.dataset.allocationPlan?JSON.parse(row.dataset.allocationPlan):null}catch{return null}
+  }
+  function updatePoolPreview(){
+    const rows=[...productRows.querySelectorAll('.product-entry')],plans=rows.map(parseAllocation);
+    if(rows.length&&plans.every(plan=>plan?.complete)){
+      const accountIds=new Set(plans.flatMap(plan=>plan.allocations.map(a=>a.retailerAccountId)));
+      const units=plans.reduce((sum,plan)=>sum+Number(plan.totalQuantity||0),0);
+      preview.textContent=accountIds.size+' Flipkart user/address profiles allocated · '+units+' total units';
+      preview.dataset.poolGenerated='true';
+    }
+  }
+  function renderAllocation(row,plan){
+    const allocations=plan.allocations||[];
+    if(!plan.complete||!allocations.length)throw new Error('Verified account capacity is insufficient for the requested total.');
+    row.dataset.allocationPlan=JSON.stringify(plan);
+    row.dataset.productVerified='true';
+    row.dataset.productTitle=String(allocations[0].title||'Flipkart mobile');
+    row.dataset.maxQuantity=String(plan.verifiedCapacity||plan.allocatedQuantity||0);
+    const checkId=row.querySelector('[name="productCheckId"]');if(checkId)checkId.value=allocations[0].productCheckId||'';
+    const price=row.querySelector('[name="price"]');
+    if(price)price.value=(Number(allocations[0].sellingPriceMinor||0)/100).toFixed(2);
+    const qty=row.querySelector('[name="quantity"]');if(qty){qty.max='5000';qty.value=String(plan.totalQuantity)}
+    const account=row.querySelector('[name="retailerAccountId"]');if(account)account.disabled=true;
+    const state=row.querySelector('.allocation-state');if(state){state.textContent='ALLOCATED';state.className='allocation-state verified'}
+    const single=row.querySelector('.product-check-state');if(single){single.textContent='POOL MODE';single.className='product-check-state verified'}
+    const note=row.querySelector('.verified-quantity-note');if(note)note.textContent=plan.totalQuantity+' total units allocated across '+allocations.length+' verified Flipkart accounts.';
+    const priceText=plan.priceRangeMinor
+      ?(plan.priceRangeMinor.min===plan.priceRangeMinor.max?rupeesFromMinor(plan.priceRangeMinor.min):rupeesFromMinor(plan.priceRangeMinor.min)+' – '+rupeesFromMinor(plan.priceRangeMinor.max))
+      :rupeesFromMinor(allocations[0].sellingPriceMinor);
+    const maxes=allocations.map(a=>Number(a.maxQuantity||0)).filter(Boolean);
+    const result=row.querySelector('.allocation-result');
+    if(result)result.innerHTML=
+      '<div><span>TOTAL UNITS</span><strong>'+esc(plan.totalQuantity)+'</strong></div>'+
+      '<div><span>ACCOUNTS USED</span><strong>'+esc(allocations.length)+'</strong></div>'+
+      '<div><span>VERIFIED CAPACITY</span><strong>'+esc(plan.verifiedCapacity)+'</strong></div>'+
+      '<div><span>PRICE</span><strong>'+esc(priceText)+'</strong></div>'+
+      '<div><span>MAX / ACCOUNT</span><strong>'+esc(Math.min(...maxes))+(Math.min(...maxes)!==Math.max(...maxes)?'–'+esc(Math.max(...maxes)):'')+'</strong></div>'+
+      '<div class="wide"><span>ALLOCATIONS</span><strong>'+allocations.map(a=>esc(a.accountReference)+' · '+esc(a.quantity)+' / '+esc(a.maxQuantity)+' · '+esc(a.postalCode||'')).join('<br>')+'</strong></div>';
+    updatePoolPreview();
+  }
+  async function allocateAcrossPool(row,button){
+    const url=String(row.querySelector('[name="url"]').value||'').trim();
+    const totalQuantity=Number(row.querySelector('[name="quantity"]').value||0);
+    if(!url)throw new Error('Paste the Flipkart mobile URL first.');
+    if(!/^https:\/\/(?:www\.)?flipkart\.com\//i.test(url))throw new Error('This flow accepts Flipkart product URLs only.');
+    if(!Number.isInteger(totalQuantity)||totalQuantity<1||totalQuantity>5000)throw new Error('Enter a total quantity from 1 to 5000.');
+    invalidateRow(row,'Pool allocation is verifying live account limits…');
+    const state=row.querySelector('.allocation-state'),result=row.querySelector('.allocation-result');
+    button.disabled=true;button.textContent='Allocating…';
+    try{
+      for(let cycle=0;cycle<20;cycle++){
+        const plan=await request('/api/products/flipkart/mobile/allocation/plan',{
+          method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({productUrl:url,totalQuantity})
+        });
+        if(state){state.textContent=plan.verifiedCapacity+' / '+totalQuantity+' VERIFIED';state.className='allocation-state checking'}
+        if(result)result.innerHTML='<span>'+esc(plan.verifiedAccounts)+' account(s) verified · '+esc(plan.checkingAccounts)+' checking · '+esc(plan.checkRequiredAccounts)+' still available to check.</span>';
+        if(plan.complete){
+          renderAllocation(row,plan);
+          if(window.toast)window.toast(totalQuantity+' units allocated across '+plan.allocations.length+' Flipkart accounts');
+          return;
+        }
+        let commandIds=(plan.checking||[]).slice(0,10).map(x=>x.commandId).filter(Boolean);
+        if(!commandIds.length){
+          const next=(plan.checkRequired||[]).slice(0,10);
+          if(!next.length){
+            const reason=plan.eligibleAccounts
+              ?'Only '+plan.verifiedCapacity+' units could be verified across '+plan.eligibleAccounts+' eligible accounts.'
+              :'No session-ready, worker-online Flipkart accounts with bound delivery addresses are available.';
+            throw new Error(reason);
+          }
+          const started=await Promise.allSettled(next.map(account=>request('/api/products/flipkart/mobile/check',{
+            method:'POST',headers:{'content-type':'application/json'},
+            body:JSON.stringify({productUrl:url,retailerAccountId:account.retailerAccountId})
+          })));
+          commandIds=started.filter(x=>x.status==='fulfilled').map(x=>x.value.commandId).filter(Boolean);
+          if(!commandIds.length)throw new Error('OrderGrid could not start a product check on any eligible Flipkart account.');
+        }
+        if(state)state.textContent='VERIFYING '+commandIds.length+' ACCOUNT'+(commandIds.length===1?'':'S');
+        await Promise.all(commandIds.map(id=>pollProductCheck(id).catch(()=>null)));
+      }
+      throw new Error('Allocation did not converge. Refresh account sessions and try again.');
+    }finally{
+      button.disabled=false;
+      button.textContent='Allocate across ready accounts';
+    }
+  }
+
   addProduct.onclick=()=>{productRows.appendChild(productEntry());normalizeRemoveButtons()};
   productRows.addEventListener('click',async event=>{
     const remove=event.target.closest('[data-remove-product]');
