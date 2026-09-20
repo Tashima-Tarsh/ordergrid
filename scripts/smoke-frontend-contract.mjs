@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -27,6 +27,7 @@ const fulfilmentCss=files["public/fulfilment.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
+const worker=files["src/worker.ts"];
 const baskets=files["src/baskets.ts"];
 const allocation=files["src/flipkart-allocation.ts"];
 const allocationMigration=files["src/migrations/023_flipkart_account_pinned_batch_items.sql"];
@@ -115,6 +116,20 @@ must(navigation.includes("autopilot:'autopilot'"),"navigation contract: autopilo
 must(navigation.includes("body.product-shell{padding-left:216px}"),"navigation contract: compact premium sidebar width missing");
 must(automation.includes("automation-command-surface"),"autopilot contract: compact command surface missing");
 must(automation.includes('id="autoRefresh"'),"autopilot contract: top command refresh missing");
+must(automation.includes('id="runtimeTrigger"'),"autopilot runtime contract: trigger state missing");
+must(automation.includes('id="policyTriggerExplainer"'),"autopilot runtime contract: trigger explanation missing");
+must(automation.includes("READY/IDLE stage cards are intentionally hidden"),"autopilot runtime contract: static stage-card replacement missing");
+must(!automation.includes('id="automationWorkflowList"'),"autopilot runtime contract: numbered workflow-card list must stay removed");
+must(automation.includes("Save & apply"),"autopilot runtime contract: policy action must communicate application");
+must(automation.includes("▶ Run now"),"autopilot runtime contract: reusable manual trigger missing");
+must(automation.includes("▶ Start continuous"),"autopilot runtime contract: continuous trigger control missing");
+must(workspaceCss.includes(".automation-runtime-grid"),"autopilot runtime contract: compact runtime styling missing");
+must(workspaceCss.includes(".automation-safeguards"),"autopilot runtime contract: compact safeguards disclosure missing");
+must(server.includes('policy.run_mode==="CONTINUOUS"'),"autopilot trigger contract: active continuous policy must trigger on save");
+must(server.includes("trigger={mode:policy.run_mode,fired:true"),"autopilot trigger contract: policy API must report immediate trigger result");
+must(worker.includes("triggerContinuousAutopilot"),"autopilot trigger contract: background batch worker must trigger continuous automation");
+must(worker.includes('policy.run_mode!=="CONTINUOUS"'),"autopilot trigger contract: background worker must respect run mode");
+must(worker.includes("autopilotClaimed:automation.claimed"),"autopilot trigger contract: queued batch audit must record automatic claims");
 must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redirect support missing");
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");
