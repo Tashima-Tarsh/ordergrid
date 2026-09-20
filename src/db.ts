@@ -3,9 +3,9 @@ import type { Config } from "./config.js";
 
 export const createDb = (config: Config) => {
   const base={
-    max: 20,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 5_000,
+    max: config.DB_POOL_MAX,
+    idleTimeoutMillis: 20_000,
+    connectionTimeoutMillis: 10_000,
     ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined
   };
   if(config.DATABASE_URL)return new pg.Pool({...base,connectionString:config.DATABASE_URL});
