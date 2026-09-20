@@ -433,13 +433,24 @@ function retailerFromImport(value:string){
   }catch{return null}
 }
 
+
+async function nextOrderGridFlipReference(client:any,tenantId:string){
+  await client.query("select id from tenants where id=$1 for update",[tenantId]);
+  const {rows}=await client.query(
+    `select coalesce(max((substring(external_reference from '^ordergrid-flip-([0-9]+)$'))::bigint),0)::bigint seq
+     from customers where tenant_id=$1 and external_reference ~ '^ordergrid-flip-[0-9]+$'`,
+    [tenantId]
+  );
+  const next=Number(rows[0]?.seq||0)+1;
+  return `ordergrid-flip-${String(next).padStart(6,"0")}`;
+}
+
 app.get("/api/retailer-users/template.xlsx",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const workbook=new ExcelJS.Workbook();
   const sheet=workbook.addWorksheet("Flipkart Users");
   sheet.columns=[
-    {header:"reference",key:"reference",width:16},
     {header:"recipient",key:"recipient",width:22},
     {header:"phone",key:"phone",width:15},
     {header:"flipkart_user_id",key:"flipkart_user_id",width:24},
@@ -452,7 +463,7 @@ app.get("/api/retailer-users/template.xlsx",async(req,reply)=>{
     {header:"flipkart_password",key:"flipkart_password",width:22}
   ];
   sheet.addRow({
-    reference:"USER-001",recipient:"Amit Sharma",phone:"9876543210",
+    recipient:"Amit Sharma",phone:"9876543210",
     flipkart_user_id:"9876543210",line1:"House 12, Example Road",line2:"Near Landmark",
     city:"Ludhiana",state:"Punjab",postal_code:"141001",max_concurrent_orders:1,flipkart_password:""
   });
@@ -495,7 +506,22 @@ app.post("/api/address-books/import",async(req,reply)=>{
       const phone=value(row,"phone").replace(/\D/g,"");
       const postal=value(row,"postal_code").replace(/\D/g,"");
       if(phone.length<10||postal.length!==6)throw new Error("Invalid phone or postal code in address file");
-      const externalReference=(value(row,"reference").trim()||`CUST-${randomUUID()}`).slice(0,160);
+      const flipkartLogin=(value(row,"flipkart_user_id")||value(row,"flipkart_account")||value(row,"flipkart_login")||value(row,"flipkart_username")).trim();
+      let externalReference=value(row,"reference").trim();
+      if(flipkartLogin){
+        const existing=await client.query(
+          `select c.external_reference
+           from retailer_accounts ra
+           join customers c on c.id=ra.customer_id
+           where ra.tenant_id=$1 and ra.retailer='flipkart' and ra.account_reference=$2
+           limit 1`,
+          [p.tenantId,flipkartLogin.slice(0,240)]
+        );
+        externalReference=existing.rows[0]?.external_reference||await nextOrderGridFlipReference(client,p.tenantId);
+      }else if(!externalReference){
+        externalReference=`CUST-${randomUUID()}`;
+      }
+      externalReference=externalReference.slice(0,160);
       const gstin=value(row,"gstin").trim().toUpperCase()||null;
       if(gstin&&!validateGstin(gstin))throw new Error(`Invalid GSTIN for ${externalReference}`);
       const stateCode=(value(row,"state_code").replace(/\D/g,"").slice(0,2)||stateCodeForName(value(row,"state"))||null);
@@ -602,7 +628,6 @@ app.post("/api/retailer-users",async(req,reply)=>{
   if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const body=z.object({
     retailer:z.enum(["flipkart","amazon-in"]).default("flipkart"),
-    reference:z.string().trim().max(160).optional(),
     name:z.string().trim().min(2).max(160),
     phone:z.string().trim().min(10).max(32),
     line1:z.string().trim().min(3).max(240),
@@ -618,10 +643,21 @@ app.post("/api/retailer-users",async(req,reply)=>{
   const phone=body.phone.replace(/\D/g,""),postal=body.postalCode.replace(/\D/g,"");
   if(phone.length<10||phone.length>15)return reply.code(400).send({error:"invalid_phone"});
   if(body.country.toUpperCase()==="IN"&&postal.length!==6)return reply.code(400).send({error:"invalid_postal_code"});
-  const externalReference=(body.reference?.trim()||(`${body.retailer.toUpperCase()}-${body.accountReference}`)).slice(0,160);
   const client=await db.connect();
   try{
     await client.query("begin");
+    const login=body.accountReference.slice(0,240);
+    const existingIdentity=await client.query(
+      `select c.external_reference
+       from retailer_accounts ra
+       join customers c on c.id=ra.customer_id
+       where ra.tenant_id=$1 and ra.retailer=$2 and ra.account_reference=$3
+       limit 1 for update of ra`,
+      [p.tenantId,body.retailer,login]
+    );
+    const externalReference=body.retailer==="flipkart"
+      ?(existingIdentity.rows[0]?.external_reference||await nextOrderGridFlipReference(client,p.tenantId))
+      :(existingIdentity.rows[0]?.external_reference||`${body.retailer.toUpperCase()}-${body.accountReference}`).slice(0,160);
     const customer=await client.query(
       `insert into customers(tenant_id,external_reference,display_name,phone)
        values($1,$2,$3,$4)
@@ -650,7 +686,6 @@ app.post("/api/retailer-users",async(req,reply)=>{
       [book.rows[0].id,customerId,body.name,phone,body.line1,body.line2||null,body.city,body.state,postal,body.country.toUpperCase(),externalReference]
     );
 
-    const login=body.accountReference.slice(0,240);
     const byLogin=await client.query(
       "select id,customer_id from retailer_accounts where tenant_id=$1 and retailer=$2 and account_reference=$3 limit 1 for update",
       [p.tenantId,body.retailer,login]
