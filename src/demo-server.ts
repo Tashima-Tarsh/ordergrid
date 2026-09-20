@@ -32,6 +32,10 @@ const dealerUsers=new Map<string,DemoDealerUser>();
 dealerUsers.set("demo-owner",{id:"demo-owner",tenant_id:mainDealerId,email,role:"OWNER",home_user:true});
 const addresses=new Map<string,Address>(),items:Item[]=[],batches:Batch[]=[],tasks:Task[]=[],baskets:Basket[]=[],workers=new Map<string,Worker>();
 const addressesByReference=(reference:string,tenantId=activeDealerId)=>[...addresses.values()].find(a=>a.tenant_id===tenantId&&(a.reference||a.id)===reference);
+const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===activeDealerId);
+const activeBatches=()=>batches.filter(b=>b.tenant_id===activeDealerId);
+const activeTasks=()=>tasks.filter(t=>t.tenant_id===activeDealerId);
+const activeBaskets=()=>baskets.filter(b=>b.tenant_id===activeDealerId);
 const credentialKey=randomBytes(32).toString("base64");
 const accountRefs=new Map<string,Map<string,string>>();
 const credentialVault=new Map<string,{ciphertext:Buffer;iv:Buffer;authTag:Buffer}>();
@@ -66,6 +70,51 @@ app.addHook("preHandler",async(req,reply)=>{if(!req.url.startsWith("/api/")||req
 app.get("/api/health",async()=>({status:"ok",mode:"showroom"}));
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{const body=z.object({email:z.string().email(),password:z.string()}).parse(req.body);if(!same(body.email.toLowerCase(),email)||!same(body.password,password))return reply.code(401).send({error:"invalid_credentials"});reply.setCookie("demo_session",session,{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});return {user:{role:"OWNER"}};});
 app.post("/api/logout",async(_,reply)=>{reply.clearCookie("demo_session",{path:"/"});return {ok:true}});
+app.get("/api/dealer-network",async()=>{
+  const rows=[...dealers.values()].map(d=>({
+    id:d.id,name:d.name,dealer_type:d.dealer_type,active:d.id===activeDealerId,
+    user_count:[...dealerUsers.values()].filter(u=>u.tenant_id===d.id).length,
+    customer_count:[...addresses.values()].filter(a=>a.tenant_id===d.id).length,
+    retailer_account_count:[...addresses.values()].filter(a=>a.tenant_id===d.id).reduce((n,a)=>n+(accountRefs.get(a.id)?.size||0),0),
+    order_count:baskets.filter(b=>b.tenant_id===d.id).length,
+    confirmed_count:baskets.filter(b=>b.tenant_id===d.id&&b.status==="CONFIRMED").length,
+    virtual_card_count:0,
+    funding_connected:false
+  }));
+  return {homeTenantId:mainDealerId,activeTenantId:activeDealerId,canCreateSubdealer:activeDealerId===mainDealerId,dealers:rows};
+});
+app.post("/api/dealer-context",async(req,reply)=>{
+  const body=z.object({tenantId:z.string().uuid()}).parse(req.body);
+  if(!dealers.has(body.tenantId))return reply.code(403).send({error:"dealer_access_denied"});
+  activeDealerId=body.tenantId;
+  const dealer=dealers.get(activeDealerId)!;
+  return {dealer:{id:dealer.id,name:dealer.name},role:"OWNER"};
+});
+app.post("/api/dealers",async(req,reply)=>{
+  if(activeDealerId!==mainDealerId)return reply.code(403).send({error:"main_dealer_owner_required"});
+  const body=z.object({name:z.string().min(2).max(120),ownerEmail:z.string().email(),ownerPassword:z.string().min(14).max(200)}).parse(req.body);
+  if([...dealerUsers.values()].some(u=>u.email.toLowerCase()===body.ownerEmail.toLowerCase()))return reply.code(409).send({error:"email_already_in_use"});
+  const id=randomUUID(),userId=randomUUID();
+  dealers.set(id,{id,name:body.name.trim(),dealer_type:"SUB",parent_id:mainDealerId});
+  dealerUsers.set(userId,{id:userId,tenant_id:id,email:body.ownerEmail.toLowerCase(),role:"OWNER",home_user:true});
+  return reply.code(201).send({dealer:{id,name:body.name.trim()},owner:{id:userId,email:body.ownerEmail.toLowerCase(),role:"OWNER"}});
+});
+app.get("/api/dealer-users",async()=>({users:[...dealerUsers.values()].filter(u=>u.tenant_id===activeDealerId)}));
+app.post("/api/dealer-users",async(req,reply)=>{
+  const body=z.object({email:z.string().email(),role:z.enum(["OWNER","APPROVER","BUYER","AUDITOR"]),password:z.string().min(14).max(200).optional()}).parse(req.body);
+  const existing=[...dealerUsers.values()].find(u=>u.tenant_id===activeDealerId&&u.email.toLowerCase()===body.email.toLowerCase());
+  if(existing){existing.role=body.role;return {user:existing}}
+  if(!body.password)return reply.code(400).send({error:"password_required_for_new_user"});
+  const id=randomUUID(),user:DemoDealerUser={id,tenant_id:activeDealerId,email:body.email.toLowerCase(),role:body.role,home_user:true};
+  dealerUsers.set(id,user);return reply.code(201).send({user});
+});
+app.delete("/api/dealer-users/:userId",async(req,reply)=>{
+  const id=String((req.params as any).userId);
+  const user=dealerUsers.get(id);
+  if(!user||user.tenant_id!==activeDealerId)return reply.code(404).send({error:"user_not_found"});
+  if(id==="demo-owner")return reply.code(409).send({error:"cannot_remove_current_user"});
+  dealerUsers.delete(id);return {ok:true};
+});
 app.get("/api/dashboard",async()=>{const batchGroups=new Map<string,Batch[]>(),taskGroups=new Map<string,Task[]>();for(const b of batches)batchGroups.set(b.status,[...(batchGroups.get(b.status)??[]),b]);for(const t of tasks)taskGroups.set(t.status,[...(taskGroups.get(t.status)??[]),t]);return {batches:[...batchGroups].map(([status,list])=>({status,count:list.length,total:list.reduce((n,b)=>n+b.estimated_total_minor,0)})),orders:[...taskGroups].map(([status,list])=>({status,count:list.length}))};});
 app.get("/api/batches",async()=>({batches}));
 app.get("/api/checkout-tasks",async()=>({tasks}));
