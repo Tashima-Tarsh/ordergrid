@@ -63,18 +63,41 @@
   }
   async function load(){
     try{
-      const [p,c,i]=await Promise.all([request('/api/cards/provider'),request('/api/cards'),request('/api/issuers')]);
-      provider=p;cards=c.cards||[];issuers=i.issuers||[];render();
+      const [p,c,i,b]=await Promise.all([request('/api/cards/provider'),request('/api/cards'),request('/api/issuers'),request('/api/cards/banks')]);
+      provider=p;cards=c.cards||[];issuers=i.issuers||[];banks=b.banks||[];render();
     }catch(error){
       provider={provider:'disabled',configured:false,source:'showroom'};
-      cards=[];issuers=[];render();console.error(error);
+      cards=[];issuers=[];banks=[];render();console.error(error);
     }
   }
+
+  function syncBankConnector(){
+    const form=$('#issuerForm'),code=String(form.elements.provider?.value||'hdfc'),profile=banks.find(x=>x.code===code);
+    const isEnKash=code==='enkash';
+    $('#bankApiFields').hidden=isEnKash;$('#enkashApiFields').hidden=!isEnKash;
+    if(profile){
+      $('#issuerBankName').value=profile.name;
+      $('#bankProfileNote').innerHTML='<strong>'+profile.name+'</strong> · '+profile.product+'<br>'+profile.notes;
+      if(form.elements.integrationMode)form.elements.integrationMode.value=profile.mode==='PARENT_CARD_API'?'PARENT_CARD_API':'CUSTOM_BANK_API';
+    }else if(isEnKash){
+      $('#issuerBankName').value='EnKash';
+      $('#bankProfileNote').textContent='Use your approved EnKash corporate-card programme API credentials.';
+    }
+    const needsKyc=isEnKash;
+    document.querySelectorAll('[data-cardholder-kyc] input,[data-cardholder-kyc] select').forEach(input=>{input.required=needsKyc});
+    syncBankAuth();
+  }
+  function syncBankAuth(){
+    const mode=String($('#bankAuthMode')?.value||'OAUTH2_CLIENT_CREDENTIALS'),map={OAUTH2_CLIENT_CREDENTIALS:'oauth',BEARER:'bearer',BASIC:'basic',API_KEY:'apikey'};
+    document.querySelectorAll('#bankApiFields [data-auth]').forEach(node=>{node.hidden=node.dataset.auth!==map[mode]});
+  }
+  $('#issuerProvider')?.addEventListener('change',syncBankConnector);
+  $('#bankAuthMode')?.addEventListener('change',syncBankAuth);
 
   $('#connectIssuer').onclick=()=>{
     if(provider.source==='showroom'){toast('Card programme connection is available on the production OrderGrid service.');return}
     $('#issuerError').textContent='';
-    $('#issuerDialog').showModal();
+    syncBankConnector();$('#issuerDialog').showModal();
   };
   $('#closeIssuer').onclick=()=>$('#issuerDialog').close();
   $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
