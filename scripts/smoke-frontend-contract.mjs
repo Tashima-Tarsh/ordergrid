@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -22,6 +22,9 @@ const automationCss=files["public/automation-center.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
+const baskets=files["src/baskets.ts"];
+const allocation=files["src/flipkart-allocation.ts"];
+const allocationMigration=files["src/migrations/023_flipkart_account_pinned_batch_items.sql"];
 const demo=files["src/demo-server.ts"];
 const agent=files["agent/index.mjs"];
 const cdp=files["agent/cdp.mjs"];
@@ -100,6 +103,19 @@ must(agent.includes('command.command==="PRODUCT_CHECK"'),"flipkart mobile contra
 must(cdp.includes("inspectFlipkartMobile"),"flipkart mobile contract: browser product inspector missing");
 must(cdp.includes("flipkartCartProbeScript"),"flipkart mobile contract: account quantity probe missing");
 must(!wizard.includes('max="2"'),"flipkart mobile contract: quantity limit must not be hard-coded to two");
+must(wizard.includes("Allocate across ready accounts"),"flipkart allocation contract: multi-account allocation control missing");
+must(wizard.includes("/api/products/flipkart/mobile/allocation/plan"),"flipkart allocation contract: allocation planner API missing from wizard");
+must(wizard.includes("checkRequired").toString()&&wizard.includes("slice(0,10)"),"flipkart allocation contract: account checks must run in bounded waves");
+must(app.includes("allocationPlan.allocations.map"),"flipkart allocation contract: batch submit must expand verified account allocations");
+must(app.includes("retailerAccountId:String(allocation.retailerAccountId)"),"flipkart allocation contract: exact verified account must be submitted");
+must(server.includes('app.post("/api/products/flipkart/mobile/allocation/plan"'),"flipkart allocation contract: allocation planner route missing");
+must(server.includes("flipkart_product_check_account_mismatch"),"flipkart allocation contract: account/check mismatch protection missing");
+must(server.includes("flipkart_allocation_account_address_mismatch"),"flipkart allocation contract: account/address mismatch protection missing");
+must(server.includes("retailer_account_id,unit_price_minor"),"flipkart allocation contract: batch item must persist pinned retailer account");
+must(baskets.includes("bi.retailer_account_id"),"flipkart allocation contract: basket sync must preserve pinned retailer account");
+must(baskets.includes("retailer_account_id=coalesce(excluded.retailer_account_id"),"flipkart allocation contract: pinned account must survive basket upsert");
+must(allocation.includes("remainingQuantity"),"flipkart allocation contract: allocation engine must expose remaining quantity");
+must(allocationMigration.includes("add column if not exists retailer_account_id"),"flipkart allocation contract: batch-item account migration missing");
 must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];`),"retailer session contract: OTP-only accounts must be eligible for preparation");
 must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
 must(server.includes(`session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end`),"retailer session contract: OTP challenge must stay queued until authenticated");
