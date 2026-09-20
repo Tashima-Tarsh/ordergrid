@@ -520,6 +520,39 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   return {id:rows[0].id,status:rows[0].status};
 });
 
+app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const basket=await db.query(
+    `select cb.id,cb.retailer from checkout_baskets cb where cb.id=$1 and cb.tenant_id=$2`,
+    [id,p.tenantId]
+  );
+  if(!basket.rows[0])return reply.code(404).send({error:"basket_not_found"});
+  const items=await db.query(
+    `select bi.product_url,bi.requested_quantity
+     from purchase_orders po join batch_items bi on bi.id=po.batch_item_id
+     where po.checkout_basket_id=$1 and po.tenant_id=$2
+     order by po.created_at`,
+    [id,p.tenantId]
+  );
+  if(!items.rows.length)return reply.code(409).send({error:"basket_has_no_items"});
+  let checkoutUrl=verifiedRetailerUrl(items.rows[0].product_url);
+  if(basket.rows[0].retailer==="amazon-in"){
+    const parts:string[]=[];let n=1;
+    for(const item of items.rows){
+      const url=new URL(item.product_url);
+      const match=url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+      const asin=(match?.[1]||url.searchParams.get("asin")||"").toUpperCase();
+      if(!/^[A-Z0-9]{10}$/.test(asin))continue;
+      parts.push(`ASIN.${n}=${encodeURIComponent(asin)}`);
+      parts.push(`Quantity.${n}=${Math.max(1,Number(item.requested_quantity||1))}`);
+      n++;
+    }
+    if(parts.length)checkoutUrl="https://www.amazon.in/gp/aws/cart/add.html?"+parts.join("&");
+  }
+  if(String((req.query as any)?.redirect||"")==="1")return reply.redirect(checkoutUrl);
+  return {checkoutUrl,retailer:basket.rows[0].retailer,basketId:id};
+});
+
 app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {rows}=await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,opened_at=null,failure_code=null,failure_message=null,updated_at=now() where id=$1 and tenant_id=$2 and status in ('REQUIRES_ACTION','FAILED') returning id,status",[id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"basket_not_retryable"});await audit(db,p.tenantId,p.id,"bulk_basket.retry_requested","checkout_basket",id);return rows[0];});
 
 app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
