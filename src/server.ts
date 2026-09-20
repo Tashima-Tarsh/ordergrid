@@ -674,7 +674,7 @@ app.get("/api/recipients",async(req)=>{
     join customers c on c.id=a.customer_id
     left join retailer_accounts ra on ra.customer_id=c.id and ra.tenant_id=ab.tenant_id
     where ab.tenant_id=$1
-    group by a.id,c.external_reference
+    group by a.id,c.external_reference,c.created_at
     order by c.created_at desc,a.id
     limit 5000
   `,[p.tenantId]);
