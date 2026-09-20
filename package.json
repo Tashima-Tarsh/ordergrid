@@ -15,7 +15,7 @@
     "db:migrate": "node dist/migrate.js",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit && npm run check:js",
-    "check:js": "node --check public/app.js && node --check public/bulk.js && node --check public/funding.js && node --check public/wizard.js && node --check public/navigation.js && node --check public/fulfilment.js && node --check agent/index.mjs && node --check agent/cdp.mjs && node --check public/control-center.js && node --check public/automation-center.js",
+    "check:js": "node --check public/app.js && node --check public/dashboard.js && node --check public/bulk.js && node --check public/funding.js && node --check public/wizard.js && node --check public/navigation.js && node --check public/fulfilment.js && node --check agent/index.mjs && node --check agent/cdp.mjs && node --check public/control-center.js && node --check public/automation-center.js",
     "agent": "node agent/index.mjs",
     "audit:ci": "node scripts/audit-ci.mjs",
     "smoke:demo": "node scripts/smoke-demo.mjs"
