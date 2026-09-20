@@ -1,0 +1,72 @@
+/* Premium executive overview */
+.command-dashboard.premium-overview{display:block!important;margin:0 0 18px!important}
+.overview-shell{display:grid;gap:14px}
+.overview-hero{position:relative;overflow:hidden;min-height:310px;padding:28px;border:1px solid #17364a;border-radius:22px;background:
+radial-gradient(circle at 92% 8%,rgba(52,211,153,.18),transparent 28%),
+radial-gradient(circle at 72% 112%,rgba(37,99,235,.14),transparent 35%),
+linear-gradient(145deg,#06111d 0%,#0a1d2c 58%,#0d2938 100%);color:#fff;box-shadow:0 24px 64px rgba(2,12,27,.18)}
+.overview-hero:after{content:"";position:absolute;right:-70px;bottom:-135px;width:310px;height:310px;border:1px solid rgba(110,231,183,.13);border-radius:50%;box-shadow:0 0 0 44px rgba(52,211,153,.025),0 0 0 88px rgba(52,211,153,.018)}
+.overview-hero-top,.overview-primary,.overview-hero-actions,.overview-section-head,.overview-health-item,.overview-pulse-row{display:flex;align-items:center}
+.overview-hero-top{justify-content:space-between;gap:18px;position:relative;z-index:1}
+.overview-brandline{display:flex;align-items:center;gap:13px}
+.overview-live-mark{width:44px;height:44px;display:grid;place-items:center;border-radius:14px;border:1px solid rgba(110,231,183,.27);background:rgba(52,211,153,.1);box-shadow:inset 0 0 24px rgba(52,211,153,.04)}
+.overview-live-mark i{width:12px;height:12px;border-radius:50%;background:#34d399;box-shadow:0 0 0 6px rgba(52,211,153,.12),0 0 18px rgba(52,211,153,.8);animation:overviewPulse 2.5s ease-in-out infinite}
+@keyframes overviewPulse{50%{transform:scale(.72);opacity:.65}}
+.overview-hero .eyebrow{color:#6ee7b7!important}
+.overview-hero h2{margin:3px 0 0;font-size:19px;letter-spacing:-.02em}
+.overview-status{padding:7px 10px;border:1px solid rgba(110,231,183,.26);border-radius:999px;background:rgba(52,211,153,.1);color:#8af1cb;font-size:10px;font-weight:900;letter-spacing:.1em}
+.overview-primary{justify-content:space-between;gap:28px;margin:38px 0 24px;position:relative;z-index:1}
+.overview-primary-copy{max-width:650px}
+.overview-primary-copy h3{margin:0;font-size:clamp(28px,4vw,46px);line-height:1.03;letter-spacing:-.045em}
+.overview-primary-copy p{max-width:620px;margin:13px 0 0;color:#a7bdcc;font-size:14px;line-height:1.6}
+.overview-exposure{min-width:220px;padding:18px 20px;border:1px solid rgba(255,255,255,.09);border-radius:16px;background:rgba(255,255,255,.045);backdrop-filter:blur(7px)}
+.overview-exposure span,.overview-kpi span,.overview-health-item span,.overview-pulse-row span,.overview-network-stat span{display:block;font-size:9px;font-weight:900;letter-spacing:.11em;color:#7895aa}
+.overview-exposure strong{display:block;margin-top:6px;font-size:30px;letter-spacing:-.04em;color:#fff}
+.overview-exposure small{display:block;margin-top:5px;color:#7f9bb0;font-size:11px}
+.overview-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;position:relative;z-index:1}
+.overview-kpi{padding:13px 14px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.035)}
+.overview-kpi strong{display:block;margin-top:5px;color:#eaf7f3;font-size:15px}
+.overview-hero-actions{gap:9px;margin-top:18px;position:relative;z-index:1}
+.overview-hero-actions button{padding:.68rem .9rem;font-size:12px}
+.overview-hero-actions .secondary{background:transparent;color:#dcebf3;border-color:#385366}
+.overview-healthbar{display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 8px 30px rgba(15,23,42,.045)}
+.overview-health-item{gap:11px;padding:15px 17px;border-right:1px solid #edf1f5}
+.overview-health-item:last-child{border-right:0}
+.overview-health-icon{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:#ecfdf5;color:#047857;font-size:12px;font-weight:900;flex:none}
+.overview-health-item strong{display:block;margin-top:3px;color:#0f172a;font-size:13px}
+.overview-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+.overview-card{padding:20px;border:1px solid #e3e8ee;border-radius:17px;background:#fff;box-shadow:0 8px 30px rgba(15,23,42,.045)}
+.overview-section-head{justify-content:space-between;gap:12px}
+.overview-section-head h3{margin:3px 0 0;color:#0f172a;font-size:16px}
+.overview-chip{padding:6px 9px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:9px;font-weight:900;letter-spacing:.08em}
+.overview-progress-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:17px}
+.overview-progress-grid div{padding:14px 10px;border-radius:12px;background:#f7fafc;text-align:center}
+.overview-progress-grid strong{display:block;color:#0f172a;font-size:23px;letter-spacing:-.03em}
+.overview-progress-grid span{display:block;margin-top:3px;color:#64748b;font-size:10px}
+.overview-progress-track{height:7px;margin:17px 0 13px;overflow:hidden;border-radius:999px;background:#e8edf2}
+.overview-progress-track i{display:block;width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#10b981,#34d399);transition:width .35s ease}
+.overview-next{margin:0;padding:11px 13px;border-left:3px solid #34d399;border-radius:0 9px 9px 0;background:#ecfdf5;color:#166534;font-size:12px;line-height:1.45}
+.overview-exceptions{display:grid;gap:8px;margin-top:13px}
+.overview-exception{display:flex;gap:10px;align-items:flex-start;padding:10px 11px;border:1px solid #edf1f5;border-radius:11px;background:#fbfcfd}
+.overview-exception b{width:7px;height:7px;margin-top:5px;border-radius:50%;background:#f59e0b;flex:none}
+.overview-exception span{color:#334155;font-size:12px;line-height:1.45}
+.overview-exceptions>p{margin:4px 0;color:#64748b;font-size:12px}
+.overview-network{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+.overview-network-panel,.overview-pulse{padding:20px;border:1px solid #e3e8ee;border-radius:17px;background:#fff;box-shadow:0 8px 30px rgba(15,23,42,.045)}
+.overview-dealer-name{margin:15px 0 3px;color:#0f172a;font-size:20px;letter-spacing:-.025em}
+.overview-dealer-meta{margin:0;color:#64748b;font-size:12px}
+.overview-network-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:17px}
+.overview-network-stat{padding:12px;border-radius:11px;background:#f7fafc}
+.overview-network-stat strong{display:block;margin-top:4px;color:#0f172a;font-size:18px}
+.overview-pulse-list{margin-top:12px}
+.overview-pulse-row{justify-content:space-between;gap:14px;padding:10px 0;border-top:1px solid #edf1f5}
+.overview-pulse-row:first-child{border-top:0}
+.overview-pulse-row strong{color:#0f172a;font-size:12px;text-align:right}
+.overview-refresh-time{margin:13px 0 0;color:#94a3b8;font-size:10px}
+.metrics[data-view="overview"]{margin-top:14px!important}
+.metrics[data-view="overview"] article{position:relative;overflow:hidden;background:linear-gradient(145deg,#fff,#fbfcfe)!important}
+.metrics[data-view="overview"] article:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#dce6ec}
+.metrics[data-view="overview"] article:nth-child(3):before,.metrics[data-view="overview"] article:nth-child(4):before{background:#34d399}
+@media(max-width:1050px){.overview-grid,.overview-network{grid-template-columns:1fr}.overview-primary{align-items:flex-start}.overview-healthbar{grid-template-columns:1fr 1fr}.overview-health-item:nth-child(2){border-right:0}.overview-health-item:nth-child(-n+2){border-bottom:1px solid #edf1f5}}
+@media(max-width:720px){.overview-hero{padding:20px}.overview-primary{flex-direction:column;margin-top:28px}.overview-exposure{width:100%;min-width:0}.overview-kpis,.overview-progress-grid{grid-template-columns:1fr 1fr}.overview-hero-top{align-items:flex-start}.overview-healthbar{grid-template-columns:1fr}.overview-health-item{border-right:0;border-bottom:1px solid #edf1f5}.overview-health-item:last-child{border-bottom:0}.overview-network-stats{grid-template-columns:1fr 1fr 1fr}}
+@media(max-width:480px){.overview-kpis,.overview-progress-grid,.overview-network-stats{grid-template-columns:1fr}.overview-hero-actions{align-items:stretch;flex-direction:column}.overview-hero-actions button{width:100%}.overview-status{font-size:9px}}
