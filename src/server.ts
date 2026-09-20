@@ -1891,7 +1891,7 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
     currency:z.literal("INR").default("INR")
   }).parse(req.body);
   const basket=await db.query(
-    "select id,batch_id,status from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') limit 1",
+    "select id,batch_id,status,stock_watch_started_at,stock_watch_max_amount_minor from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') limit 1",
     [id,p.tenantId,body.workerId]
   );
   if(!basket.rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
@@ -1924,6 +1924,7 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   const breaches:string[]=[];
   if(orderVariancePercent>Number(policy.max_price_increase_percent))breaches.push("PRICE_VARIANCE");
   if(Number(policy.max_order_value_minor)>0&&body.amountMinor>Number(policy.max_order_value_minor))breaches.push("ORDER_VALUE");
+  if(basket.rows[0].stock_watch_started_at&&Number(basket.rows[0].stock_watch_max_amount_minor||0)>0&&body.amountMinor>Number(basket.rows[0].stock_watch_max_amount_minor))breaches.push("STOCK_WATCH_CEILING");
   if(batchVariancePercent>Number(policy.max_batch_variance_percent))breaches.push("BATCH_VARIANCE");
 
   await db.query(
@@ -2124,7 +2125,7 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
       tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"HUMAN_ACTION_REQUIRED",
       title:isRetailerAuth?"Retailer verification required":"Payment verification required",
       message:body.message??"This order needs a protected human verification step before automation can continue.",
-      idempotencyKey:`human-action:${id}:${body.code??"REVIEW"}:${Date.now().toString().slice(0,-4)}`,
+      idempotencyKey:`human-action:${id}:${body.code??"REVIEW"}`,
       payload:{code:body.code??null}
     });
   }else if(body.state==="FAILED"){
