@@ -2658,6 +2658,7 @@ app.post("/api/batches",async(req,reply)=>{
       productUrl:z.string().url(),
       quantity:z.number().int().positive().max(10000),
       addressId:z.string().uuid().optional(),
+      retailerAccountId:z.string().uuid().optional(),
       estimatedUnitPriceMinor:z.number().int().positive().optional(),
       productCheckId:z.string().uuid().optional(),
       hsnSac:z.string().trim().min(2).max(16).optional(),
@@ -2688,6 +2689,9 @@ app.post("/api/batches",async(req,reply)=>{
       if(String(command.payload?.productUrl||"")!==verifiedUrl){
         return reply.code(409).send({error:"flipkart_product_url_changed",message:"The Flipkart URL changed after verification. Run Check product again."});
       }
+      if(item.retailerAccountId&&String(command.payload?.retailerAccountId||"")!==item.retailerAccountId){
+        return reply.code(409).send({error:"flipkart_product_check_account_mismatch",message:"This product check belongs to a different Flipkart account. Re-run the allocation check."});
+      }
       const checkedAt=Date.parse(String(result.checkedAt||command.completed_at||""));
       if(!Number.isFinite(checkedAt)||Date.now()-checkedAt>10*60_000){
         return reply.code(409).send({error:"flipkart_product_check_stale",message:"The Flipkart price/quantity check is older than 10 minutes. Refresh it before approval."});
@@ -2698,6 +2702,20 @@ app.post("/api/batches",async(req,reply)=>{
       }
       if(!Number.isInteger(maxQuantity)||maxQuantity<1||item.quantity>maxQuantity){
         return reply.code(409).send({error:"flipkart_quantity_exceeds_verified_limit",message:"Requested quantity exceeds the maximum verified for this Flipkart account.",maxQuantity});
+      }
+      if(item.retailerAccountId){
+        if(!item.addressId)return reply.code(409).send({error:"flipkart_allocation_address_required",message:"A pinned Flipkart account allocation requires its bound delivery address."});
+        const pinned=await db.query(
+          `select 1
+           from retailer_accounts ra
+           join addresses a on a.customer_id=ra.customer_id
+           join address_books ab on ab.id=a.address_book_id and ab.tenant_id=ra.tenant_id
+           where ra.id=$1 and ra.tenant_id=$2 and ra.retailer='flipkart' and ra.active
+             and ra.session_status='READY' and a.id=$3
+           limit 1`,
+          [item.retailerAccountId,p.tenantId,item.addressId]
+        );
+        if(!pinned.rows[0])return reply.code(409).send({error:"flipkart_allocation_account_address_mismatch",message:"The selected delivery address is not bound to the Flipkart account that was verified."});
       }
     }
     preparedItems.push({...item,retailer});
@@ -2724,8 +2742,8 @@ app.post("/api/batches",async(req,reply)=>{
     );
     for(const item of preparedItems){
       await c.query(
-        "insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,unit_price_minor,pricing_status,pricing_checked_at,hsn_sac,gst_rate,cess_rate,price_includes_gst) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        [b.rows[0].id,item.productUrl,item.retailer,item.quantity,item.addressId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null,item.hsnSac??null,item.gstRate??null,item.cessRate??0,item.priceIncludesGst]
+        "insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,retailer_account_id,unit_price_minor,pricing_status,pricing_checked_at,hsn_sac,gst_rate,cess_rate,price_includes_gst) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [b.rows[0].id,item.productUrl,item.retailer,item.quantity,item.addressId??null,item.retailerAccountId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null,item.hsnSac??null,item.gstRate??null,item.cessRate??0,item.priceIncludesGst]
       );
     }
     await c.query("commit");
