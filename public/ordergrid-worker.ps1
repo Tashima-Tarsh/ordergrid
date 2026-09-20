@@ -46,7 +46,7 @@ $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try { $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 
-$env:ORDERGRID_URL = "https://ordergrid-showroom.onrender.com"
+$env:ORDERGRID_URL = $url
 $env:ORDERGRID_EMAIL = $email
 $env:ORDERGRID_PASSWORD = $password
 $env:ORDERGRID_PARALLEL = "1"
@@ -55,7 +55,7 @@ $env:ORDERGRID_DAEMON = "1"
 
 Write-Host ""
 Write-Host "Connecting worker to OrderGrid..." -ForegroundColor Green
-Write-Host "When Chrome opens Amazon, sign in normally if Amazon asks. Complete OTP/CAPTCHA/3DS yourself when shown." -ForegroundColor Yellow
+Write-Host "When a retailer asks for sign-in, payment setup, OTP, CAPTCHA or 3DS, complete that protected step yourself. Saved/tokenized payment methods can then be reused by the isolated retailer profile." -ForegroundColor Yellow
 Write-Host "Keep this window open while testing."
 Write-Host ""
 
