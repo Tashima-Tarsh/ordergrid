@@ -2314,6 +2314,7 @@ app.post("/api/batches",async(req,reply)=>{
       quantity:z.number().int().positive().max(10000),
       addressId:z.string().uuid().optional(),
       estimatedUnitPriceMinor:z.number().int().positive().optional(),
+      productCheckId:z.string().uuid().optional(),
       hsnSac:z.string().trim().min(2).max(16).optional(),
       gstRate:z.number().min(0).max(100).optional(),
       cessRate:z.number().min(0).max(100).default(0),
@@ -2324,7 +2325,38 @@ app.post("/api/batches",async(req,reply)=>{
   const fullyEstimated=input.items.every(i=>i.estimatedUnitPriceMinor);
   if(!fullyEstimated&&!jobs)return reply.code(422).send({error:"estimated_price_required"});
 
-  const preparedItems=input.items.map(item=>({...item,retailer:retailerForProductUrl(item.productUrl).id}));
+  const preparedItems:any[]=[];
+  for(const item of input.items){
+    const retailer=retailerForProductUrl(item.productUrl).id;
+    if(retailer==="flipkart"){
+      if(!item.productCheckId)return reply.code(409).send({error:"flipkart_product_check_required",message:"Run Check product for this Flipkart mobile before creating the fulfilment batch."});
+      const verifiedUrl=flipkartProductCandidateUrl(item.productUrl);
+      const checked=await db.query(
+        `select status,result,payload,completed_at from execution_worker_commands
+         where id=$1 and tenant_id=$2 and command='PRODUCT_CHECK' limit 1`,
+        [item.productCheckId,p.tenantId]
+      );
+      const command=checked.rows[0],result=command?.result??{};
+      if(!command||command.status!=="COMPLETED"||result.state!=="READY"||result.isMobile!==true||result.maxQuantityVerified!==true){
+        return reply.code(409).send({error:"flipkart_product_check_not_ready",message:"The Flipkart product check is not complete and verified."});
+      }
+      if(String(command.payload?.productUrl||"")!==verifiedUrl){
+        return reply.code(409).send({error:"flipkart_product_url_changed",message:"The Flipkart URL changed after verification. Run Check product again."});
+      }
+      const checkedAt=Date.parse(String(result.checkedAt||command.completed_at||""));
+      if(!Number.isFinite(checkedAt)||Date.now()-checkedAt>10*60_000){
+        return reply.code(409).send({error:"flipkart_product_check_stale",message:"The Flipkart price/quantity check is older than 10 minutes. Refresh it before approval."});
+      }
+      const livePrice=Number(result.sellingPriceMinor||0),maxQuantity=Number(result.maxQuantity||0);
+      if(!livePrice||item.estimatedUnitPriceMinor!==livePrice){
+        return reply.code(409).send({error:"flipkart_price_changed",message:"The submitted price does not match the latest verified Flipkart price. Run Check product again.",verifiedPriceMinor:livePrice});
+      }
+      if(!Number.isInteger(maxQuantity)||maxQuantity<1||item.quantity>maxQuantity){
+        return reply.code(409).send({error:"flipkart_quantity_exceeds_verified_limit",message:"Requested quantity exceeds the maximum verified for this Flipkart account.",maxQuantity});
+      }
+    }
+    preparedItems.push({...item,retailer});
+  }
   const addressIds=[...new Set(preparedItems.flatMap(item=>item.addressId?[item.addressId]:[]))];
   if(addressIds.length){
     const owned=await db.query(
