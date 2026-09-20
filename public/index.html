@@ -12,7 +12,7 @@
   <div class="ff-hero">
     <div class="ff-hero-copy">
       <span class="ff-orb">OG</span>
-      <div><p class="eyebrow">FULFILMENT COMMAND</p><h2>Procurement execution</h2><p>Products, recipients, approval, account allocation and retailer checkout in one live workspace.</p></div>
+      <div><p class="eyebrow">FULFILMENT COMMAND</p><h2>Procurement execution</h2><p>Create procurement, monitor live order readiness, and continue checkout from one compact workspace.</p></div>
     </div>
     <div class="ff-hero-actions">
       <span class="ff-live-chip"><i></i> LIVE</span>
@@ -33,39 +33,6 @@
 
   <div class="fulfilment-grid">
     <div class="fulfilment-flow">
-      <div class="fulfilment-flow-head">
-        <div><p class="eyebrow">EXECUTION PIPELINE</p><h2>From product to confirmation</h2><p>Each stage reflects live batch and checkout state.</p></div>
-        <span class="ff-pipeline-badge" id="ffPipelineState">WAITING</span>
-      </div>
-
-      <ol class="fulfilment-steps">
-        <li class="flow-step" data-flow-step="products">
-          <span class="flow-number">1</span>
-          <div class="flow-copy"><small>PRODUCTS</small><h3>Products & quantities</h3><p id="flowProductsSummary">Add the products to procure.</p><button type="button" class="secondary flow-edit" id="flowAddProducts">Edit products</button></div>
-          <span class="flow-state" id="flowProductsState">WAITING</span>
-        </li>
-        <li class="flow-step" data-flow-step="recipients">
-          <span class="flow-number">2</span>
-          <div class="flow-copy"><small>RECIPIENTS</small><h3>Users & delivery</h3><p id="flowRecipientsSummary">Bind authorised retailer accounts and delivery addresses.</p><div id="recipientAccounts" class="recipient-accounts"><p class="muted">No recipients imported yet.</p></div><button type="button" class="secondary flow-edit" id="flowImportRecipients">Manage recipients</button></div>
-          <span class="flow-state" id="flowRecipientsState">WAITING</span>
-        </li>
-        <li class="flow-step" data-flow-step="approval">
-          <span class="flow-number">3</span>
-          <div class="flow-copy"><small>APPROVAL</small><h3>Commercial approval</h3><p id="flowApprovalSummary">Review final order value and payment route.</p></div>
-          <span class="flow-state" id="flowApprovalState">WAITING</span>
-        </li>
-        <li class="flow-step" data-flow-step="checkout">
-          <span class="flow-number">4</span>
-          <div class="flow-copy"><small>CHECKOUT</small><h3>Retailer execution</h3><p id="flowCheckoutSummary">Approved orders move through checkout.</p><div class="checkout-engine"><div><span class="engine-dot" id="engineDot"></span><div><strong id="engineName">Checkout ready</strong><small id="engineMeta">Approve the batch to continue.</small></div></div><span class="engine-status" id="engineStatus">WAITING</span></div></div>
-          <span class="flow-state" id="flowCheckoutState">WAITING</span>
-        </li>
-        <li class="flow-step" data-flow-step="confirmation">
-          <span class="flow-number">5</span>
-          <div class="flow-copy"><small>CONFIRMATION</small><h3>Retailer confirmation</h3><p id="flowConfirmationSummary">Retailer order IDs appear after placement.</p></div>
-          <span class="flow-state" id="flowConfirmationState">WAITING</span>
-        </li>
-      </ol>
-
       <div class="ff-lower-grid">
         <section class="ff-panel">
           <div class="ff-panel-head"><div><span>RECENT BATCHES</span><strong>Procurement activity</strong></div></div>
@@ -75,7 +42,7 @@
           <div id="batches" class="fulfilment-batches"></div>
         </section>
         <section class="ff-panel">
-          <div class="ff-panel-head"><div><span>RUN SUMMARY</span><strong>Checkout volume</strong></div></div>
+          <div class="ff-panel-head"><div><span>ORDER SUMMARY</span><strong>Checkout volume</strong></div></div>
           <div id="tasks" class="fulfilment-run-summary"><p class="muted">Approved basket volume will appear here.</p></div>
         </section>
       </div>
@@ -96,7 +63,6 @@
       <small class="cart-note">Protected verification pauses only the affected order; eligible orders can continue independently.</small>
     </aside>
   </div>
-</section>
 </section>
 <section class="panel"><div class="panel-head"><div><p class="eyebrow">PAYMENT & COMPLIANCE</p><h2>Corporate settlement ledger</h2></div><span class="pill">LIVE ORDER DATA</span></div><div class="card-ledger"><div class="ledger-stats"><div><span>Virtual cards</span><strong id="virtualCount">0</strong></div><div><span>Payments recorded</span><strong id="tokenCount">0</strong></div><div><span>GST invoices</span><strong id="invoiceCount">0</strong></div></div></div><div id="settlements"><p class="muted">Completed payments and invoices will appear here.</p></div></section><section class="gst-compliance gst-premium" id="gstCompliance">
   <div class="gst-hero">
