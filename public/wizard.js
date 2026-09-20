@@ -242,11 +242,21 @@
   productRows.addEventListener('click',async event=>{
     const remove=event.target.closest('[data-remove-product]');
     if(remove){remove.closest('.product-entry').remove();normalizeRemoveButtons();return}
+    const allocate=event.target.closest('[data-allocate-flipkart]');
+    if(allocate){
+      try{await allocateAcrossPool(allocate.closest('.product-entry'),allocate)}
+      catch(error){
+        formError.textContent=error.message;
+        const state=allocate.closest('.product-entry').querySelector('.allocation-state');
+        if(state){state.textContent='REVIEW REQUIRED';state.className='allocation-state attention'}
+      }
+      return;
+    }
     const check=event.target.closest('[data-check-flipkart]');
     if(check){try{await checkProduct(check.closest('.product-entry'),check)}catch(error){formError.textContent=error.message}}
   });
   productRows.addEventListener('input',event=>{
-    if(event.target.matches('[name="url"]'))invalidateRow(event.target.closest('.product-entry'));
+    if(event.target.matches('[name="url"],[name="quantity"]'))invalidateRow(event.target.closest('.product-entry'));
   });
   productRows.addEventListener('change',event=>{
     if(event.target.matches('[name="retailerAccountId"]'))invalidateRow(event.target.closest('.product-entry'));
@@ -255,37 +265,49 @@
   let current=1;
   const money=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value||0));
   function productData(){
-    return [...productRows.querySelectorAll('.product-entry')].map((row,i)=>({
-      index:i+1,
-      url:row.querySelector('[name="url"]').value,
-      price:Number(row.querySelector('[name="price"]').value||0),
-      quantity:Number(row.querySelector('[name="quantity"]').value||0),
-      productCheckId:row.querySelector('[name="productCheckId"]').value,
-      hsnSac:row.querySelector('[name="hsnSac"]').value,
-      gstRate:Number(row.querySelector('[name="gstRate"]').value||0),
-      cessRate:Number(row.querySelector('[name="cessRate"]').value||0),
-      priceIncludesGst:row.querySelector('[name="priceIncludesGst"]').checked,
-      title:row.dataset.productTitle||'Flipkart mobile',
-      maxQuantity:Number(row.dataset.maxQuantity||0)
-    }));
+    return [...productRows.querySelectorAll('.product-entry')].map((row,i)=>{
+      const allocationPlan=parseAllocation(row);
+      const allocationValue=allocationPlan?.allocations?.reduce((sum,a)=>sum+Number(a.sellingPriceMinor||0)*Number(a.quantity||0),0)/100||0;
+      return {
+        index:i+1,
+        url:row.querySelector('[name="url"]').value,
+        price:Number(row.querySelector('[name="price"]').value||0),
+        quantity:Number(row.querySelector('[name="quantity"]').value||0),
+        productCheckId:row.querySelector('[name="productCheckId"]').value,
+        hsnSac:row.querySelector('[name="hsnSac"]').value,
+        gstRate:Number(row.querySelector('[name="gstRate"]').value||0),
+        cessRate:Number(row.querySelector('[name="cessRate"]').value||0),
+        priceIncludesGst:row.querySelector('[name="priceIncludesGst"]').checked,
+        title:row.dataset.productTitle||'Flipkart mobile',
+        maxQuantity:Number(row.dataset.maxQuantity||0),
+        allocationPlan,
+        allocationValue
+      };
+    });
   }
   function summary(){
     const data=new FormData(form),products=productData(),recipientText=preview.textContent.trim()||'Recipient file ready';
-    const unitTotal=products.reduce((sum,p)=>sum+p.price*p.quantity,0);
+    const unitTotal=products.reduce((sum,p)=>sum+(p.allocationPlan?p.allocationValue:p.price*p.quantity),0);
     return '<div class="wizard-summary-grid">'+
       '<div><span>Batch</span><strong>'+esc(data.get('name')||'—')+'</strong></div>'+
       '<div><span>Verified Flipkart mobiles</span><strong>'+products.length+'</strong></div>'+
       '<div><span>Estimated basket value</span><strong>'+esc(money(unitTotal))+'</strong></div>'+
       '<div><span>Payment route</span><strong>'+esc(data.get('paymentMode')||'—')+'</strong></div>'+
-      '<div class="wide-summary"><span>Product checks</span><strong>'+products.map(p=>esc(p.title)+' · '+money(p.price)+' · Qty '+p.quantity+' / max '+p.maxQuantity).join('<br>')+'</strong></div>'+
+      '<div class="wide-summary"><span>Product checks</span><strong>'+products.map(p=>p.allocationPlan
+        ?esc(p.title)+' · '+p.quantity+' total units · '+p.allocationPlan.allocations.length+' accounts · verified capacity '+p.allocationPlan.verifiedCapacity
+        :esc(p.title)+' · '+money(p.price)+' · Qty '+p.quantity+' / max '+p.maxQuantity).join('<br>')+'</strong></div>'+
       '<div class="wide-summary"><span>Recipients</span><strong>'+esc(recipientText)+'</strong></div>'+
-      '<div class="wide-summary"><span>Execution model</span><strong>Verified Flipkart mobile price + account quantity limit, then grouped fulfilment execution</strong></div>'+
+      '<div class="wide-summary"><span>Execution model</span><strong>'+esc(products.every(p=>p.allocationPlan)?'Total quantity split across exact verified Flipkart accounts and their bound delivery addresses':'Verified Flipkart mobile price + account quantity limit, then grouped fulfilment execution')+'</strong></div>'+
       '</div>';
   }
   function show(step){
     current=step;
+    const rows=[...productRows.querySelectorAll('.product-entry')],pooled=rows.length>0&&rows.every(row=>parseAllocation(row)?.complete);
+    if(step===2&&pooled)updatePoolPreview();
     [nameLabel,productRows,addProduct,paymentLabel].filter(Boolean).forEach(x=>x.hidden=step!==1);
-    [fileLabel,sample,preview].filter(Boolean).forEach(x=>x.hidden=step!==2);
+    if(fileLabel)fileLabel.hidden=step!==2||pooled;
+    if(sample)sample.hidden=step!==2||pooled;
+    if(preview)preview.hidden=step!==2;
     approval.hidden=step!==3;
     checkout.hidden=step!==4;
     labels.forEach((x,i)=>{x.classList.toggle('active',i===step-1);x.classList.toggle('complete',i<step-1)});
@@ -295,17 +317,21 @@
   }
   function validateProducts(){
     if(!form.querySelector('input[name="name"]').reportValidity())return false;
-    for(const row of productRows.querySelectorAll('.product-entry')){
-      if(row.dataset.productVerified!=='true'){formError.textContent='Run Check product for every Flipkart mobile before continuing.';return false}
+    const rows=[...productRows.querySelectorAll('.product-entry')],poolCount=rows.filter(row=>parseAllocation(row)?.complete).length;
+    if(poolCount>0&&poolCount!==rows.length){formError.textContent='Use multi-account allocation for every product in this batch, or use single-account mode for every product.';return false}
+    for(const row of rows){
+      if(row.dataset.productVerified!=='true'){formError.textContent='Run product allocation or Check one account for every Flipkart mobile before continuing.';return false}
       for(const input of row.querySelectorAll('input'))if(!input.reportValidity())return false;
-      const qty=Number(row.querySelector('[name="quantity"]').value),max=Number(row.dataset.maxQuantity||0);
-      if(!max||qty>max){formError.textContent='Quantity exceeds the verified Flipkart account limit. Recheck the product.';return false}
+      const qty=Number(row.querySelector('[name="quantity"]').value),plan=parseAllocation(row),max=Number(row.dataset.maxQuantity||0);
+      if(plan){
+        if(!plan.complete||Number(plan.totalQuantity)!==qty||Number(plan.allocatedQuantity)!==qty){formError.textContent='The account allocation no longer matches the requested total. Run allocation again.';return false}
+      }else if(!max||qty>max){formError.textContent='Quantity exceeds the verified Flipkart account limit. Recheck the product.';return false}
     }
     return true;
   }
   next.onclick=()=>{
     if(current===1&&!validateProducts())return;
-    if(current===2&&!preview.textContent.trim()){formError.textContent='Upload a recipient CSV/XLSX or use sample recipients.';return}
+    if(current===2&&!preview.textContent.trim()){formError.textContent='Upload a recipient CSV/XLSX, use sample recipients, or complete multi-account allocation.';return}
     if(current===3&&!document.querySelector('#wizardApproval').checked){formError.textContent='Confirm the batch details to continue.';return}
     formError.textContent='';show(Math.min(4,current+1));
   };
