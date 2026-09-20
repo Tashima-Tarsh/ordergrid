@@ -735,7 +735,8 @@ app.get("/api/retailer-accounts",async(req)=>{
   const {rows}=await db.query(`
     select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
-      ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,ra.updated_at,
+      ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
+      ra.session_status,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
       coalesce((select sum(case
         when re.event_type in ('CREDITED','ADJUSTED') then re.units
@@ -753,6 +754,8 @@ app.get("/api/retailer-accounts",async(req)=>{
     select count(*)::int total,
       count(*) filter(where customer_id is null)::int pooled,
       count(*) filter(where active)::int active,
+      count(*) filter(where session_status='READY' and (session_target_expires_at is null or session_target_expires_at>now()))::int session_ready,
+      count(*) filter(where session_status='REAUTH_REQUIRED')::int reauth_required,
       count(*) filter(where auth_status='READY')::int ready,
       count(*) filter(where auth_status in ('LOCKED','DISABLED'))::int unavailable
     from retailer_accounts where tenant_id=$1
@@ -1558,6 +1561,8 @@ app.get("/api/bulk-baskets",async(req)=>{
   const {rows}=await db.query(`
     select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
            cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,cb.payment_status,
+           cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,
+           cb.stock_watch_started_at,cb.stock_watch_expires_at,cb.stock_last_checked_at,cb.stock_next_check_at,cb.stock_available_at,cb.stock_last_message,
            c.external_reference customer_reference,
            ra.profile_key,ra.auth_status,ra.credential_status,
            a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
@@ -1592,6 +1597,7 @@ app.get("/api/bulk-queue",async(req,reply)=>{
   await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
   const {rows}=await db.query(`
     select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
+           cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,cb.stock_next_check_at,cb.stock_watch_expires_at,
            cb.customer_id,cb.retailer_account_id,
            c.external_reference customer_reference,
            ra.profile_key,ra.auth_status,
@@ -1603,7 +1609,13 @@ app.get("/api/bulk-queue",async(req,reply)=>{
     join customers c on c.id=cb.customer_id
     join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join purchase_orders po on po.checkout_basket_id=cb.id
-    where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+    where cb.tenant_id=$1 and cb.execution_worker_id=$2
+      and (
+        cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+        or (cb.status='WAITING_STOCK' and cb.stock_watch_enabled and cb.stock_watch_auto_order
+            and cb.stock_next_check_at<=now()
+            and (cb.stock_watch_expires_at is null or cb.stock_watch_expires_at>now()))
+      )
     group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
     order by cb.created_at
   `,[p.tenantId,worker.data]);
@@ -1614,11 +1626,14 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);
   const {rows}=await db.query(`
     update checkout_baskets cb
-    set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',failure_code=null,failure_message=null,updated_at=now()
+    set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',
+        stock_last_checked_at=case when cb.status='WAITING_STOCK' then now() else stock_last_checked_at end,
+        failure_code=null,failure_message=null,updated_at=now()
     from addresses a,order_batches b,customers c,retailer_accounts ra
     where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3
-      and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
-      and (cb.expires_at>now() or cb.status='REQUIRES_ACTION')
+      and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION','WAITING_STOCK')
+      and (cb.expires_at>now() or cb.status in ('REQUIRES_ACTION','WAITING_STOCK'))
+      and (cb.status<>'WAITING_STOCK' or (cb.stock_watch_enabled and cb.stock_watch_auto_order and cb.stock_next_check_at<=now() and (cb.stock_watch_expires_at is null or cb.stock_watch_expires_at>now())))
       and a.id=cb.address_id and b.id=cb.batch_id
       and c.id=cb.customer_id and ra.id=cb.retailer_account_id
     returning cb.id,cb.customer_id,cb.retailer_account_id,cb.retailer,cb.account_reference,
