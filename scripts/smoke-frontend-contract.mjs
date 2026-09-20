@@ -97,7 +97,7 @@ must(workspaceCss.includes(".overview-kpi-strip"),"premium shell contract: dashb
 must(workspaceCss.includes(".automation-command-surface"),"premium shell contract: autopilot command surface styles missing");
 must(workspaceCss.includes(".overview-batch-rail"),"premium shell contract: horizontal batch rail styles missing");
 must(navigation.includes("hashByView"),"navigation contract: premium route hashes missing");
-must(navigation.includes("dashboard:'dashboard'"),"navigation contract: dashboard URL route missing");
+must(navigation.includes("overview:'dashboard'"),"navigation contract: dashboard URL route missing");
 must(navigation.includes("autopilot:'autopilot'"),"navigation contract: autopilot URL route missing");
 must(navigation.includes("body.product-shell{padding-left:216px}"),"navigation contract: compact premium sidebar width missing");
 must(automation.includes("automation-command-surface"),"autopilot contract: compact command surface missing");
