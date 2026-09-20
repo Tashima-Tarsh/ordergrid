@@ -85,5 +85,13 @@ must(cdp.includes('await connection.send("Page.bringToFront").catch(()=>null);')
 must(html.includes('id="downloadOrderGridWorker"'),"retailer session contract: OrderGrid must expose its secure browser worker");
 must(files["public/rewards.js"].includes("OTP / MANUAL SIGN-IN"),"retailer session contract: account UI must support OTP/manual sign-in");
 must(files["public/rewards.js"].includes("Start the OrderGrid secure browser worker first"),"retailer session contract: account UI must explain offline worker prerequisite");
+must(html.includes('id="addRetailerUser"'),"retailer user contract: visible Add Flipkart user button missing");
+must(html.includes('id="retailerUserDialog"'),"retailer user contract: user/address onboarding dialog missing");
+must(files["public/rewards.js"].includes("'/api/retailer-users'"),"retailer user contract: single user save API missing from client");
+must(files["public/rewards.js"].includes("'/api/address-books/import'"),"retailer user contract: bulk address import missing from client");
+must(!files["public/rewards.js"].includes("poolOnly=true"),"retailer user contract: customer-bound retailer accounts must remain visible");
+must(server.includes('app.post("/api/retailer-users"'),"retailer user contract: bound user API missing");
+must(server.includes("addr.postal_code address_postal_code"),"retailer user contract: retailer account response must expose bound delivery profile");
+must(server.includes("retailer_account_already_bound_to_another_user"),"retailer user contract: account identity collision protection missing");
 
 console.log("Frontend/card connector contract OK");
