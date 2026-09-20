@@ -147,7 +147,7 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
   }
   return {claimed:ids.length,ids};
 }
-const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
+const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","req.headers.x-ordergrid-worker-token","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
@@ -184,7 +184,7 @@ app.addHook("preHandler",async(req,reply)=>{
   }
 });
 
-app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok"}});
+app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),queueMode:jobs?"bullmq":"direct"}});
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
   const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);
