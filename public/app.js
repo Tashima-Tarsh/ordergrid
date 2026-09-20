@@ -19,7 +19,74 @@ $('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}cat
 $('#newBatch').onclick=openBatch;$('#emptyNew').onclick=openBatch;$('#close').onclick=()=>$('#batchDialog').close();$('#cancel').onclick=()=>$('#batchDialog').close();
 $('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};
 $('#sample').onclick=()=>{const csv='reference,recipient,legal_name,gstin,state_code,phone,line1,city,state,postal_code,amazon_user_id,amazon_password\nCUST-001,Aarav Sharma,Aarav Sharma Enterprises,,29,9876543210,12 MG Road,Bengaluru,Karnataka,560001,aarav@example.com,sample-password-1\nCUST-002,Meera Iyer,Meera Iyer Enterprises,,27,9876543211,18 Linking Road,Mumbai,Maharashtra,400052,meera@example.com,sample-password-2\nCUST-003,Kabir Singh,Kabir Singh Enterprises,,07,9876543212,22 Connaught Place,New Delhi,Delhi,110001,kabir@example.com,sample-password-3\n';recipientsFile=new File([csv],'sample-recipients.csv',{type:'text/csv'});$('#recipientPreview').textContent='3 recipient records ready'};
-$('#batchForm').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,f=new FormData(form),button=form.querySelector('button[type="submit"]');if(!recipientsFile){$('#formError').textContent='Upload a recipient file.';return}const products=[...form.querySelectorAll('.product-entry')].map(row=>({productUrl:String(row.querySelector('[name="url"]').value),quantity:Number(row.querySelector('[name="quantity"]').value),estimatedUnitPriceMinor:Math.round(Number(row.querySelector('[name="price"]').value)*100),productCheckId:String(row.querySelector('[name="productCheckId"]')?.value||''),hsnSac:String(row.querySelector('[name="hsnSac"]').value).trim(),gstRate:Number(row.querySelector('[name="gstRate"]').value),cessRate:Number(row.querySelector('[name="cessRate"]').value||0),priceIncludesGst:Boolean(row.querySelector('[name="priceIncludesGst"]').checked)}));if(!products.length){$('#formError').textContent='Add at least one product.';return}button.disabled=true;button.textContent='Preparing order…';try{const upload=new FormData();upload.append('file',recipientsFile);const imported=await api('/api/address-books/import',{method:'POST',body:upload});const items=imported.addressIds.flatMap(addressId=>products.map(product=>({...product,addressId})));const batch=await api('/api/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:f.get('name'),paymentRoute:f.get('paymentMode'),items})});await api(`/api/batches/${batch.id}/approve`,{method:'POST'});$('#batchDialog').close();await refresh();toast(`${imported.count} recipients × ${products.length} products ready`);document.querySelector('[data-view="bulk"]')?.click();window.dispatchEvent(new Event('ordergrid:bulk-refresh'))}catch(err){$('#formError').textContent=err.message}finally{button.disabled=false;button.textContent='Create & approve'}};
+$('#batchForm').onsubmit=async e=>{
+  e.preventDefault();
+  const form=e.currentTarget,f=new FormData(form),button=form.querySelector('button[type="submit"]');
+  const products=[...form.querySelectorAll('.product-entry')].map(row=>{
+    let allocationPlan=null;
+    try{allocationPlan=row.dataset.allocationPlan?JSON.parse(row.dataset.allocationPlan):null}catch{}
+    return {
+      productUrl:String(row.querySelector('[name="url"]').value),
+      quantity:Number(row.querySelector('[name="quantity"]').value),
+      estimatedUnitPriceMinor:Math.round(Number(row.querySelector('[name="price"]').value)*100),
+      productCheckId:String(row.querySelector('[name="productCheckId"]')?.value||''),
+      hsnSac:String(row.querySelector('[name="hsnSac"]').value).trim(),
+      gstRate:Number(row.querySelector('[name="gstRate"]').value),
+      cessRate:Number(row.querySelector('[name="cessRate"]').value||0),
+      priceIncludesGst:Boolean(row.querySelector('[name="priceIncludesGst"]').checked),
+      allocationPlan
+    };
+  });
+  if(!products.length){$('#formError').textContent='Add at least one product.';return}
+  const allocatedCount=products.filter(product=>product.allocationPlan?.complete).length;
+  if(allocatedCount>0&&allocatedCount!==products.length){$('#formError').textContent='Complete pool allocation for every product or use recipient-file mode for every product.';return}
+  const poolMode=allocatedCount===products.length;
+  if(!poolMode&&!recipientsFile){$('#formError').textContent='Upload a recipient file or complete Flipkart pool allocation.';return}
+  button.disabled=true;button.textContent='Preparing order…';
+  try{
+    let items=[],readyMessage='';
+    if(poolMode){
+      items=products.flatMap(product=>product.allocationPlan.allocations.map(allocation=>({
+        productUrl:product.productUrl,
+        quantity:Number(allocation.quantity),
+        estimatedUnitPriceMinor:Number(allocation.sellingPriceMinor),
+        productCheckId:String(allocation.productCheckId),
+        retailerAccountId:String(allocation.retailerAccountId),
+        addressId:String(allocation.addressId),
+        hsnSac:product.hsnSac,
+        gstRate:product.gstRate,
+        cessRate:product.cessRate,
+        priceIncludesGst:product.priceIncludesGst
+      })));
+      const accountIds=new Set(items.map(item=>item.retailerAccountId));
+      const unitCount=items.reduce((sum,item)=>sum+Number(item.quantity||0),0);
+      readyMessage=unitCount+' units allocated across '+accountIds.size+' verified Flipkart accounts';
+    }else{
+      const upload=new FormData();upload.append('file',recipientsFile);
+      const imported=await api('/api/address-books/import',{method:'POST',body:upload});
+      items=imported.addressIds.flatMap(addressId=>products.map(product=>({
+        productUrl:product.productUrl,
+        quantity:product.quantity,
+        estimatedUnitPriceMinor:product.estimatedUnitPriceMinor,
+        productCheckId:product.productCheckId,
+        hsnSac:product.hsnSac,
+        gstRate:product.gstRate,
+        cessRate:product.cessRate,
+        priceIncludesGst:product.priceIncludesGst,
+        addressId
+      })));
+      readyMessage=imported.count+' recipients × '+products.length+' products ready';
+    }
+    const batch=await api('/api/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:f.get('name'),paymentRoute:f.get('paymentMode'),items})});
+    await api(`/api/batches/${batch.id}/approve`,{method:'POST'});
+    $('#batchDialog').close();
+    await refresh();
+    toast(readyMessage);
+    document.querySelector('[data-view="bulk"]')?.click();
+    window.dispatchEvent(new Event('ordergrid:bulk-refresh'));
+  }catch(err){$('#formError').textContent=err.message}
+  finally{button.disabled=false;button.textContent='Create & approve'}
+};
 $('#checkoutAll').onclick=()=>{document.querySelector('[data-view="bulk"]')?.click();setTimeout(()=>{const run=document.querySelector('#bulkRun');if(!run)return toast('Bulk orders are unavailable right now');if(run.disabled)return toast('No new orders are ready. Create and approve a fulfilment batch first.');run.click()},60)};
 $('#reset').onclick=()=>refresh().catch(err=>toast(err.message));
 window.addEventListener('ordergrid:refresh',()=>refresh().catch(err=>toast(err.message)));refresh().then(()=>$('#login').classList.add('hidden')).catch(()=>$('#login').classList.remove('hidden'));
