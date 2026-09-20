@@ -238,7 +238,39 @@ async function reportDetails(db:Db,tenantId:string,filters:UserDashboardFilters=
     order by u.email,re.occurred_at desc
   `,rewardParams);
 
-  return {orders:orders.rows,refunds:refunds.rows,rewards:rewards.rows};
+  const cardParams:any[]=[tenantId],cardClauses=["cb.tenant_id=$1","cb.virtual_card_id is not null"];
+  if(filters.from){cardParams.push(filters.from);cardClauses.push(`cb.created_at >= ${cardParams.length}::date`)}
+  if(filters.to){cardParams.push(filters.to);cardClauses.push(`cb.created_at < (${cardParams.length}::date + interval '1 day')`)}
+  if(filters.userId){cardParams.push(filters.userId);cardClauses.push(`b.created_by=${cardParams.length}::uuid`)}
+  const cards=await db.query(`
+    select distinct u.email::text user_email,vc.id card_id,vc.provider,vc.masked_number,vc.status,vc.balance_minor,
+      vc.merchant_control,vc.created_at,cb.id checkout_basket_id,cb.retailer,cb.retailer_order_id
+    from checkout_baskets cb
+    join order_batches b on b.id=cb.batch_id
+    join users u on u.id=b.created_by
+    join virtual_cards vc on vc.id=cb.virtual_card_id
+    where ${cardClauses.join(" and ")}
+    order by u.email,vc.created_at desc
+  `,cardParams);
+
+  const invoiceParams:any[]=[tenantId],invoiceClauses=["gi.tenant_id=$1"];
+  if(filters.from){invoiceParams.push(filters.from);invoiceClauses.push(`gi.created_at >= ${invoiceParams.length}::date`)}
+  if(filters.to){invoiceParams.push(filters.to);invoiceClauses.push(`gi.created_at < (${invoiceParams.length}::date + interval '1 day')`)}
+  if(filters.userId){invoiceParams.push(filters.userId);invoiceClauses.push(`b.created_by=${invoiceParams.length}::uuid`)}
+  const invoices=await db.query(`
+    select u.email::text user_email,gi.id invoice_id,gi.invoice_number,gi.invoice_date,gi.status,gi.total_minor,
+      gi.taxable_minor,gi.cgst_minor,gi.sgst_minor,gi.igst_minor,gi.cess_minor,gi.irn,
+      cb.retailer,cb.retailer_order_id,c.external_reference customer_reference
+    from gst_invoices gi
+    join checkout_baskets cb on cb.id=gi.checkout_basket_id
+    join order_batches b on b.id=cb.batch_id
+    join users u on u.id=b.created_by
+    left join customers c on c.id=cb.customer_id
+    where ${invoiceClauses.join(" and ")}
+    order by u.email,gi.created_at desc
+  `,invoiceParams);
+
+  return {orders:orders.rows,refunds:refunds.rows,rewards:rewards.rows,cards:cards.rows,invoices:invoices.rows};
 }
 
 export async function buildUserDashboardWorkbook(db:Db,tenantId:string,filters:UserDashboardFilters={}){
@@ -314,6 +346,38 @@ export async function buildUserDashboardWorkbook(db:Db,tenantId:string,filters:U
   });
   rewards.getColumn("B").numFmt="dd-mmm-yyyy hh:mm";
 
+  const cards=wb.addWorksheet("Cards Used",{views:[{state:"frozen",ySplit:1}]});
+  cards.columns=[
+    {header:"User",key:"user",width:32},{header:"Card ID",key:"id",width:38},{header:"Provider",key:"provider",width:14},
+    {header:"Masked Card",key:"masked",width:18},{header:"Status",key:"status",width:14},{header:"Card Limit / Balance",key:"balance",width:18},
+    {header:"Merchant Control",key:"merchant",width:22},{header:"Retailer",key:"retailer",width:14},{header:"Retailer Order",key:"retailerOrder",width:24},
+    {header:"Created",key:"created",width:20}
+  ];
+  cards.getRow(1).font={bold:true};cards.autoFilter={from:"A1",to:"J1"};
+  for(const row of detail.cards)cards.addRow({
+    user:row.user_email,id:row.card_id,provider:row.provider,masked:row.masked_number||"",status:row.status,
+    balance:Number(row.balance_minor||0)/100,merchant:row.merchant_control||"",retailer:row.retailer,
+    retailerOrder:row.retailer_order_id||"",created:new Date(row.created_at)
+  });
+  cards.getColumn("F").numFmt='₹#,##0.00';cards.getColumn("J").numFmt="dd-mmm-yyyy hh:mm";
+
+  const invoices=wb.addWorksheet("GST Invoices",{views:[{state:"frozen",ySplit:1}]});
+  invoices.columns=[
+    {header:"User",key:"user",width:32},{header:"Invoice",key:"invoice",width:24},{header:"Invoice Date",key:"date",width:16},
+    {header:"Status",key:"status",width:14},{header:"Retailer",key:"retailer",width:14},{header:"Retailer Order",key:"retailerOrder",width:24},
+    {header:"Customer",key:"customer",width:20},{header:"Taxable",key:"taxable",width:14},{header:"CGST",key:"cgst",width:12},
+    {header:"SGST",key:"sgst",width:12},{header:"IGST",key:"igst",width:12},{header:"Cess",key:"cess",width:12},
+    {header:"Total",key:"total",width:16},{header:"IRN",key:"irn",width:38}
+  ];
+  invoices.getRow(1).font={bold:true};invoices.autoFilter={from:"A1",to:"N1"};
+  for(const row of detail.invoices)invoices.addRow({
+    user:row.user_email,invoice:row.invoice_number,date:row.invoice_date,status:row.status,retailer:row.retailer,
+    retailerOrder:row.retailer_order_id||"",customer:row.customer_reference||"",taxable:Number(row.taxable_minor||0)/100,
+    cgst:Number(row.cgst_minor||0)/100,sgst:Number(row.sgst_minor||0)/100,igst:Number(row.igst_minor||0)/100,
+    cess:Number(row.cess_minor||0)/100,total:Number(row.total_minor||0)/100,irn:row.irn||""
+  });
+  for(const col of ["H","I","J","K","L","M"])invoices.getColumn(col).numFmt='₹#,##0.00';
+
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -332,6 +396,12 @@ export async function buildUserDashboardCsv(db:Db,tenantId:string,filters:UserDa
   ].map(cell).join(","));
   for(const row of detail.rewards)rows.push([
     "REWARD",row.user_email,row.occurred_at,row.retailer,row.retailer_order_id||"",row.event_type,0,"","",row.retailer_account_reference||"","",row.units||0,row.retailer_reference||row.reward_event_id
+  ].map(cell).join(","));
+  for(const row of detail.cards)rows.push([
+    "CARD",row.user_email,row.created_at,row.retailer,row.retailer_order_id||"",row.status,row.balance_minor||0,"","","",row.masked_number||"",0,row.card_id
+  ].map(cell).join(","));
+  for(const row of detail.invoices)rows.push([
+    "GST_INVOICE",row.user_email,row.invoice_date,row.retailer,row.retailer_order_id||"",row.status,row.total_minor||0,row.customer_reference||"","","","",0,row.invoice_number
   ].map(cell).join(","));
   return rows.join("\n");
 }
