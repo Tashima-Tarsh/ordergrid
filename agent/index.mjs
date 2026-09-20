@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { executeBasket, focusRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
+import { executeBasket, focusRetailerSession, prepareRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -75,6 +75,7 @@ async function main(){
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
   const started=new Set();
   let lastReconcileAt=0;
+  let lastSessionCheckAt=0;
 
   await heartbeat(workerId);
   output.write(`Worker online · ${workerId} · ${parallel} parallel customer profiles\n`);
@@ -97,6 +98,23 @@ async function main(){
         }
       }
 
+      if(Date.now()-lastSessionCheckAt>=30_000){
+        lastSessionCheckAt=Date.now();
+        try{
+          const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:10})})).body;
+          for(const account of sessionClaim.accounts||[]){
+            const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
+            const result=await prepareRetailerSession({
+              chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null
+            });
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
+              method:"POST",
+              body:JSON.stringify({status:result.status,code:result.code,message:result.message})
+            }).catch(()=>{});
+          }
+        }catch(error){output.write(`Session readiness cycle error: ${error.message}\n`)}
+      }
+
       await api(`/api/execution-worker/${encodeURIComponent(workerId)}/claim`,{method:"POST",body:JSON.stringify({limit:claimLimit})});
       const queue=(await api(`/api/bulk-queue?workerId=${encodeURIComponent(workerId)}`)).body.baskets||[];
       const currentIds=new Set(queue.map(x=>x.id));
@@ -113,7 +131,25 @@ async function main(){
               const directory=join(profileRoot(),profileKey(body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
+              const wasWaitingStock=basket.status==="WAITING_STOCK";
               let result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume});
+              if(result.state==="OUT_OF_STOCK"){
+                await api(`/api/bulk-queue/${basket.id}/stock-wait`,{
+                  method:"POST",
+                  body:JSON.stringify({
+                    workerId,
+                    message:result.message||"Retailer item is currently out of stock",
+                    observedPriceMinor:result.unavailable?.find(x=>Number.isFinite(Number(x.observedPriceMinor)))?.observedPriceMinor??null
+                  })
+                });
+                started.delete(basket.id);
+                output.write(`Stock watch ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}\n`);
+                continue;
+              }
+              if(wasWaitingStock){
+                await api(`/api/bulk-queue/${basket.id}/stock-available`,{method:"POST",body:JSON.stringify({workerId})}).catch(()=>{});
+                output.write(`Back in stock ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}\n`);
+              }
               if(result.state==="COMMERCIAL_CHECK"){
                 const decision=(await api(`/api/bulk-queue/${basket.id}/commercial-check`,{
                   method:"POST",
