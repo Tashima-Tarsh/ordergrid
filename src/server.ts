@@ -951,6 +951,99 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
   };
 });
 
+app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    workerId:z.string().min(8).max(128),
+    amountMinor:z.number().int().nonnegative(),
+    currency:z.literal("INR").default("INR")
+  }).parse(req.body);
+  const basket=await db.query(
+    "select id,batch_id,status from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') limit 1",
+    [id,p.tenantId,body.workerId]
+  );
+  if(!basket.rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
+  const expected=await db.query(
+    "select coalesce(sum(amount_minor),0)::bigint expected_minor from purchase_orders where tenant_id=$1 and checkout_basket_id=$2",
+    [p.tenantId,id]
+  );
+  const expectedMinor=Number(expected.rows[0]?.expected_minor||0);
+  if(expectedMinor<=0)return reply.code(409).send({error:"expected_price_missing"});
+  const policy=await getAutomationPolicy(p.tenantId);
+  const orderVariancePercent=Math.max(0,(body.amountMinor-expectedMinor)/expectedMinor*100);
+
+  const batchTotals=await db.query(`
+    with expected_by_basket as (
+      select cb.id,cb.observed_amount_minor,coalesce(sum(po.amount_minor),0)::bigint expected_minor
+      from checkout_baskets cb
+      left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+      where cb.tenant_id=$1 and cb.batch_id=$2
+      group by cb.id
+    )
+    select
+      coalesce(sum(expected_minor),0)::bigint expected_batch_minor,
+      coalesce(sum(case when id=$3 then $4::bigint else coalesce(observed_amount_minor,expected_minor) end),0)::bigint projected_batch_minor
+    from expected_by_basket
+  `,[p.tenantId,basket.rows[0].batch_id,id,body.amountMinor]);
+  const expectedBatchMinor=Number(batchTotals.rows[0]?.expected_batch_minor||0);
+  const projectedBatchMinor=Number(batchTotals.rows[0]?.projected_batch_minor||0);
+  const batchVariancePercent=expectedBatchMinor>0?Math.max(0,(projectedBatchMinor-expectedBatchMinor)/expectedBatchMinor*100):0;
+
+  const breaches:string[]=[];
+  if(orderVariancePercent>Number(policy.max_price_increase_percent))breaches.push("PRICE_VARIANCE");
+  if(Number(policy.max_order_value_minor)>0&&body.amountMinor>Number(policy.max_order_value_minor))breaches.push("ORDER_VALUE");
+  if(batchVariancePercent>Number(policy.max_batch_variance_percent))breaches.push("BATCH_VARIANCE");
+
+  await db.query(
+    "update checkout_baskets set observed_amount_minor=$1,commercial_variance_percent=$2,commercial_checked_at=now(),updated_at=now() where id=$3 and tenant_id=$4",
+    [body.amountMinor,orderVariancePercent,id,p.tenantId]
+  );
+
+  if(breaches.length){
+    if(policy.price_breach_action==="PAUSE_BATCH"){
+      await db.query(
+        "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='PRICE_POLICY_REVIEW_REQUIRED',failure_message=$1,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$2 and batch_id=$3 and status in ('READY','CLAIMED','OPENED','REQUIRES_ACTION')",
+        ["Commercial policy review required: "+breaches.join(", "),p.tenantId,basket.rows[0].batch_id]
+      );
+    }else{
+      await db.query(
+        "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='PRICE_POLICY_REVIEW_REQUIRED',failure_message=$1,execution_worker_id=null,expires_at=null,updated_at=now() where id=$2 and tenant_id=$3",
+        ["Commercial policy review required: "+breaches.join(", "),id,p.tenantId]
+      );
+    }
+    await audit(db,p.tenantId,p.id,"automation.commercial_review","checkout_basket",id,{
+      expectedMinor,observedMinor:body.amountMinor,orderVariancePercent,batchVariancePercent,breaches,action:policy.price_breach_action
+    });
+    return {
+      allowed:false,
+      status:"REVIEW_REQUIRED",
+      expectedAmountMinor:expectedMinor,
+      observedAmountMinor:body.amountMinor,
+      orderVariancePercent,
+      batchVariancePercent,
+      breaches,
+      action:policy.price_breach_action
+    };
+  }
+
+  await db.query(
+    "update checkout_baskets set commercial_status='APPROVED',failure_code=case when failure_code='PRICE_POLICY_REVIEW_REQUIRED' then null else failure_code end,failure_message=case when failure_code='PRICE_POLICY_REVIEW_REQUIRED' then null else failure_message end,updated_at=now() where id=$1 and tenant_id=$2",
+    [id,p.tenantId]
+  );
+  await audit(db,p.tenantId,p.id,"automation.commercial_approved","checkout_basket",id,{
+    expectedMinor,observedMinor:body.amountMinor,orderVariancePercent,batchVariancePercent
+  });
+  return {
+    allowed:true,
+    status:"APPROVED",
+    approvedAmountMinor:body.amountMinor,
+    expectedAmountMinor:expectedMinor,
+    observedAmountMinor:body.amountMinor,
+    orderVariancePercent,
+    batchVariancePercent
+  };
+});
+
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
   const body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);
