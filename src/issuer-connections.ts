@@ -2,6 +2,7 @@ import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { decryptJson, encryptJson } from "./security.js";
 import { createVirtualCardIssuer, type VirtualCardIssuer } from "./card-issuer.js";
+import { GenericBankVirtualCardIssuer, type GenericBankCredentials } from "./bank-card-issuer.js";
 
 export type EnKashTenantCredentials={
   ENKASH_BASE_URL:string;
@@ -19,14 +20,18 @@ export type IssuerMetadata={
   bankName?:string|null;
   programmeName?:string|null;
   cardNetwork?:string|null;
+  bankCode?:string|null;
+  integrationMode?:string|null;
+  capabilities?:Record<string,unknown>;
 };
 
 function envIssuer(config:Config):VirtualCardIssuer{
   return createVirtualCardIssuer(config);
 }
 
-function tenantIssuer(config:Config,credentials:EnKashTenantCredentials):VirtualCardIssuer{
-  return createVirtualCardIssuer({...config,CARD_PROVIDER:"enkash",...credentials});
+function issuerFromStored(config:Config,provider:string,credentials:EnKashTenantCredentials|GenericBankCredentials):VirtualCardIssuer{
+  if(provider==="enkash")return createVirtualCardIssuer({...config,CARD_PROVIDER:"enkash",...(credentials as EnKashTenantCredentials)});
+  return new GenericBankVirtualCardIssuer(credentials as GenericBankCredentials);
 }
 
 export async function loadTenantIssuer(
@@ -36,7 +41,7 @@ export async function loadTenantIssuer(
   issuerConnectionId?:string|null
 ):Promise<{issuer:VirtualCardIssuer;source:"tenant"|"environment"|"none";connectionId:string|null;metadata:IssuerMetadata}>{
   const params:any[]=[tenantId];
-  let sql="select id,provider,ciphertext,iv,auth_tag,status,bank_name,programme_name,card_network from issuer_connections where tenant_id=$1 and provider='enkash' and status='CONNECTED'";
+  let sql="select id,provider,ciphertext,iv,auth_tag,status,bank_name,programme_name,card_network,bank_code,integration_mode,capabilities from issuer_connections where tenant_id=$1 and status='CONNECTED'";
   if(issuerConnectionId){
     params.push(issuerConnectionId);
     sql+=" and id=$2";
@@ -44,17 +49,24 @@ export async function loadTenantIssuer(
   sql+=" order by connected_at desc limit 1";
   const {rows}=await db.query(sql,params);
   if(rows[0]){
-    const credentials=decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials;
-    const issuer=tenantIssuer(config,credentials);
+    const credentials=decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials|GenericBankCredentials;
+    const issuer=issuerFromStored(config,String(rows[0].provider),credentials);
     return {
       issuer,
       source:"tenant",
       connectionId:String(rows[0].id),
-      metadata:{bankName:rows[0].bank_name,programmeName:rows[0].programme_name,cardNetwork:rows[0].card_network}
+      metadata:{
+        bankName:rows[0].bank_name,
+        programmeName:rows[0].programme_name,
+        cardNetwork:rows[0].card_network,
+        bankCode:rows[0].bank_code??rows[0].provider,
+        integrationMode:rows[0].integration_mode,
+        capabilities:rows[0].capabilities??{}
+      }
     };
   }
   const issuer=envIssuer(config);
-  return {issuer,source:issuer.configured()?"environment":"none",connectionId:null,metadata:{}};
+  return {issuer,source:issuer.configured()?"environment":"none",connectionId:null,metadata:{bankCode:issuer.configured()?"enkash":null}};
 }
 
 export async function testAndSaveEnKashConnection(
@@ -62,28 +74,74 @@ export async function testAndSaveEnKashConnection(
   config:Config,
   input:{tenantId:string;userId:string;credentials:EnKashTenantCredentials;metadata?:IssuerMetadata}
 ){
-  const issuer=tenantIssuer(config,input.credentials);
+  const issuer=createVirtualCardIssuer({...config,CARD_PROVIDER:"enkash",...input.credentials});
   await issuer.testConnection();
   const encrypted=encryptJson(input.credentials,config.DATA_ENCRYPTION_KEY_BASE64);
   const {rows}=await db.query(
     `insert into issuer_connections(
       tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at,
-      bank_name,programme_name,card_network
+      bank_name,programme_name,card_network,bank_code,integration_mode,capabilities
     )
-     values($1,'enkash',$2,$3,$4,'CONNECTED',$5,now(),now(),$6,$7,$8)
+     values($1,'enkash',$2,$3,$4,'CONNECTED',$5,now(),now(),$6,$7,$8,'enkash','ISSUER_PROGRAMME',$9)
      on conflict(tenant_id,provider) do update set
        ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
        connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
-       bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network
+       bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network,
+       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,capabilities=excluded.capabilities
      returning id`,
     [
       input.tenantId,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
-      input.metadata?.bankName??null,input.metadata?.programmeName??null,input.metadata?.cardNetwork??null
+      input.metadata?.bankName??"EnKash",input.metadata?.programmeName??"EnKash Cards",input.metadata?.cardNetwork??null,
+      {createCard:true,issuerControls:true,loadCard:true,parentCard:false}
     ]
   );
   return {issuer,connectionId:String(rows[0].id)};
 }
 
-export async function disconnectTenantIssuer(db:Db,tenantId:string,provider="enkash"){
-  await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1 and provider=$2",[tenantId,provider]);
+export async function testAndSaveBankConnection(
+  db:Db,
+  config:Config,
+  input:{
+    tenantId:string;
+    userId:string;
+    credentials:GenericBankCredentials;
+    metadata:IssuerMetadata&{bankName:string;programmeName:string;cardNetwork:string;integrationMode:"PARENT_CARD_API"|"CUSTOM_BANK_API"};
+  }
+){
+  const issuer=new GenericBankVirtualCardIssuer(input.credentials);
+  await issuer.testConnection();
+  const encrypted=encryptJson(input.credentials,config.DATA_ENCRYPTION_KEY_BASE64);
+  const capabilities={
+    createCard:true,
+    issuerControls:Boolean(input.credentials.controlCardPath&&input.credentials.controlCardTemplate),
+    loadCard:Boolean(input.credentials.loadCardPath&&input.credentials.loadCardTemplate),
+    parentCard:true
+  };
+  const {rows}=await db.query(
+    `insert into issuer_connections(
+      tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at,
+      bank_name,programme_name,card_network,bank_code,integration_mode,capabilities
+    )
+     values($1,$2,$3,$4,$5,'CONNECTED',$6,now(),now(),$7,$8,$9,$10,$11,$12)
+     on conflict(tenant_id,provider) do update set
+       ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
+       connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
+       bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network,
+       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,capabilities=excluded.capabilities
+     returning id`,
+    [
+      input.tenantId,input.credentials.bankCode,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
+      input.metadata.bankName,input.metadata.programmeName,input.metadata.cardNetwork,input.credentials.bankCode,
+      input.metadata.integrationMode,capabilities
+    ]
+  );
+  return {issuer,connectionId:String(rows[0].id),capabilities};
+}
+
+export async function disconnectTenantIssuer(db:Db,tenantId:string,provider?:string){
+  if(provider){
+    await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1 and provider=$2",[tenantId,provider]);
+  }else{
+    await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1",[tenantId]);
+  }
 }
