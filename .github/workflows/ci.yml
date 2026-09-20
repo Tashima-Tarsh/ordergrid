@@ -22,5 +22,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: End-to-end showroom checkout smoke test
+        run: npm run smoke:demo
       - name: Audit production dependencies
         run: npm run audit:ci
