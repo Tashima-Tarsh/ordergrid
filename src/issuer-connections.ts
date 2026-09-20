@@ -22,6 +22,10 @@ export type IssuerMetadata={
   cardNetwork?:string|null;
   bankCode?:string|null;
   integrationMode?:string|null;
+  fundingCardholderName?:string|null;
+  fundingCardLast4?:string|null;
+  fundingCardExpiryMonth?:number|null;
+  fundingCardExpiryYear?:number|null;
   capabilities?:Record<string,unknown>;
 };
 
@@ -41,7 +45,7 @@ export async function loadTenantIssuer(
   issuerConnectionId?:string|null
 ):Promise<{issuer:VirtualCardIssuer;source:"tenant"|"environment"|"none";connectionId:string|null;metadata:IssuerMetadata}>{
   const params:any[]=[tenantId];
-  let sql="select id,provider,ciphertext,iv,auth_tag,status,bank_name,programme_name,card_network,bank_code,integration_mode,capabilities from issuer_connections where tenant_id=$1 and status='CONNECTED'";
+  let sql="select id,provider,ciphertext,iv,auth_tag,status,bank_name,programme_name,card_network,bank_code,integration_mode,funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,capabilities from issuer_connections where tenant_id=$1 and status='CONNECTED'";
   if(issuerConnectionId){
     params.push(issuerConnectionId);
     sql+=" and id=$2";
@@ -61,6 +65,10 @@ export async function loadTenantIssuer(
         cardNetwork:rows[0].card_network,
         bankCode:rows[0].bank_code??rows[0].provider,
         integrationMode:rows[0].integration_mode,
+        fundingCardholderName:rows[0].funding_cardholder_name,
+        fundingCardLast4:rows[0].funding_card_last4,
+        fundingCardExpiryMonth:rows[0].funding_card_expiry_month,
+        fundingCardExpiryYear:rows[0].funding_card_expiry_year,
         capabilities:rows[0].capabilities??{}
       }
     };
@@ -80,18 +88,24 @@ export async function testAndSaveEnKashConnection(
   const {rows}=await db.query(
     `insert into issuer_connections(
       tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at,
-      bank_name,programme_name,card_network,bank_code,integration_mode,capabilities
+      bank_name,programme_name,card_network,bank_code,integration_mode,
+      funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,capabilities
     )
-     values($1,'enkash',$2,$3,$4,'CONNECTED',$5,now(),now(),$6,$7,$8,'enkash','ISSUER_PROGRAMME',$9)
+     values($1,'enkash',$2,$3,$4,'CONNECTED',$5,now(),now(),$6,$7,$8,'enkash','ISSUER_PROGRAMME',$9,$10,$11,$12,$13)
      on conflict(tenant_id,provider) do update set
        ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
        connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
        bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network,
-       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,capabilities=excluded.capabilities
+       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,
+       funding_cardholder_name=excluded.funding_cardholder_name,funding_card_last4=excluded.funding_card_last4,
+       funding_card_expiry_month=excluded.funding_card_expiry_month,funding_card_expiry_year=excluded.funding_card_expiry_year,
+       capabilities=excluded.capabilities
      returning id`,
     [
       input.tenantId,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
       input.metadata?.bankName??"EnKash",input.metadata?.programmeName??"EnKash Cards",input.metadata?.cardNetwork??null,
+      input.metadata?.fundingCardholderName??null,input.metadata?.fundingCardLast4??null,
+      input.metadata?.fundingCardExpiryMonth??null,input.metadata?.fundingCardExpiryYear??null,
       {createCard:true,issuerControls:true,loadCard:true,parentCard:false}
     ]
   );
@@ -120,9 +134,10 @@ export async function testAndSaveBankConnection(
   const {rows}=await db.query(
     `insert into issuer_connections(
       tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at,
-      bank_name,programme_name,card_network,bank_code,integration_mode,capabilities
+      bank_name,programme_name,card_network,bank_code,integration_mode,
+      funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,capabilities
     )
-     values($1,$2,$3,$4,$5,'CONNECTED',$6,now(),now(),$7,$8,$9,$10,$11,$12)
+     values($1,$2,$3,$4,$5,'CONNECTED',$6,now(),now(),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      on conflict(tenant_id,provider) do update set
        ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
        connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
@@ -132,7 +147,8 @@ export async function testAndSaveBankConnection(
     [
       input.tenantId,input.credentials.bankCode,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
       input.metadata.bankName,input.metadata.programmeName,input.metadata.cardNetwork,input.credentials.bankCode,
-      input.metadata.integrationMode,capabilities
+      input.metadata.integrationMode,input.metadata.fundingCardholderName??null,input.metadata.fundingCardLast4??null,
+      input.metadata.fundingCardExpiryMonth??null,input.metadata.fundingCardExpiryYear??null,capabilities
     ]
   );
   return {issuer,connectionId:String(rows[0].id),capabilities};
