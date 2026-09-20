@@ -26,7 +26,8 @@ export function retailerForProductUrl(value:string):RetailerIdentity {
   const url=new URL(value);
   if(url.protocol!=="https:")throw new Error("Only HTTPS product URLs are supported");
   if(url.username||url.password)throw new Error("Product URLs cannot contain credentials");
-  const host=url.hostname.toLowerCase().replace(/.$/,"");
+  const rawHost=url.hostname.toLowerCase();
+  const host=rawHost.endsWith(".")?rawHost.slice(0,-1):rawHost;
   const known=SUPPORTED.find(r=>r.hosts.some(root=>hostMatches(host,root)));
   if(known)return{id:known.id,name:known.name,host,mode:"ORDERGRID_WORKER"};
   const brandLookalike=SUPPORTED.some(r=>r.hosts.some(root=>host.includes(root)&&!hostMatches(host,root)));
