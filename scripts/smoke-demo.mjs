@@ -53,6 +53,30 @@ try{
   cookie=setCookie.split(";")[0]||"";
   assert(cookie.startsWith("demo_session="),"login did not set demo_session cookie");
 
+  const networkBefore=await json("/api/dealer-network");
+  assert(networkBefore.body.dealers?.length===1,"expected one main dealer before sub-dealer creation");
+  const mainDealerId=networkBefore.body.homeTenantId;
+  const createdDealer=await json("/api/dealers",{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({name:"Smoke Sub Dealer",ownerEmail:"subdealer-smoke@example.com"})
+  });
+  const subDealerId=createdDealer.body.dealer?.id;
+  assert(subDealerId,"sub-dealer creation did not return id");
+  const networkAfter=await json("/api/dealer-network");
+  assert(networkAfter.body.dealers?.length===2,"dealer network did not show main + sub-dealer");
+  const mainUsers=await json("/api/dealer-users");
+  assert(mainUsers.body.users?.some(u=>u.email===email),"main dealer user missing before switch");
+  await json("/api/dealer-context",{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({tenantId:subDealerId})
+  });
+  const childBatchesBefore=await json("/api/batches");
+  assert(childBatchesBefore.body.batches?.length===0,"new sub-dealer was not isolated from main dealer batches");
+  const childUsers=await json("/api/dealer-users");
+  assert(childUsers.body.users?.some(u=>u.email==="subdealer-smoke@example.com"),"sub-dealer owner missing");
+
   const form=new FormData();
   form.append("file",new Blob([
     "reference,recipient,phone,line1,city,state,postal_code,amazon_user_id,amazon_password,retailer,retailer_login,retailer_password\n"+
