@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "../src/retailers.js";
+import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "../src/retailers.js";
 
 test("recognizes supported Indian retailers without accepting lookalike hosts",()=>{
   assert.equal(retailerForProductUrl("https://www.amazon.in/dp/B0TEST").id,"amazon-in");
