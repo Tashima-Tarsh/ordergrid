@@ -52,6 +52,13 @@ must(html.includes('id="fundingCardIdentity"'),"frontend contract: safe funding 
 must(html.includes('id="issuerModalStatus"'),"frontend contract: setup modal status summary missing");
 must(files["public/finance.css"].includes("#issuerDialog.issuer-connect-overlay"),"frontend contract: real card setup overlay styling missing");
 must(funding.includes("await load()"),"frontend contract: connector must refresh bank state before opening");
+must(html.includes('id="openFundingSetupFromCard"'),"frontend contract: funding detail CTA button missing");
+must(html.includes('data-bank-shortcut="hdfc"'),"frontend contract: HDFC setup shortcut missing");
+must(html.includes('data-bank-shortcut="axis"'),"frontend contract: Axis setup shortcut missing");
+must(funding.includes("panel.hidden=false;"),"frontend contract: card setup must open the modal");
+must(funding.indexOf("panel.hidden=false;")<funding.indexOf("await load();"),"frontend contract: card setup modal must open before network refresh");
+must(funding.includes("$('#openFundingSetupFromCard')?.addEventListener('click'"),"frontend contract: funding CTA click handler missing");
+must(funding.includes("window.addEventListener('ordergrid:cards-open',()=>openIssuerConnector())"),"frontend contract: Cards nav event must call connector without passing Event as provider code");
 must(funding.includes("'/api/cards/provider/connect'"),"frontend contract: issuer connect API missing from client");
 must(funding.includes("'/api/cards'"),"frontend contract: virtual card create API missing from client");
 must(server.includes('app.get("/api/cards/banks"'),"backend contract: bank catalog route missing");
