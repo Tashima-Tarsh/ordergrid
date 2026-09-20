@@ -11,17 +11,6 @@
     return response.json();
   }
 
-  function setStep(name,state,label,summary){
-    const row=document.querySelector('[data-flow-step="'+name+'"]');
-    if(!row)return;
-    row.classList.toggle('complete',state==='complete');
-    row.classList.toggle('current',state==='current');
-    const badge=row.querySelector('.flow-state');
-    if(badge)badge.textContent=label;
-    const target=row.querySelector('[id$="Summary"]');
-    if(target)target.textContent=summary;
-  }
-
   function groupProducts(tasks){
     const groups=new Map();
     for(const task of tasks){
@@ -61,62 +50,7 @@
       $('#ffPipelineState').className='ff-pipeline-badge '+(allConfirmed?'complete':needsAttention?'attention':inProgress?'running':approved?'ready':'');
     }
 
-    setStep(
-      'products',
-      products.length?'complete':'current',
-      products.length?'DONE':'START',
-      products.length?products.length+' product'+(products.length===1?'':'s')+' selected for this batch.':'Add the products you want to place.'
-    );
 
-    setStep(
-      'recipients',
-      recipientCount?'complete':products.length?'current':'waiting',
-      recipientCount?'DONE':'WAITING',
-      recipientCount?recipientCount+' recipient'+(recipientCount===1?'':'s')+' included in this batch.':'Add recipients and their retailer accounts.'
-    );
-
-    setStep(
-      'approval',
-      approved?'complete':recipientCount?'current':'waiting',
-      approved?'APPROVED':'WAITING',
-      approved?(batch?.payment_route||'Payment method')+' selected for this batch.':'Review the order value and payment method.'
-    );
-
-    if(allConfirmed){
-      setStep('checkout','complete','DONE','All orders have completed checkout.');
-    }else if(needsAttention){
-      setStep('checkout','current','NEEDS ATTENTION',needsAttention+' order'+(needsAttention===1?'':'s')+' need your attention before completion.');
-    }else if(inProgress){
-      setStep('checkout','current','IN PROGRESS',inProgress+' order'+(inProgress===1?' is':'s are')+' currently in checkout.');
-    }else if(approved){
-      setStep('checkout','current','READY',waiting+' order'+(waiting===1?' is':'s are')+' ready to continue.');
-    }else{
-      setStep('checkout','waiting','WAITING','Approved orders will appear here when ready.');
-    }
-
-    if(allConfirmed){
-      setStep('confirmation','complete','COMPLETE',confirmed+' confirmed order'+(confirmed===1?'':'s')+'.');
-    }else if(confirmed){
-      setStep('confirmation','current',confirmed+' CONFIRMED',confirmed+' confirmed · '+(tasks.length-confirmed)+' remaining.');
-    }else{
-      setStep('confirmation','waiting','WAITING','Confirmed retailer order numbers will appear here.');
-    }
-
-    const recipientHost=$('#recipientAccounts');
-    if(recipientHost){
-      recipientHost.innerHTML=recipientRecords.length?recipientRecords.slice(0,12).map(r=>{
-        const entries=Object.entries(r.retailer_accounts||{}).filter(([,value])=>Boolean(value));
-        const first=entries[0];
-        const retailerLabel=first?String(first[0]).replace(/^store:/,'').replace('amazon-in','Amazon').replace('flipkart','Flipkart'):'';
-        const account=first?retailerLabel+' · '+String(first[1]):'Account not added';
-        return '<div class="recipient-account"><div><strong>'+esc(r.customer_reference)+'</strong><span>'+esc(r.recipient)+' · '+esc(r.city)+' '+esc(r.postal_code)+'</span></div><small>'+esc(account)+'</small></div>';
-      }).join('')+(recipientRecords.length>12?'<div class="recipient-more">+'+(recipientRecords.length-12)+' more recipients</div>':''):'<p class="muted">No recipients added yet.</p>';
-    }
-
-    if($('#engineName'))$('#engineName').textContent='Checkout ready';
-    if($('#engineStatus'))$('#engineStatus').textContent=approved?'AVAILABLE':'WAITING';
-    if($('#engineMeta'))$('#engineMeta').textContent=approved?'Continue approved orders from Bulk orders.':'Approve the batch to continue to checkout.';
-    $('#engineDot')?.classList.toggle('online',approved);
 
     const cartBatch=$('#cartBatchName');
     if(cartBatch)cartBatch.textContent=batch?batch.name:'No active batch';
@@ -165,7 +99,7 @@
   }
 
   document.addEventListener('click',event=>{
-    if(event.target.closest('#flowAddProducts,#flowImportRecipients,#flowNewBatch'))document.querySelector('#newBatch')?.click();
+    if(event.target.closest('#flowNewBatch'))document.querySelector('#newBatch')?.click();
   });
   window.addEventListener('ordergrid:update',load);
   window.addEventListener('ordergrid:bulk-refresh',load);
