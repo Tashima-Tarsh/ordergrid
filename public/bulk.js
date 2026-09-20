@@ -14,7 +14,7 @@
     <div class="bulk-truth">
       <div><span>CUSTOMER ORDERS</span><strong id="bulkBasketCount">0</strong></div>
       <div><span>PRODUCT LINES</span><strong id="bulkLineCount">0</strong></div>
-      <div><span>READY / IN PROGRESS</span><strong id="bulkReadyCount">0</strong></div>
+      <div><span>READY / WATCHING / RUNNING</span><strong id="bulkReadyCount">0</strong></div>
       <div><span>CONFIRMED</span><strong id="bulkConfirmedCount">0</strong></div>
     </div>
     <div id="bulkQueue"><div class="bulk-empty"><strong>No orders yet</strong><span>Create and approve a fulfilment batch to see customer orders here.</span></div></div>
@@ -28,7 +28,7 @@
     .bulk-truth span{display:block;font-size:10px;letter-spacing:.08em;color:#64748b;font-weight:800}.bulk-truth strong{display:block;margin-top:5px;font-size:24px;letter-spacing:-.02em}
     .bulk-row{display:grid;grid-template-columns:minmax(300px,1fr) 100px 140px minmax(190px,auto);gap:16px;align-items:center;padding:17px 0;border-top:1px solid #e8edf2}
     .bulk-order-copy strong{font-size:14px}.bulk-row small{display:block;color:#64748b;margin-top:4px;font-size:12px}.bulk-status{display:block;margin-top:4px;font-weight:900;font-size:11px;letter-spacing:.06em}
-    .bulk-exception{margin-top:8px;padding:8px 10px;background:#fff7ed;border-radius:9px;color:#9a3412;font-size:12px}
+    .bulk-exception{margin-top:8px;padding:8px 10px;background:#fff7ed;border-radius:9px;color:#9a3412;font-size:12px}.stock-watch-note{margin-top:8px;padding:9px 10px;border:1px solid #ccebdc;border-radius:9px;background:#f0fdf7;color:#066a4b;font-size:11px;line-height:1.4}
     .bulk-action{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;margin-top:8px}.bulk-action button,.bulk-action a{white-space:nowrap}.amazon-open-link{display:inline-block;text-decoration:none}
     .bulk-empty{padding:42px 16px;text-align:center;color:#64748b}.bulk-empty strong,.bulk-empty span{display:block}.bulk-empty strong{color:#111827;font-size:16px}.bulk-empty span{margin-top:5px}
     @media(max-width:900px){.bulk-truth{grid-template-columns:1fr 1fr}.bulk-row{grid-template-columns:1fr}.bulk-action{justify-content:flex-start}}@media(max-width:520px){.bulk-truth{grid-template-columns:1fr}}
@@ -47,7 +47,7 @@
   }
 
   function statusLabel(status){
-    return ({READY:'READY',CLAIMED:'READY',OPENED:'IN PROGRESS',REQUIRES_ACTION:'NEEDS ATTENTION',CONFIRMED:'CONFIRMED',FAILED:'NEEDS ATTENTION'})[status]||'IN PROGRESS';
+    return ({READY:'READY',CLAIMED:'READY',OPENED:'IN PROGRESS',WAITING_STOCK:'WAITING FOR STOCK',REQUIRES_ACTION:'NEEDS ATTENTION',CONFIRMED:'CONFIRMED',FAILED:'NEEDS ATTENTION'})[status]||'IN PROGRESS';
   }
 
   function attentionText(b){
@@ -62,7 +62,7 @@
 
   function render(){
     const ready=baskets.filter(b=>['READY','CLAIMED'].includes(b.status)).length;
-    const running=baskets.filter(b=>['OPENED','REQUIRES_ACTION'].includes(b.status)).length;
+    const running=baskets.filter(b=>['OPENED','WAITING_STOCK','REQUIRES_ACTION'].includes(b.status)).length;
     const confirmed=baskets.filter(b=>b.status==='CONFIRMED').length;
     const lines=baskets.reduce((n,b)=>n+Number(b.item_count||0),0);
 
@@ -77,20 +77,27 @@
 
     document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>{
       const note=attentionText(b);
-      const actionable=['OPENED','REQUIRES_ACTION','FAILED'].includes(b.status);
+      const watching=b.status==='WAITING_STOCK';
+      const actionable=['OPENED','REQUIRES_ACTION','FAILED'].includes(b.status)&&!/^STOCK_WATCH_/.test(String(b.failure_code||''));
       const action=actionable?'<button type="button" class="secondary" data-focus-session>Resume exact session</button>':'';
-      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Requeue task</button>':'';
+      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)&&!/^STOCK_WATCH_/.test(String(b.failure_code||''))?'<button class="secondary" data-retry>Requeue task</button>':'';
+      const stockAction=watching
+        ?'<button type="button" class="secondary" data-stock-stop>Pause watch</button>'
+        :(/^STOCK_WATCH_(PAUSED|EXPIRED)$/.test(String(b.failure_code||''))?'<button type="button" class="secondary" data-stock-resume>Resume watch</button>':'');
+      const stockMeta=watching
+        ?'<div class="stock-watch-note"><b>AUTO-BUY '+(b.stock_watch_auto_order?'ON':'OFF')+'</b> · next '+(b.stock_next_check_at?new Date(b.stock_next_check_at).toLocaleString('en-IN'):'pending')+' · ceiling '+money(b.stock_watch_max_amount_minor||0)+'</div>'
+        :'';
       return `
         <div class="bulk-row" data-basket="${esc(b.id)}">
           <div class="bulk-order-copy">
             <strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong>
             <small>${esc(b.recipient)} · ${esc(b.account_reference||'Account not added')}</small>
             <small>${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>
-            ${note?'<div class="bulk-exception"><b>NEEDS ATTENTION</b> · '+esc(note)+'</div>':''}
+            ${stockMeta}${note?'<div class="bulk-exception"><b>NEEDS ATTENTION</b> · '+esc(note)+'</div>':''}
           </div>
           <div><small>Items</small><strong>${Number(b.item_count||0)}</strong></div>
           <div><small>Order value</small><strong>${money(b.amount_minor)}</strong></div>
-          <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${action}${retry}</div></div>
+          <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${action}${retry}${stockAction}</div></div>
         </div>`;
     }).join(''):'<div class="bulk-empty"><strong>No orders yet</strong><span>Create and approve a fulfilment batch to see customer orders here.</span></div>';
   }
@@ -116,6 +123,22 @@
 
   document.querySelector('#bulkRefresh').onclick=load;
   host.onclick=async event=>{
+    const stockStop=event.target.closest('[data-stock-stop]');
+    const stockResume=event.target.closest('[data-stock-resume]');
+    if(stockStop||stockResume){
+      const button=stockStop||stockResume,row=button.closest('[data-basket]');if(!row)return;
+      button.disabled=true;
+      try{
+        await request('/api/bulk-queue/'+row.dataset.basket+'/stock-watch',{
+          method:'PATCH',headers:{'content-type':'application/json'},
+          body:JSON.stringify(stockStop?{enabled:false}:{enabled:true,autoOrder:true,extendDays:30})
+        });
+        await load();
+        if(window.toast)window.toast(stockStop?'Stock watch paused':'Stock watch resumed');
+      }catch(error){alert(error.message)}
+      finally{button.disabled=false}
+      return;
+    }
     const focus=event.target.closest('[data-focus-session]');
     if(focus){
       const row=focus.closest('[data-basket]');if(!row)return;

@@ -54,6 +54,27 @@ function minCap(a:number,b:number){
   if(b<=0)return a;
   return Math.min(a,b);
 }
+async function createNotification(input:{
+  tenantId:string;userId?:string|null;basketId?:string|null;type:
+    "STOCK_WATCH_STARTED"|"BACK_IN_STOCK"|"ORDER_CONFIRMED"|"HUMAN_ACTION_REQUIRED"|
+    "SESSION_READY"|"SESSION_REAUTH_REQUIRED"|"STOCK_WATCH_EXPIRED";
+  title:string;message:string;idempotencyKey:string;payload?:Record<string,unknown>;
+}){
+  await db.query(
+    `insert into notifications(tenant_id,user_id,checkout_basket_id,type,title,message,idempotency_key,payload)
+     values($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict(tenant_id,idempotency_key) do nothing`,
+    [input.tenantId,input.userId??null,input.basketId??null,input.type,input.title,input.message,input.idempotencyKey,input.payload??{}]
+  );
+}
+async function basketNotificationUser(tenantId:string,basketId:string){
+  const {rows}=await db.query(
+    `select b.created_by from checkout_baskets cb join order_batches b on b.id=cb.batch_id
+     where cb.id=$1 and cb.tenant_id=$2 limit 1`,
+    [basketId,tenantId]
+  );
+  return rows[0]?.created_by?String(rows[0].created_by):null;
+}
 async function getAutomationPolicy(tenantId:string){
   const local=await readAutomationPolicy(tenantId);
   const relation=await db.query("select parent_tenant_id from dealer_relationships where child_tenant_id=$1 and status='ACTIVE' limit 1",[tenantId]);
@@ -714,7 +735,8 @@ app.get("/api/retailer-accounts",async(req)=>{
   const {rows}=await db.query(`
     select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
-      ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,ra.updated_at,
+      ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
+      ra.session_status,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
       coalesce((select sum(case
         when re.event_type in ('CREDITED','ADJUSTED') then re.units
@@ -732,6 +754,8 @@ app.get("/api/retailer-accounts",async(req)=>{
     select count(*)::int total,
       count(*) filter(where customer_id is null)::int pooled,
       count(*) filter(where active)::int active,
+      count(*) filter(where session_status='READY' and (session_target_expires_at is null or session_target_expires_at>now()))::int session_ready,
+      count(*) filter(where session_status='REAUTH_REQUIRED')::int reauth_required,
       count(*) filter(where auth_status='READY')::int ready,
       count(*) filter(where auth_status in ('LOCKED','DISABLED'))::int unavailable
     from retailer_accounts where tenant_id=$1
@@ -815,6 +839,144 @@ app.patch("/api/retailer-accounts/:id",async(req,reply)=>{
   );
   if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
   await audit(db,p.tenantId,p.id,"retailer_account.updated","retailer_account",id,{active:body.active,maxConcurrentOrders:body.maxConcurrentOrders});
+  return rows[0];
+});
+
+app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    retailer:z.enum(["amazon-in","flipkart"]).optional(),
+    accountIds:z.array(z.string().uuid()).max(1000).optional(),
+    targetDays:z.number().int().min(1).max(90).default(20)
+  }).parse(req.body??{});
+  const params:any[]=[p.tenantId,body.targetDays];
+  const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')","credential_status<>'MISSING'"];
+  if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
+  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status='VERIFYING',session_target_days=$2,session_check_requested_at=now(),
+       session_check_claimed_at=null,session_worker_id=null,updated_at=now()
+     where ${clauses.join(" and ")}
+     returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
+    params
+  );
+  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
+  return {count:rows.length,accounts:rows};
+});
+
+app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const account=await db.query(
+    `select ra.id,ra.retailer,ra.profile_key,ra.session_worker_id,ew.last_seen
+     from retailer_accounts ra
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     where ra.id=$1 and ra.tenant_id=$2 limit 1`,
+    [id,p.tenantId]
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(404).send({error:"retailer_account_not_found"});
+  if(!row.session_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"session_worker_offline"});
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,null,'FOCUS_SESSION',$3,$4) returning id,status`,
+    [p.tenantId,row.session_worker_id,{retailer:row.retailer,retailerAccountId:id,profileKey:row.profile_key},p.id]
+  );
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
+app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const live=await client.query(
+      "select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
+      [p.tenantId,workerId,p.id]
+    );
+    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    await client.query(
+      `update retailer_accounts set session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING'
+       where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '15 minutes'`,
+      [p.tenantId]
+    );
+    const picked=await client.query(
+      `select id,retailer,account_reference,profile_key
+       from retailer_accounts
+       where tenant_id=$1 and active and retailer in ('amazon-in','flipkart')
+         and credential_status<>'MISSING' and session_check_requested_at is not null
+         and session_check_claimed_at is null
+       order by session_check_requested_at,id
+       for update skip locked
+       limit $2`,
+      [p.tenantId,body.limit]
+    );
+    const ids=picked.rows.map(r=>r.id);
+    if(ids.length)await client.query(
+      `update retailer_accounts set session_check_claimed_at=now(),session_worker_id=$1,session_status='VERIFYING',updated_at=now()
+       where tenant_id=$2 and id=any($3::uuid[])`,
+      [workerId,p.tenantId,ids]
+    );
+    await client.query("commit");
+    const accounts:any[]=[];
+    for(const row of picked.rows){
+      let credentials:null|{login:string;password:string}=null;
+      const stored=await db.query(
+        "select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1",
+        [p.tenantId,row.id]
+      );
+      if(stored.rows[0]){
+        const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+        if(decrypted.password)credentials={login:String(row.account_reference),password:String(decrypted.password)};
+      }
+      accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials});
+    }
+    return {accounts};
+  }catch(error){await client.query("rollback");throw error}finally{client.release()}
+});
+
+app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const retailerAccountId=z.string().uuid().parse((req.params as any).retailerAccountId);
+  const body=z.object({
+    status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
+    code:z.string().max(100).optional(),
+    message:z.string().max(500).optional()
+  }).parse(req.body);
+  const account=await db.query(
+    "select id,created_by,retailer,account_reference,session_target_days from retailer_accounts where id=$1 and tenant_id=$2 and session_worker_id=$3 limit 1",
+    [retailerAccountId,p.tenantId,workerId]
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(409).send({error:"session_check_not_owned_by_worker"});
+  const ready=body.status==="READY";
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status=$1,session_checked_at=now(),
+       session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
+       session_check_requested_at=null,session_check_claimed_at=null,
+       auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
+       credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
+                              when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
+       last_authenticated_at=case when $1='READY' then now() else last_authenticated_at end,
+       updated_at=now()
+     where id=$2 and tenant_id=$3
+     returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id`,
+    [body.status,retailerAccountId,p.tenantId]
+  );
+  await createNotification({
+    tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
+    title:ready?"Retailer account ready":"Retailer verification required",
+    message:ready
+      ?`${row.retailer} account ${row.account_reference} is session-ready. The 20-day window is a target and may be shortened by retailer security checks.`
+      :(body.message??`${row.retailer} account ${row.account_reference} needs verification before automated checkout.`),
+    idempotencyKey:`session:${retailerAccountId}:${body.status}:${new Date().toISOString().slice(0,13)}`,
+    payload:{retailerAccountId,retailer:row.retailer,code:body.code??null}
+  });
   return rows[0];
 });
 
@@ -973,6 +1135,42 @@ app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 
 
+app.get("/api/notifications",async(req)=>{
+  const p=req.principal!;
+  const query=z.object({
+    unread:z.enum(["true","false"]).optional(),
+    limit:z.coerce.number().int().min(1).max(200).default(50)
+  }).parse(req.query??{});
+  const {rows}=await db.query(
+    `select id,type,title,message,checkout_basket_id,payload,read_at,created_at
+     from notifications
+     where tenant_id=$1 and (user_id is null or user_id=$2)
+       and ($3::boolean=false or read_at is null)
+     order by created_at desc limit $4`,
+    [p.tenantId,p.id,query.unread==="true",query.limit]
+  );
+  return {notifications:rows,unread:rows.filter(r=>!r.read_at).length};
+});
+
+app.patch("/api/notifications/:id/read",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(
+    "update notifications set read_at=coalesce(read_at,now()) where id=$1 and tenant_id=$2 and (user_id is null or user_id=$3) returning id,read_at",
+    [id,p.tenantId,p.id]
+  );
+  if(!rows[0])return reply.code(404).send({error:"notification_not_found"});
+  return rows[0];
+});
+
+app.post("/api/notifications/read-all",async(req)=>{
+  const p=req.principal!;
+  const result=await db.query(
+    "update notifications set read_at=now() where tenant_id=$1 and (user_id is null or user_id=$2) and read_at is null",
+    [p.tenantId,p.id]
+  );
+  return {updated:result.rowCount??0};
+});
+
 app.get("/api/human-actions",async(req)=>{
   const p=req.principal!;
   const {rows}=await db.query(`
@@ -1073,8 +1271,10 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
     `,[p.tenantId,ids]);
     await client.query("commit");
     return {commands:commands.rows.map(r=>({
-      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,retailer:r.retailer,
-      retailerAccountId:r.retailer_account_id,profileKey:r.profile_key,payload:r.payload
+      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
+      retailer:r.retailer??r.payload?.retailer,
+      retailerAccountId:r.retailer_account_id??r.payload?.retailerAccountId,
+      profileKey:r.profile_key??r.payload?.profileKey,payload:r.payload
     }))};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
 });
@@ -1247,7 +1447,15 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
       [hasError?"ERROR":"OBSERVED",hasError?"1":"12",body.error??body.authChallenge??null,p.tenantId,workerId,retailerAccountId,body.basketIds]
     );
     if(body.authChallenge){
-      await client.query("update retailer_accounts set auth_status='CHALLENGE',updated_at=now() where id=$1 and tenant_id=$2",[retailerAccountId,p.tenantId]);
+      await client.query(
+        "update retailer_accounts set auth_status='CHALLENGE',session_status='REAUTH_REQUIRED',session_checked_at=now(),session_target_expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+        [retailerAccountId,p.tenantId]
+      );
+    }else if(!body.error){
+      await client.query(
+        "update retailer_accounts set auth_status='READY',session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$1,updated_at=now() where id=$2 and tenant_id=$3",
+        [workerId,retailerAccountId,p.tenantId]
+      );
     }
     await client.query("commit");
     return {ok:true,observations:body.observations.length,rewardObserved:body.reward?.balance??null};
@@ -1537,6 +1745,8 @@ app.get("/api/bulk-baskets",async(req)=>{
   const {rows}=await db.query(`
     select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
            cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,cb.payment_status,
+           cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,
+           cb.stock_watch_started_at,cb.stock_watch_expires_at,cb.stock_last_checked_at,cb.stock_next_check_at,cb.stock_available_at,cb.stock_last_message,
            c.external_reference customer_reference,
            ra.profile_key,ra.auth_status,ra.credential_status,
            a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
@@ -1569,8 +1779,26 @@ app.get("/api/bulk-queue",async(req,reply)=>{
   const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);
   if(!worker.success)return reply.code(400).send({error:"worker_id_required"});
   await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
+  const expired=await db.query(
+    `update checkout_baskets set status='REQUIRES_ACTION',stock_watch_enabled=false,
+       failure_code='STOCK_WATCH_EXPIRED',failure_message='Stock watch expired before the item became available',
+       stock_last_message='Stock watch expired',updated_at=now()
+     where tenant_id=$1 and execution_worker_id=$2 and status='WAITING_STOCK'
+       and stock_watch_enabled and stock_watch_expires_at is not null and stock_watch_expires_at<=now()
+     returning id`,
+    [p.tenantId,worker.data]
+  );
+  for(const row of expired.rows){
+    const userId=await basketNotificationUser(p.tenantId,String(row.id));
+    await createNotification({
+      tenantId:p.tenantId,userId,basketId:String(row.id),type:"STOCK_WATCH_EXPIRED",
+      title:"Stock watch expired",message:"The item did not return to stock within the watch window. Review the order to extend or cancel it.",
+      idempotencyKey:`stock-watch-expired:${row.id}`
+    });
+  }
   const {rows}=await db.query(`
     select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
+           cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,cb.stock_next_check_at,cb.stock_watch_expires_at,
            cb.customer_id,cb.retailer_account_id,
            c.external_reference customer_reference,
            ra.profile_key,ra.auth_status,
@@ -1582,7 +1810,13 @@ app.get("/api/bulk-queue",async(req,reply)=>{
     join customers c on c.id=cb.customer_id
     join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join purchase_orders po on po.checkout_basket_id=cb.id
-    where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+    where cb.tenant_id=$1 and cb.execution_worker_id=$2
+      and (
+        cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+        or (cb.status='WAITING_STOCK' and cb.stock_watch_enabled and cb.stock_watch_auto_order
+            and cb.stock_next_check_at<=now()
+            and (cb.stock_watch_expires_at is null or cb.stock_watch_expires_at>now()))
+      )
     group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
     order by cb.created_at
   `,[p.tenantId,worker.data]);
@@ -1593,11 +1827,14 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);
   const {rows}=await db.query(`
     update checkout_baskets cb
-    set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',failure_code=null,failure_message=null,updated_at=now()
+    set status='OPENED',opened_at=coalesce(opened_at,now()),expires_at=now()+interval '20 minutes',
+        stock_last_checked_at=case when cb.status='WAITING_STOCK' then now() else stock_last_checked_at end,
+        failure_code=null,failure_message=null,updated_at=now()
     from addresses a,order_batches b,customers c,retailer_accounts ra
     where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3
-      and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
-      and (cb.expires_at>now() or cb.status='REQUIRES_ACTION')
+      and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION','WAITING_STOCK')
+      and (cb.expires_at>now() or cb.status in ('REQUIRES_ACTION','WAITING_STOCK'))
+      and (cb.status<>'WAITING_STOCK' or (cb.stock_watch_enabled and cb.stock_watch_auto_order and cb.stock_next_check_at<=now() and (cb.stock_watch_expires_at is null or cb.stock_watch_expires_at>now())))
       and a.id=cb.address_id and b.id=cb.batch_id
       and c.id=cb.customer_id and ra.id=cb.retailer_account_id
     returning cb.id,cb.customer_id,cb.retailer_account_id,cb.retailer,cb.account_reference,
@@ -1654,7 +1891,7 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
     currency:z.literal("INR").default("INR")
   }).parse(req.body);
   const basket=await db.query(
-    "select id,batch_id,status from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') limit 1",
+    "select id,batch_id,status,stock_watch_started_at,stock_watch_max_amount_minor from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') limit 1",
     [id,p.tenantId,body.workerId]
   );
   if(!basket.rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
@@ -1687,6 +1924,7 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   const breaches:string[]=[];
   if(orderVariancePercent>Number(policy.max_price_increase_percent))breaches.push("PRICE_VARIANCE");
   if(Number(policy.max_order_value_minor)>0&&body.amountMinor>Number(policy.max_order_value_minor))breaches.push("ORDER_VALUE");
+  if(basket.rows[0].stock_watch_started_at&&Number(basket.rows[0].stock_watch_max_amount_minor||0)>0&&body.amountMinor>Number(basket.rows[0].stock_watch_max_amount_minor))breaches.push("STOCK_WATCH_CEILING");
   if(batchVariancePercent>Number(policy.max_batch_variance_percent))breaches.push("BATCH_VARIANCE");
 
   await db.query(
@@ -1739,6 +1977,128 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   };
 });
 
+app.post("/api/bulk-queue/:id/stock-wait",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    workerId:z.string().min(8).max(128),
+    message:z.string().max(500).optional(),
+    observedPriceMinor:z.number().int().positive().nullable().optional()
+  }).parse(req.body);
+  const basket=await db.query(
+    `select cb.id,cb.batch_id,cb.status,cb.stock_watch_enabled,cb.stock_watch_started_at,
+      b.created_by,coalesce(sum(po.amount_minor),0)::bigint expected_minor
+     from checkout_baskets cb
+     join order_batches b on b.id=cb.batch_id
+     left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+     where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3
+       and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+     group by cb.id,b.created_by`,
+    [id,p.tenantId,body.workerId]
+  );
+  const row=basket.rows[0];
+  if(!row)return reply.code(409).send({error:"basket_not_owned_by_worker"});
+  const policy=await getAutomationPolicy(p.tenantId);
+  const expectedMinor=Number(row.expected_minor||0);
+  let ceiling=Math.ceil(expectedMinor*(1+Number(policy.max_price_increase_percent||0)/100));
+  if(Number(policy.max_order_value_minor)>0)ceiling=Math.min(ceiling,Number(policy.max_order_value_minor));
+  const autoOrder=Boolean(policy.automation_enabled&&policy.auto_continue_checkout);
+  const firstWatch=!row.stock_watch_started_at;
+  const {rows}=await db.query(
+    `update checkout_baskets set
+       status='WAITING_STOCK',
+       stock_watch_enabled=true,
+       stock_watch_auto_order=$1,
+       stock_watch_max_amount_minor=coalesce(stock_watch_max_amount_minor,$2),
+       stock_watch_started_at=coalesce(stock_watch_started_at,now()),
+       stock_watch_expires_at=coalesce(stock_watch_expires_at,now()+interval '30 days'),
+       stock_last_checked_at=now(),
+       stock_next_check_at=now()+(stock_watch_interval_minutes::text||' minutes')::interval,
+       stock_last_message=$3,
+       failure_code='OUT_OF_STOCK',
+       failure_message=$3,
+       claimed_by=null,
+       expires_at=null,
+       updated_at=now()
+     where id=$4 and tenant_id=$5 and execution_worker_id=$6
+     returning id,status,stock_watch_auto_order,stock_watch_max_amount_minor,stock_next_check_at,stock_watch_expires_at`,
+    [autoOrder,Math.max(100,ceiling),body.message??"Retailer item is currently out of stock",id,p.tenantId,body.workerId]
+  );
+  if(firstWatch){
+    await createNotification({
+      tenantId:p.tenantId,userId:row.created_by,basketId:id,type:"STOCK_WATCH_STARTED",
+      title:"Stock watch started",
+      message:"OrderGrid will recheck this approved order and continue checkout automatically when stock returns within your price policy.",
+      idempotencyKey:`stock-watch-start:${id}`,
+      payload:{expectedMinor,maxAmountMinor:Math.max(100,ceiling),autoOrder,observedPriceMinor:body.observedPriceMinor??null}
+    });
+  }
+  await audit(db,p.tenantId,p.id,"stock_watch.waiting","checkout_basket",id,{workerId:body.workerId,autoOrder,maxAmountMinor:ceiling});
+  return rows[0];
+});
+
+app.post("/api/bulk-queue/:id/stock-available",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);
+  const {rows}=await db.query(
+    `update checkout_baskets set stock_available_at=coalesce(stock_available_at,now()),stock_last_checked_at=now(),
+       stock_last_message='Stock is available; checkout resumed',updated_at=now()
+     where id=$1 and tenant_id=$2 and execution_worker_id=$3 and stock_watch_enabled and status='OPENED'
+     returning id,retailer,batch_id`,
+    [id,p.tenantId,body.workerId]
+  );
+  if(!rows[0])return reply.code(409).send({error:"stock_watch_not_active"});
+  const userId=await basketNotificationUser(p.tenantId,id);
+  await createNotification({
+    tenantId:p.tenantId,userId,basketId:id,type:"BACK_IN_STOCK",
+    title:"Back in stock",
+    message:"The watched item is orderable again. OrderGrid has resumed the same approved checkout task.",
+    idempotencyKey:`back-in-stock:${id}`,
+    payload:{retailer:rows[0].retailer}
+  });
+  await audit(db,p.tenantId,p.id,"stock_watch.available","checkout_basket",id,{workerId:body.workerId});
+  return {id,status:"OPENED"};
+});
+
+app.patch("/api/bulk-queue/:id/stock-watch",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    enabled:z.boolean().optional(),
+    autoOrder:z.boolean().optional(),
+    intervalMinutes:z.number().int().min(1).max(1440).optional(),
+    maxAmountMinor:z.number().int().positive().optional(),
+    extendDays:z.number().int().min(1).max(90).optional()
+  }).refine(v=>Object.keys(v).length>0).parse(req.body);
+  const existing=await db.query(
+    "select id,status,stock_watch_started_at from checkout_baskets where id=$1 and tenant_id=$2 limit 1",
+    [id,p.tenantId]
+  );
+  if(!existing.rows[0])return reply.code(404).send({error:"basket_not_found"});
+  if(!existing.rows[0].stock_watch_started_at)return reply.code(409).send({error:"stock_watch_not_started"});
+  const enabled=body.enabled??true;
+  const {rows}=await db.query(
+    `update checkout_baskets set
+       stock_watch_enabled=$1,
+       stock_watch_auto_order=coalesce($2,stock_watch_auto_order),
+       stock_watch_interval_minutes=coalesce($3,stock_watch_interval_minutes),
+       stock_watch_max_amount_minor=coalesce($4,stock_watch_max_amount_minor),
+       stock_watch_expires_at=case when $5::int is not null then now()+($5::text||' days')::interval else stock_watch_expires_at end,
+       stock_next_check_at=case when $1 then now() else stock_next_check_at end,
+       status=case when $1 and status='REQUIRES_ACTION' and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'WAITING_STOCK'
+                   when not $1 and status='WAITING_STOCK' then 'REQUIRES_ACTION' else status end,
+       failure_code=case when not $1 then 'STOCK_WATCH_PAUSED'
+                         when $1 and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'OUT_OF_STOCK' else failure_code end,
+       failure_message=case when not $1 then 'Stock watch paused by operator'
+                            when $1 and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'Waiting for stock' else failure_message end,
+       updated_at=now()
+     where id=$6 and tenant_id=$7
+     returning id,status,stock_watch_enabled,stock_watch_auto_order,stock_watch_interval_minutes,stock_watch_max_amount_minor,stock_next_check_at,stock_watch_expires_at`,
+    [enabled,body.autoOrder??null,body.intervalMinutes??null,body.maxAmountMinor??null,body.extendDays??null,id,p.tenantId]
+  );
+  await audit(db,p.tenantId,p.id,"stock_watch.updated","checkout_basket",id,body);
+  return rows[0];
+});
+
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
   const body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);
@@ -1749,9 +2109,25 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   );
   if(!rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
   if(body.state==="CHALLENGE"){
-    const authStatus=/LOGIN|PASSWORD|AUTH/i.test(body.code??"")?"AUTH_REQUIRED":"CHALLENGE";
-    await db.query("update retailer_accounts set auth_status=$1,credential_status=case when $1='AUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,updated_at=now() where id=$2 and tenant_id=$3",[authStatus,rows[0].retailer_account_id,p.tenantId]);
+    const authStatus=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"")?"CHALLENGE":"CHALLENGE";
+    const isRetailerAuth=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"");
+    await db.query(
+      `update retailer_accounts set auth_status=$1,
+       session_status=case when $2 then 'REAUTH_REQUIRED' else session_status end,
+       session_checked_at=case when $2 then now() else session_checked_at end,
+       credential_status=case when $2 and credential_status='READY' then 'STORED' else credential_status end,
+       updated_at=now() where id=$3 and tenant_id=$4`,
+      [authStatus,isRetailerAuth,rows[0].retailer_account_id,p.tenantId]
+    );
     if(/PAYMENT|3DS|CARD/i.test(body.code??""))await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    const notifyUser=await basketNotificationUser(p.tenantId,id);
+    await createNotification({
+      tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"HUMAN_ACTION_REQUIRED",
+      title:isRetailerAuth?"Retailer verification required":"Payment verification required",
+      message:body.message??"This order needs a protected human verification step before automation can continue.",
+      idempotencyKey:`human-action:${id}:${body.code??"REVIEW"}`,
+      payload:{code:body.code??null}
+    });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
     const policy=await getAutomationPolicy(p.tenantId);
@@ -1819,10 +2195,18 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     );
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
-    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,updated_at=now() where id=$2",[retailerOrderId,id]);
-    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status='STORED' then 'READY' else credential_status end,last_authenticated_at=now(),updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId]);
+    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,stock_watch_enabled=false,stock_next_check_at=null,stock_last_message=case when stock_watch_started_at is not null then 'Order placed after stock became available' else stock_last_message end,updated_at=now() where id=$2",[retailerOrderId,id]);
+    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY' else credential_status end,last_authenticated_at=now(),session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$3,updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId,body.workerId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
+    const notifyUser=await basketNotificationUser(p.tenantId,id);
+    await createNotification({
+      tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"ORDER_CONFIRMED",
+      title:"Order placed",
+      message:`OrderGrid confirmed the retailer order ${retailerOrderId}.`,
+      idempotencyKey:`order-confirmed:${id}:${retailerOrderId}`,
+      payload:{retailerOrderId}
+    });
     await audit(db,p.tenantId,p.id,"bulk_basket.confirmed_by_worker","checkout_basket",id,{workerId:body.workerId,retailerOrderId,customerId:locked.rows[0].customer_id,retailerAccountId:locked.rows[0].retailer_account_id});
     return {id,status:"CONFIRMED",retailerOrderId};
   }catch(e){await client.query("rollback");throw e}finally{client.release()}
