@@ -16,6 +16,8 @@ services:
         value: https://ordergrid-production.onrender.com
       - key: DATABASE_URL
         sync: false
+      - key: DB_POOL_MAX
+        value: "5"
       - key: REDIS_URL
         sync: false
       - key: SESSION_SECRET
