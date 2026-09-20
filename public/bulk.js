@@ -29,7 +29,7 @@
     .bulk-truth{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}.bulk-truth div{padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}
     .bulk-truth span{display:block;font-size:10px;color:#64748b}.bulk-truth strong{font-size:22px}.bulk-row{display:grid;grid-template-columns:minmax(260px,1fr) repeat(3,minmax(110px,auto));gap:12px;align-items:center;padding:14px 0;border-top:1px solid #e5e7eb}
     .bulk-row small{display:block;color:#64748b;margin-top:3px}.bulk-status{font-weight:800;font-size:12px}.bulk-exception{margin-top:6px;padding:7px 9px;background:#fff7ed;border-radius:8px;color:#9a3412;font-size:12px}
-    .bulk-action{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}.bulk-action button{white-space:nowrap}
+    .bulk-action{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}.bulk-action button,.bulk-action a{white-space:nowrap}.amazon-open-link{display:inline-block;text-decoration:none}
     @media(max-width:900px){.bulk-truth{grid-template-columns:1fr 1fr}.bulk-row{grid-template-columns:1fr}.bulk-action{justify-content:flex-start}}@media(max-width:520px){.bulk-truth{grid-template-columns:1fr}}
   `;
   document.head.appendChild(style);
@@ -66,7 +66,7 @@
         <div><strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong><small>${esc(b.recipient)} · account ${esc(b.account_reference||'unbound')} · auth ${esc(b.auth_status||'unknown')}</small><small>${esc(b.batch_name)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>${b.failure_message?`<div class="bulk-exception"><b>${esc(b.failure_code||'ACTION REQUIRED')}</b> · ${esc(b.failure_message)}</div>`:''}</div>
         <div><small>Items</small><strong>${b.item_count}</strong></div>
         <div><small>Basket value</small><strong>${money(b.amount_minor)}</strong></div>
-        <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${b.retailer==='amazon-in'?'<button class="secondary" data-browser-checkout>Open in my Amazon account</button>':''}${['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Retry basket</button>':''}</div></div>
+        <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${b.retailer==='amazon-in'?'<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1" target="_blank" rel="noopener">Open in my Amazon account</a>':''}${['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Retry basket</button>':''}</div></div>
       </div>`).join(''):'<p class="muted">No baskets yet. Create and approve a fulfilment batch.</p>';
   }
   async function load(){
@@ -87,18 +87,6 @@
   };
   document.querySelector('#bulkRefresh').onclick=load;
   host.onclick=async event=>{
-    const browserCheckout=event.target.closest('[data-browser-checkout]');
-    if(browserCheckout){
-      const row=browserCheckout.closest('[data-basket]');browserCheckout.disabled=true;
-      try{
-        const result=await request(`/api/bulk-baskets/${row.dataset.basket}/browser-checkout`);
-        const opened=window.open(result.checkoutUrl,'_blank','noopener');
-        if(!opened)alert('Your browser blocked the Amazon tab. Allow pop-ups for OrderGrid and click again.');
-        else if(window.toast)window.toast('Opened real Amazon cart in this browser profile');
-      }catch(error){alert(error.message)}
-      finally{browserCheckout.disabled=false}
-      return;
-    }
     const retry=event.target.closest('[data-retry]');if(!retry)return;
     const row=retry.closest('[data-basket]');retry.disabled=true;
     try{await request(`/api/bulk-queue/${row.dataset.basket}/retry`,{method:'POST'});await load();if(window.toast)window.toast('Basket returned to OrderGrid execution queue')}
