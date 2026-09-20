@@ -7,6 +7,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DB_HOST: z.string().min(1).optional(),
   DB_PORT: z.coerce.number().int().positive().default(5432),
+  DB_POOL_MAX: z.coerce.number().int().min(2).max(10).default(5),
   DB_NAME: z.string().min(1).default("postgres"),
   DB_USER: z.string().min(1).optional(),
   DB_PASSWORD: z.string().min(1).optional(),
