@@ -116,11 +116,17 @@
   }
   function prefillFundingCardIdentity(){
     const form=$('#issuerForm'),current=issuers.find(x=>x.status==='CONNECTED');
-    if(!form||!current)return;
-    if(form.elements.fundingCardholderName&&!form.elements.fundingCardholderName.value)form.elements.fundingCardholderName.value=current.funding_cardholder_name||'';
-    if(form.elements.fundingCardLast4&&!form.elements.fundingCardLast4.value)form.elements.fundingCardLast4.value=current.funding_card_last4||'';
-    if(form.elements.fundingCardExpiryMonth&&!form.elements.fundingCardExpiryMonth.value)form.elements.fundingCardExpiryMonth.value=current.funding_card_expiry_month||'';
-    if(form.elements.fundingCardExpiryYear&&!form.elements.fundingCardExpiryYear.value)form.elements.fundingCardExpiryYear.value=current.funding_card_expiry_year||'';
+    if(!form||!current){syncBankConnector();return}
+    if(form.elements.provider)form.elements.provider.value=current.provider||current.bank_code||'hdfc';
+    syncBankConnector();
+    if(form.elements.bankName)form.elements.bankName.value=current.bank_name||form.elements.bankName.value||'';
+    if(form.elements.programmeName)form.elements.programmeName.value=current.programme_name||'';
+    if(form.elements.cardNetwork)form.elements.cardNetwork.value=current.card_network||'VISA';
+    if(form.elements.fundingCardholderName)form.elements.fundingCardholderName.value=current.funding_cardholder_name||'';
+    if(form.elements.fundingCardLast4)form.elements.fundingCardLast4.value=current.funding_card_last4||'';
+    if(form.elements.fundingCardExpiryMonth)form.elements.fundingCardExpiryMonth.value=current.funding_card_expiry_month||'';
+    if(form.elements.fundingCardExpiryYear)form.elements.fundingCardExpiryYear.value=current.funding_card_expiry_year||'';
+    if(form.elements.integrationMode&&current.integration_mode)form.elements.integrationMode.value=current.integration_mode;
   }
   async function openIssuerConnector(){
     const panel=$('#issuerDialog');
@@ -130,7 +136,7 @@
     try{await load()}catch(error){console.error(error)}
     finally{if(button){button.disabled=false;button.textContent=previous||'Set up funding card'}}
     const error=$('#issuerError');if(error)error.textContent='';
-    try{syncBankConnector();prefillFundingCardIdentity()}catch(error){console.error(error)}
+    try{prefillFundingCardIdentity()}catch(error){console.error(error)}
     panel.hidden=false;
     panel.scrollIntoView({behavior:'smooth',block:'start'});
     setTimeout(()=>$('#issuerProvider')?.focus(),0);
