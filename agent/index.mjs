@@ -97,7 +97,19 @@ async function main(){
               const directory=join(profileRoot(),profileKey(body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
-              const result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume});
+              let result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume});
+              if(result.state==="COMMERCIAL_CHECK"){
+                const decision=(await api(`/api/bulk-queue/${basket.id}/commercial-check`,{
+                  method:"POST",
+                  body:JSON.stringify({workerId,amountMinor:Number(result.amountMinor),currency:result.currency||"INR"})
+                })).body;
+                if(!decision.allowed){
+                  await postProgress(workerId,basket.id,"CHALLENGE","PRICE_POLICY_REVIEW_REQUIRED","Commercial policy review required before final retailer submission");
+                  output.write(`Commercial review ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer} · expected ₹${(Number(decision.expectedAmountMinor||0)/100).toFixed(2)} · observed ₹${(Number(decision.observedAmountMinor||0)/100).toFixed(2)}\n`);
+                  continue;
+                }
+                result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,commercialApprovedAmountMinor:Number(decision.approvedAmountMinor),resume:true});
+              }
               if(result.state==="CONFIRMED"&&result.orderId){
                 await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
                 started.delete(basket.id);
