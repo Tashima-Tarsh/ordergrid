@@ -1,5 +1,5 @@
 (()=>{
-  const command=document.querySelector('.command-dashboard .overview-shell');
+  const command=document.querySelector('.command-dashboard');
   if(!command)return;
   const $=s=>document.querySelector(s);
   const esc=value=>{const d=document.createElement('div');d.textContent=String(value??'');return d.innerHTML};
@@ -15,7 +15,7 @@
       <div>
         <p class="eyebrow">USER-WISE OPERATIONS</p>
         <h3>User performance & financial trail</h3>
-        <p>Filter the current dealer workspace by user. Orders, refunds, rewards, cards, GST activity and intervention load remain tied to the person who created the fulfilment batch.</p>
+        <p>Filter the current workspace by user. Orders, refunds, rewards, cards, GST activity and intervention load remain tied to the person who created the fulfilment batch.</p>
       </div>
       <div class="user-dashboard-actions">
         <button type="button" class="secondary" id="userDashExcel">Download Excel</button>
