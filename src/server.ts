@@ -1313,9 +1313,14 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
 
 app.get("/api/issuers",async(req)=>{
   const p=req.principal!;
-  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,
-    funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,
-    capabilities,connected_at,updated_at from issuer_connections where tenant_id=$1 order by bank_name,provider",[p.tenantId]);
+  const {rows}=await db.query(`
+    select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,
+      funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,
+      capabilities,connected_at,updated_at
+    from issuer_connections
+    where tenant_id=$1
+    order by bank_name,provider
+  `,[p.tenantId]);
   return {issuers:rows};
 });
 app.get("/api/funding-policies",async(req)=>{
