@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -19,6 +19,7 @@ const dashboardCss=files["public/dashboard.css"];
 const overviewCss=files["public/overview-premium.css"];
 const automation=files["public/automation-center.js"];
 const automationCss=files["public/automation-center.css"];
+const workspaceCss=files["public/workspace-premium.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
@@ -80,13 +81,27 @@ must(!userDashboard.includes(".command-dashboard .overview-shell"),"dashboard co
 must(html.includes('href="overview-premium.css"'),"dashboard contract: premium overview stylesheet must be linked in head");
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: premium overview stylesheet must be precached");
 must(overviewCss.includes(".overview-shell"),"dashboard contract: premium overview styles missing");
-must(dashboard.includes("WORKSPACE USERS"),"dashboard contract: workspace user scope missing");
+must(dashboard.includes("RECENT PROCUREMENT"),"dashboard contract: compact recent-procurement rail missing");
+must(dashboard.includes('id="ovRecentBatches"'),"dashboard contract: recent batch rail target missing");
+must(dashboard.includes("overview-commandbar"),"dashboard contract: compact command bar missing");
+must(dashboard.includes("overview-kpi-strip"),"dashboard contract: horizontal KPI strip missing");
 must(!dashboard.includes("/api/dealer-network"),"dashboard contract: stale dealer API returned");
 must(!/DEALER NETWORK|Main Dealer|Sub-dealer|Current dealer/i.test(dashboard),"dashboard contract: dealer hierarchy wording returned");
 must(automation.includes("automation-control-center"),"autopilot contract: premium automation center missing");
 must(automationCss.includes(".automation-layout"),"autopilot contract: premium layout styles missing");
 must(automationCss.includes(".automation-policy"),"autopilot contract: policy console styles missing");
 must(navigation.includes("let view='hidden'"),"navigation contract: unknown sections must not leak into Dashboard");
+must(html.includes('href="workspace-premium.css"'),"premium shell contract: workspace stylesheet must be loaded");
+must(sw.includes("'./workspace-premium.css'"),"premium shell contract: workspace stylesheet must be precached");
+must(workspaceCss.includes(".overview-kpi-strip"),"premium shell contract: dashboard density styles missing");
+must(workspaceCss.includes(".automation-command-surface"),"premium shell contract: autopilot command surface styles missing");
+must(workspaceCss.includes(".overview-batch-rail"),"premium shell contract: horizontal batch rail styles missing");
+must(navigation.includes("hashByView"),"navigation contract: premium route hashes missing");
+must(navigation.includes("dashboard:'dashboard'"),"navigation contract: dashboard URL route missing");
+must(navigation.includes("autopilot:'autopilot'"),"navigation contract: autopilot URL route missing");
+must(navigation.includes("body.product-shell{padding-left:216px}"),"navigation contract: compact premium sidebar width missing");
+must(automation.includes("automation-command-surface"),"autopilot contract: compact command surface missing");
+must(automation.includes('id="autoRefresh"'),"autopilot contract: top command refresh missing");
 must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redirect support missing");
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");
