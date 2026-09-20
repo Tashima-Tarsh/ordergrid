@@ -34,6 +34,24 @@ async function waitForHealth(){
   throw new Error("automation smoke server did not become healthy");
 }
 
+function policy(overrides={}){
+  return {
+    automationEnabled:true,
+    autoAssignVirtualCard:true,
+    autoContinueCheckout:true,
+    maxActiveOrders:1,
+    failurePausePercent:5,
+    maxPriceIncreasePercent:5,
+    maxOrderValueMinor:0,
+    maxBatchVariancePercent:5,
+    priceBreachAction:"PAUSE_ORDER",
+    runMode:"MANUAL",
+    inheritParentPolicy:true,
+    allowChildPolicyRelaxation:false,
+    ...overrides
+  };
+}
+
 try{
   child=spawn(process.execPath,["dist/demo-server.js"],{
     env:{...process.env,PORT:String(port),NODE_ENV:"test",DEMO_EMAIL:email,DEMO_PASSWORD:password,SESSION_SECRET:randomBytes(40).toString("hex")},
@@ -66,26 +84,17 @@ try{
 
   const status=await json("/api/automation");
   assert(status.body.policy?.automation_enabled===true,"default Autopilot was not enabled");
-  assert(status.body.mandatoryRules?.length===3,"mandatory controls were not returned");
+  assert(status.body.mandatoryRules?.length===4,"mandatory controls were not returned");
+  assert(status.body.workflows?.some(w=>w.id==="commercial"),"commercial validation automation was not returned");
+  const preflight=await json("/api/automation/preflight");
+  assert(preflight.body.eligibleOrders===3,"preflight eligible order count was incorrect");
 
-  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({
-    automationEnabled:false,
-    autoAssignVirtualCard:true,
-    autoContinueCheckout:true,
-    maxActiveOrders:1,
-    failurePausePercent:5
-  })});
+  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(policy({automationEnabled:false}))});
 
   const paused=await raw("/api/bulk-queue/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({limit:10})});
   assert(paused.status===409,"Autopilot pause did not block order preparation");
 
-  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({
-    automationEnabled:true,
-    autoAssignVirtualCard:true,
-    autoContinueCheckout:false,
-    maxActiveOrders:1,
-    failurePausePercent:5
-  })});
+  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(policy({autoContinueCheckout:false}))});
 
   const claimed=await json("/api/bulk-queue/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({limit:10})});
   assert(claimed.body.claimed===1,`maxActiveOrders expected 1 claim, got ${claimed.body.claimed}`);
@@ -95,18 +104,21 @@ try{
   const blockedAssign=await raw(`/api/execution-worker/${workerId}/claim`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({limit:10})});
   assert(blockedAssign.status===409,"checkout continuation pause did not block assignment");
 
-  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({
-    automationEnabled:true,
-    autoAssignVirtualCard:true,
-    autoContinueCheckout:true,
-    maxActiveOrders:1,
-    failurePausePercent:5
-  })});
+  await json("/api/automation/policy",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(policy())});
   const assigned=await json(`/api/execution-worker/${workerId}/claim`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({limit:10})});
   assert(assigned.body.assigned===1,`expected one assigned order, got ${assigned.body.assigned}`);
 
+  const queue=await json(`/api/bulk-queue?workerId=${encodeURIComponent(workerId)}`);
+  const assignedBasket=queue.body.baskets?.[0];
+  assert(assignedBasket?.id,"assigned basket missing for commercial check");
+  const allowed=await json(`/api/bulk-queue/${assignedBasket.id}/commercial-check`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({workerId,amountMinor:10400,currency:"INR"})});
+  assert(allowed.body.allowed===true,"4% price increase should have passed 5% policy");
+  const blocked=await json(`/api/bulk-queue/${assignedBasket.id}/commercial-check`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({workerId,amountMinor:10600,currency:"INR"})});
+  assert(blocked.body.allowed===false,"6% price increase should have breached 5% policy");
+  assert(blocked.body.breaches?.includes("PRICE_VARIANCE"),"price variance breach was not reported");
+
   console.log("ORDERGRID_AUTOMATION_SMOKE_OK");
-  console.log(JSON.stringify({masterPause:true,concurrencyCap:true,checkoutPolicy:true,mandatoryControls:true}));
+  console.log(JSON.stringify({masterPause:true,concurrencyCap:true,checkoutPolicy:true,commercialPriceGate:true,preflight:true,mandatoryControls:true}));
 }catch(error){
   console.error("ORDERGRID_AUTOMATION_SMOKE_FAILED");
   console.error(error);
