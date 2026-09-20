@@ -59,7 +59,6 @@ side.className='app-sidebar';
 side.setAttribute('aria-label','Primary navigation');
 const items=[
   ['control','◎','Control Center'],
-  ['autopilot','↻','Autopilot'],
   ['overview','⌂','Dashboard'],
   ['fulfilment','▦','Fulfilment'],
   ['bulk','⇉','Bulk orders'],
@@ -83,7 +82,6 @@ const sections=[...main.children].filter(x=>x!==title&&x.tagName!=='DIALOG');
 sections.forEach(s=>{
   let view='hidden';
   if(s.classList.contains('control-center'))view='control';
-  else if(s.classList.contains('automation-control-center'))view='autopilot';
   else if(s.classList.contains('command-dashboard'))view='overview';
   else if(s.classList.contains('metrics'))view='hidden';
   else if(s.classList.contains('bulk-checkout')||s.classList.contains('human-action-centre'))view='bulk';
@@ -98,7 +96,6 @@ sections.forEach(s=>{
 
 const copy={
   control:['Control Center','Accounts, checkout, cards and order progress.'],
-  autopilot:['Autopilot','Automation state, policy and workflow health.'],
   overview:['Dashboard','Live procurement command and recent execution.'],
   fulfilment:['Fulfilment','Products, allocation, approval and checkout.'],
   bulk:['Bulk orders','Customer orders and checkout intervention.'],
@@ -107,7 +104,7 @@ const copy={
   cards:['Cards & funding','Funding programme and virtual-card inventory.'],
   rewards:['Retailer users','Authorised accounts, addresses and saved sessions.']
 };
-const hashByView={control:'control-center',autopilot:'autopilot',overview:'dashboard',fulfilment:'fulfilment',bulk:'bulk-orders',payments:'payments',gst:'gst-invoices',cards:'cards',rewards:'retailer-users'};
+const hashByView={control:'control-center',overview:'dashboard',fulfilment:'fulfilment',bulk:'bulk-orders',payments:'payments',gst:'gst-invoices',cards:'cards',rewards:'retailer-users'};
 const viewByHash=Object.fromEntries(Object.entries(hashByView).map(([view,hash])=>[hash,view]));
 const hashView=()=>viewByHash[String(location.hash||'').replace(/^#\/?/,'').replace(/\/$/,'')]||null;
 
