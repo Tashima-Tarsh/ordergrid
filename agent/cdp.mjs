@@ -517,9 +517,14 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       ?"https://www.amazon.in/gp/your-account/order-history"
       :null;
   if(!url)return {status:"ERROR",code:"SESSION_CHECK_UNSUPPORTED",message:"Session preparation is currently available for Amazon India and Flipkart."};
-  const target=await createTarget(port,url);
+  const host=retailerHost(retailer);
+  const existing=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
+  const target=existing.find(t=>/(account\/orders|order-history|login|signin|verify|otp)/i.test(String(t.url||"")))||existing[0]||await createTarget(port,url);
   const connection=new CdpConnection(target.webSocketDebuggerUrl);
   try{
+    await connection.send("Page.enable");
+    await connection.send("Page.bringToFront").catch(()=>null);
+    await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
     for(let round=0;round<6;round++){
       await waitReady(connection);await sleep(round?1100:1600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));

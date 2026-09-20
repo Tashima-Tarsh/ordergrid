@@ -67,13 +67,13 @@
 
     $('#retailerAccountPool').innerHTML=operational.length?operational.map(account=>{
       const status=account.active?(account.auth_status||'AUTH_REQUIRED'):'PAUSED';
-      const credential=account.credential_status||'MISSING';
       const available=Number(account.available_rewards??account.reward_balance??0);
       const rewardMeta=account.reward_balance_observed_at
         ?'Actual retailer balance · '+new Date(account.reward_balance_observed_at).toLocaleString('en-IN')
         :Number(account.pending_rewards||0)+' pending';
       const refundMeta=(Number(account.observed_refund_orders||0)?Number(account.observed_refund_orders)+' refund status observed · ':'')+moneyMinor(account.pending_refund_minor||0)+' pending';
       const sessionStatus=String(account.session_status||'UNKNOWN');
+      const credential=sessionStatus==='READY'?'SESSION AUTHENTICATED':(account.credential_status==='MISSING'?'OTP / MANUAL SIGN-IN':(account.credential_status||'MISSING'));
       const sessionUntil=account.session_target_expires_at?new Date(account.session_target_expires_at).toLocaleString('en-IN'):'—';
       const sessionMeta=sessionStatus==='READY'
         ?'SESSION READY · target until '+sessionUntil
@@ -125,11 +125,13 @@
   $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
     const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Preparing…';
     try{
+      const workerState=await request('/api/execution-workers');
+      if(!(workerState.workers||[]).length)throw new Error('Start the OrderGrid secure browser worker first, then click Prepare sessions.');
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:20})
       });
-      toast(result.count+' account session(s) queued for readiness check');
+      toast(result.count+' account session(s) queued. Complete retailer OTP/sign-in in the OrderGrid secure browser window; status updates automatically.');
       await load();
     }catch(error){alert(error.message)}
     finally{button.disabled=false;button.textContent=previous}
@@ -221,5 +223,6 @@
   });
 
   window.addEventListener('ordergrid:update',load);
+  setInterval(()=>{if(document.visibilityState==='visible')load().catch(()=>{})},10000);
   load();
 })();

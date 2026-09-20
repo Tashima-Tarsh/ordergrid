@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -78,5 +78,12 @@ must(agent.includes('command.command==="PRODUCT_CHECK"'),"flipkart mobile contra
 must(cdp.includes("inspectFlipkartMobile"),"flipkart mobile contract: browser product inspector missing");
 must(cdp.includes("flipkartCartProbeScript"),"flipkart mobile contract: account quantity probe missing");
 must(!wizard.includes('max="2"'),"flipkart mobile contract: quantity limit must not be hard-coded to two");
+must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];`),"retailer session contract: OTP-only accounts must be eligible for preparation");
+must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
+must(server.includes(`session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end`),"retailer session contract: OTP challenge must stay queued until authenticated");
+must(cdp.includes('await connection.send("Page.bringToFront").catch(()=>null);'),"retailer session contract: protected retailer session must be brought to the user");
+must(html.includes('id="downloadOrderGridWorker"'),"retailer session contract: OrderGrid must expose its secure browser worker");
+must(files["public/rewards.js"].includes("OTP / MANUAL SIGN-IN"),"retailer session contract: account UI must support OTP/manual sign-in");
+must(files["public/rewards.js"].includes("Start the OrderGrid secure browser worker first"),"retailer session contract: account UI must explain offline worker prerequisite");
 
 console.log("Frontend/card connector contract OK");
