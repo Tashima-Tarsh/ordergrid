@@ -42,13 +42,34 @@ type DemoAutomationPolicy={
   run_mode:"MANUAL"|"CONTINUOUS";inherit_parent_policy:boolean;allow_child_policy_relaxation:boolean;updated_at:string
 };
 const automationPolicies=new Map<string,DemoAutomationPolicy>();
-function activeAutomationPolicy(){
-  let policy=automationPolicies.get(activeDealerId);
-  if(!policy){
-    policy={automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,max_price_increase_percent:5,max_order_value_minor:0,max_batch_variance_percent:3,price_breach_action:"PAUSE_ORDER",run_mode:"MANUAL",inherit_parent_policy:true,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()};
-    automationPolicies.set(activeDealerId,policy);
-  }
+function defaultDemoAutomationPolicy():DemoAutomationPolicy{
+  return {automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,max_price_increase_percent:5,max_order_value_minor:0,max_batch_variance_percent:3,price_breach_action:"PAUSE_ORDER",run_mode:"MANUAL",inherit_parent_policy:true,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()};
+}
+function localAutomationPolicy(tenantId=activeDealerId){
+  let policy=automationPolicies.get(tenantId);
+  if(!policy){policy=defaultDemoAutomationPolicy();automationPolicies.set(tenantId,policy);}
   return policy;
+}
+function activeAutomationPolicy(){
+  const local=localAutomationPolicy(activeDealerId),dealer=dealers.get(activeDealerId);
+  if(!dealer?.parent_id||!local.inherit_parent_policy)return local;
+  const parent=localAutomationPolicy(dealer.parent_id);
+  if(parent.allow_child_policy_relaxation)return local;
+  const minCap=(a:number,b:number)=>a<=0?b:b<=0?a:Math.min(a,b);
+  return {
+    ...local,
+    automation_enabled:parent.automation_enabled&&local.automation_enabled,
+    auto_assign_virtual_card:parent.auto_assign_virtual_card&&local.auto_assign_virtual_card,
+    auto_continue_checkout:parent.auto_continue_checkout&&local.auto_continue_checkout,
+    max_active_orders:Math.min(parent.max_active_orders,local.max_active_orders),
+    failure_pause_percent:Math.min(parent.failure_pause_percent,local.failure_pause_percent),
+    max_price_increase_percent:Math.min(parent.max_price_increase_percent,local.max_price_increase_percent),
+    max_order_value_minor:minCap(parent.max_order_value_minor,local.max_order_value_minor),
+    max_batch_variance_percent:Math.min(parent.max_batch_variance_percent,local.max_batch_variance_percent),
+    price_breach_action:parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER",
+    run_mode:parent.run_mode==="MANUAL"?"MANUAL":local.run_mode,
+    allow_child_policy_relaxation:false
+  };
 }
 const credentialKey=randomBytes(32).toString("base64");
 const accountRefs=new Map<string,Map<string,string>>();
