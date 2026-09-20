@@ -9,7 +9,7 @@ command.innerHTML=`
       <div class="overview-hero-top">
         <div class="overview-brandline">
           <span class="overview-live-mark" aria-hidden="true"><i></i></span>
-          <div><p class="eyebrow">LIVE EXECUTIVE OVERVIEW</p><h2>OrderGrid command</h2></div>
+          <div><p class="eyebrow">LIVE EXECUTIVE DASHBOARD</p><h2>OrderGrid command</h2></div>
         </div>
         <span id="brainStatus" class="overview-status">CHECKING</span>
       </div>
@@ -31,7 +31,7 @@ command.innerHTML=`
         <div class="overview-kpi"><span>NEEDS ATTENTION</span><strong id="exceptionCount">0 open</strong></div>
       </div>
       <div class="overview-hero-actions">
-        <button id="syncNow" class="secondary">Refresh overview</button>
+        <button id="syncNow" class="secondary">Refresh dashboard</button>
         <button id="healthCheck">Review operations</button>
         <button id="ovNewBatch" class="secondary">＋ New batch</button>
       </div>
@@ -200,10 +200,10 @@ async function load(){
     set('#ovRefreshTime','Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' · live server data');
   }catch(error){
     set('#brainStatus','RETRYING');
-    set('#brainAnswer','Live overview is reconnecting. '+error.message+'.');
+    set('#brainAnswer','Live dashboard is reconnecting. '+error.message+'.');
     set('#networkStatus',navigator.onLine?'Reconnecting':'Offline');
   }finally{
-    if(button){button.disabled=false;button.textContent='Refresh overview'}
+    if(button){button.disabled=false;button.textContent='Refresh dashboard'}
   }
 }
 
