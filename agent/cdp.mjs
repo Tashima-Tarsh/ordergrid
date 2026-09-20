@@ -269,6 +269,85 @@ async function driveCheckout(port,{address,paymentRoute,accountCredentials,comme
   return {state:"CHALLENGE",code:"CHECKOUT_TIMEOUT",message:"Retailer checkout needs review before OrderGrid can continue"};
 }
 
+
+function flipkartProductSnapshotScript(){
+  return \`(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,180000);
+    const lower=text.toLowerCase();
+    const clean=v=>String(v??'').replace(/\\s+/g,' ').trim();
+    const parseMoney=value=>{const m=clean(value).replace(/,/g,'').match(/(?:₹|rs\\.?|inr)?\\s*([0-9]+(?:\\.[0-9]{1,2})?)/i);if(!m)return null;const n=Number(m[1]);return Number.isFinite(n)?Math.round(n*100):null;};
+    const json=[];for(const node of document.querySelectorAll('script[type="application/ld+json"]')){try{const value=JSON.parse(node.textContent||'null');if(Array.isArray(value))json.push(...value);else if(value)json.push(value)}catch{}}
+    const flattened=[];const walk=value=>{if(!value||typeof value!=='object')return;flattened.push(value);if(Array.isArray(value['@graph']))for(const x of value['@graph'])walk(x)};for(const value of json)walk(value);
+    const product=flattened.find(x=>String(x['@type']||'').toLowerCase()==='product')||null;
+    const offers=Array.isArray(product?.offers)?product.offers[0]:product?.offers;
+    const selectorText=selectors=>{for(const selector of selectors){const el=document.querySelector(selector);const value=clean(el?.getAttribute?.('content')||el?.textContent||el?.innerText);if(value)return value}return ''};
+    const title=clean(product?.name)||selectorText(['h1 span','h1','span.B_NuCI','meta[property="og:title"]'])||clean(document.title);
+    let sellingPriceMinor=parseMoney(offers?.price),priceSource=sellingPriceMinor!==null?'STRUCTURED_PRODUCT':'';
+    if(sellingPriceMinor===null){for(const selector of ['[itemprop="price"]','meta[property="product:price:amount"]','div.Nx9bqj','._30jeq3','[class*="Nx9bqj"]']){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(el.getAttribute?.('content')||el.textContent);if(amount&&amount>=100){sellingPriceMinor=amount;priceSource='VISIBLE_SELLING_PRICE';break}}if(sellingPriceMinor!==null)break}}
+    let mrpMinor=null;for(const selector of ['.yRaY8j','._3I9_wc','[class*="yRaY8j"]']){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(el.textContent);if(amount&&(!sellingPriceMinor||amount>=sellingPriceMinor)){mrpMinor=amount;break}}if(mrpMinor!==null)break}
+    if(mrpMinor===null){const m=text.match(/(?:M\\.?R\\.?P\\.?|Maximum Retail Price)[^₹0-9]{0,35}(?:₹|Rs\\.?|INR)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)/i);if(m)mrpMinor=Math.round(Number(m[1].replace(/,/g,''))*100)}
+    const seller=selectorText(['#sellerName span','#sellerName','a[href*="/sellers"]','[class*="seller"] a'])||null;
+    const crumb=[...document.querySelectorAll('a')].filter(a=>/\\/mobiles(?:[/?]|$)|mobile-phones-store|mobiles-accessories/i.test(String(a.getAttribute('href')||''))).map(a=>clean(a.textContent)).filter(Boolean).join(' > ');
+    const structuredCategory=clean(product?.category),categoryText=[crumb,structuredCategory].filter(Boolean).join(' > ');
+    const mobileSignal=/\\bmobiles?\\b/i.test(categoryText),accessorySignal=/cases|covers|screen guard|charger|cable|headset|earphone|power bank|mobile holder|mobile accessory/i.test(title+' '+categoryText);
+    const isMobile=Boolean(mobileSignal&&!accessorySignal);
+    const explicitOos=/(currently unavailable|out of stock|sold out|temporarily unavailable|notify me when available|coming soon)/i.test(lower);
+    const offerAvailability=clean(offers?.availability).toLowerCase(),available=explicitOos?false:offerAvailability?(!/outofstock|soldout|discontinued/.test(offerAvailability)):true;
+    const canonical=document.querySelector('link[rel="canonical"]')?.href||location.href,pid=new URL(location.href).searchParams.get('pid');
+    return {title,category:categoryText||null,isMobile,seller,sellingPriceMinor,mrpMinor,priceSource:priceSource||null,available,canonicalUrl:canonical,pid,href:location.href};
+  })()\`;
+}
+
+function flipkartCartStateScript(productUrl){
+  return \`(()=>{const target=\${JSON.stringify(productUrl)};
+    const wanted=new URL(target),wantedPid=wanted.searchParams.get('pid'),wantedKey=(wanted.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';
+    const clean=v=>String(v??'').replace(/\\s+/g,' ').trim();
+    const locate=()=>{const links=[...document.querySelectorAll('a[href*="/p/"]')],link=links.find(a=>{try{const u=new URL(a.href,location.href),pid=u.searchParams.get('pid'),key=(u.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';return Boolean((wantedPid&&pid===wantedPid)||(wantedKey&&key===wantedKey))}catch{return false}});if(!link)return null;let node=link;for(let i=0;i<10&&node;i++,node=node.parentElement){const txt=clean(node.innerText),controls=[...node.querySelectorAll('button,[role="button"],input')];if(/remove|save for later|quantity|delivery/i.test(txt)&&controls.length)return node}return link.parentElement};
+    const row=locate();if(!row)return {present:false,quantity:0};
+    const input=[...row.querySelectorAll('input')].find(x=>/^\\d+$/.test(String(x.value||'').trim()));let quantity=input?Number(input.value):null;if(!Number.isInteger(quantity)||quantity<1){const m=clean(row.innerText).match(/(?:qty|quantity)\\s*:?\\s*(\\d{1,2})/i);quantity=m?Number(m[1]):1}
+    return {present:true,quantity:Number(quantity)||1};
+  })()\`;
+}
+
+function flipkartCartProbeScript(productUrl,originalQuantity){
+  return \`(async()=>{const target=\${JSON.stringify(productUrl)},original=\${JSON.stringify(Number(originalQuantity)||0)},pause=ms=>new Promise(r=>setTimeout(r,ms));
+    const wanted=new URL(target),wantedPid=wanted.searchParams.get('pid'),wantedKey=(wanted.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'',clean=v=>String(v??'').replace(/\\s+/g,' ').trim(),visible=el=>Boolean(el)&&getComputedStyle(el).display!=='none'&&getComputedStyle(el).visibility!=='hidden';
+    const locate=()=>{const links=[...document.querySelectorAll('a[href*="/p/"]')],link=links.find(a=>{try{const u=new URL(a.href,location.href),pid=u.searchParams.get('pid'),key=(u.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';return Boolean((wantedPid&&pid===wantedPid)||(wantedKey&&key===wantedKey))}catch{return false}});if(!link)return null;let node=link;for(let i=0;i<11&&node;i++,node=node.parentElement){const txt=clean(node.innerText),controls=[...node.querySelectorAll('button,[role="button"],input')];if(/remove|save for later|quantity|delivery/i.test(txt)&&controls.length)return node}return link.parentElement};
+    const qty=row=>{if(!row)return 0;const input=[...row.querySelectorAll('input')].find(x=>/^\\d+$/.test(String(x.value||'').trim()));if(input)return Number(input.value)||0;const m=clean(row.innerText).match(/(?:qty|quantity)\\s*:?\\s*(\\d{1,2})/i);return m?Number(m[1]):1};
+    const button=(row,kind)=>[...row.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>{const t=clean(el.getAttribute?.('aria-label')||el.textContent);return kind==='plus'?/^\\+$|increase|add one|increment/i.test(t):/^\\-$|decrease|remove one|decrement/i.test(t)});
+    let row=locate();if(!row)return {maxQuantity:null,maxQuantityVerified:false,reason:'CART_ITEM_NOT_FOUND',restored:false};let current=qty(row),max=Math.max(1,current),verified=false,reason='LIMIT_NOT_OBSERVED';
+    for(let attempt=0;attempt<9;attempt++){row=locate();if(!row)break;current=qty(row);const plus=button(row,'plus');if(!plus||plus.disabled||plus.getAttribute('aria-disabled')==='true'){verified=true;reason='PLUS_DISABLED';max=current;break}plus.click();await pause(900);row=locate();const next=qty(row),page=clean((row?.innerText||'')+' '+[...document.querySelectorAll('[role="alert"],[class*="toast" i],[class*="snackbar" i]')].map(x=>x.innerText).join(' '));if(next>current){max=Math.max(max,next);if(max>=10){reason='PROBED_TO_10';break}continue}if(/maximum|max qty|max(?:imum)? quantity|only \\d+|cannot add more|limit|allowed quantity|seller.{0,30}limit/i.test(page)){verified=true;reason='RETAILER_LIMIT';max=current;break}reason='QUANTITY_DID_NOT_CHANGE';break}
+    let restored=true;row=locate();if(original>0){for(let guard=0;row&&qty(row)>original&&guard<12;guard++){const minus=button(row,'minus');if(!minus){restored=false;break}minus.click();await pause(500);row=locate()}}else if(row){const remove=[...row.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent))||/remove/i.test(clean(el.getAttribute?.('aria-label'))));if(remove){remove.click();await pause(500);const confirm=[...document.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent)));if(confirm&&locate())confirm.click();await pause(450)}else restored=false}
+    return {maxQuantity:max,maxQuantityVerified:verified,reason,restored};
+  })()\`;
+}
+
+async function readFlipkartCartState(port,productUrl){
+  const target=await createTarget(port,"https://www.flipkart.com/viewcart"),connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{await waitReady(connection);await sleep(1300);return await evaluate(connection,flipkartCartStateScript(productUrl))}
+  finally{connection.close();await closeTarget(port,target)}
+}
+
+export async function inspectFlipkartMobile({chrome,directory,productUrl}){
+  const port=await ensureChrome(chrome,directory),original=await readFlipkartCartState(port,productUrl).catch(()=>({present:false,quantity:0}));
+  const target=await createTarget(port,productUrl),connection=new CdpConnection(target.webSocketDebuggerUrl);let snapshot;
+  try{
+    await waitReady(connection);await sleep(1700);const challenge=await evaluate(connection,authChallengeScript());
+    if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before OrderGrid can check this product.",productUrl,checkedAt:new Date().toISOString()};
+    snapshot=await evaluate(connection,flipkartProductSnapshotScript());
+    if(!snapshot?.isMobile)return {state:"NOT_MOBILE",code:"FLIPKART_MOBILE_REQUIRED",message:"This Flipkart page could not be verified as a mobile-phone product.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
+    if(snapshot.available===false)return {state:"OUT_OF_STOCK",code:"OUT_OF_STOCK",message:"This Flipkart mobile is currently unavailable.",productUrl,maxQuantity:0,maxQuantityVerified:true,checkedAt:new Date().toISOString(),...snapshot};
+    if(!Number.isFinite(Number(snapshot.sellingPriceMinor))||Number(snapshot.sellingPriceMinor)<=0)return {state:"REVIEW_REQUIRED",code:"PRICE_NOT_VERIFIED",message:"OrderGrid could not verify the current Flipkart selling price.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
+    if(!original?.present){const added=await evaluate(connection,addToCartScript(1));if(!added?.ok)return {state:"REVIEW_REQUIRED",code:"CART_PROBE_UNAVAILABLE",message:"The mobile and price were verified, but it could not be added to cart to measure the account quantity limit.",productUrl,checkedAt:new Date().toISOString(),...snapshot,maxQuantity:null,maxQuantityVerified:false};await sleep(1600)}
+  }finally{connection.close();await closeTarget(port,target)}
+  const cartTarget=await createTarget(port,"https://www.flipkart.com/viewcart"),cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
+  try{
+    await waitReady(cartConnection);await sleep(1500);const challenge=await evaluate(cartConnection,authChallengeScript());
+    if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before quantity probing can continue.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
+    const probe=await evaluate(cartConnection,flipkartCartProbeScript(productUrl,Number(original?.quantity||0))),ready=Boolean(probe?.maxQuantityVerified&&Number(probe?.maxQuantity)>=1);
+    return {state:ready?"READY":"REVIEW_REQUIRED",code:ready?"PRODUCT_VERIFIED":"QUANTITY_LIMIT_NOT_VERIFIED",message:ready?"Flipkart mobile price, availability and account quantity limit verified.":"Mobile and price were verified, but Flipkart did not expose a definitive maximum quantity.",productUrl,checkedAt:new Date().toISOString(),...snapshot,...probe};
+  }finally{cartConnection.close();await closeTarget(port,cartTarget)}
+}
+
 export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,commercialApprovedAmountMinor=null,resume=false}){
   const port=await ensureChrome(chrome,directory);
   const results=[],availability=[];
