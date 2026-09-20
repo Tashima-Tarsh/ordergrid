@@ -497,16 +497,45 @@ app.post("/api/address-books/import",async(req,reply)=>{
         importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:value(row,"retailer_password").trim()});
       }
       for(const [retailer,credential] of importedAccounts){
-        const account=await client.query(
-          `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,credential_status)
-           values($1,$2,$3,$4,'AUTH_REQUIRED',$5)
-           on conflict(tenant_id,customer_id,retailer) do update
-           set account_reference=excluded.account_reference,
-               credential_status=case when excluded.credential_status='STORED' then 'STORED' else retailer_accounts.credential_status end,
-               updated_at=now()
-           returning id`,
-          [p.tenantId,customerId,retailer,credential.accountReference.slice(0,240),credential.password?"STORED":"MISSING"]
+        const login=credential.accountReference.slice(0,240);
+        const byLogin=await client.query(
+          "select id,customer_id from retailer_accounts where tenant_id=$1 and retailer=$2 and account_reference=$3 limit 1 for update",
+          [p.tenantId,retailer,login]
         );
+        const byCustomer=await client.query(
+          "select id from retailer_accounts where tenant_id=$1 and customer_id=$2 and retailer=$3 limit 1 for update",
+          [p.tenantId,customerId,retailer]
+        );
+        if(byLogin.rows[0]&&byCustomer.rows[0]&&String(byLogin.rows[0].id)!==String(byCustomer.rows[0].id)){
+          throw new Error(`Retailer login ${login} conflicts with another account already bound to this user`);
+        }
+        let account:any;
+        if(byLogin.rows[0]){
+          if(byLogin.rows[0].customer_id&&String(byLogin.rows[0].customer_id)!==String(customerId)){
+            throw new Error(`Retailer login ${login} is already bound to another user`);
+          }
+          account=await client.query(
+            `update retailer_accounts set customer_id=$1,
+               credential_status=case when $2='STORED' then 'STORED' else credential_status end,
+               active=true,updated_at=now()
+             where id=$3 and tenant_id=$4 returning id`,
+            [customerId,credential.password?"STORED":"MISSING",byLogin.rows[0].id,p.tenantId]
+          );
+        }else if(byCustomer.rows[0]){
+          account=await client.query(
+            `update retailer_accounts set account_reference=$1,
+               credential_status=case when $2='STORED' then 'STORED' else credential_status end,
+               active=true,updated_at=now()
+             where id=$3 and tenant_id=$4 returning id`,
+            [login,credential.password?"STORED":"MISSING",byCustomer.rows[0].id,p.tenantId]
+          );
+        }else{
+          account=await client.query(
+            `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,credential_status,active,created_by)
+             values($1,$2,$3,$4,'AUTH_REQUIRED',$5,true,$6) returning id`,
+            [p.tenantId,customerId,retailer,login,credential.password?"STORED":"MISSING",p.id]
+          );
+        }
         retailerAccountsBound++;
         if(credential.password){
           const encrypted=encryptJson({password:credential.password},config.DATA_ENCRYPTION_KEY_BASE64);
@@ -532,6 +561,128 @@ app.post("/api/address-books/import",async(req,reply)=>{
   }finally{
     client.release();
   }
+});
+
+
+app.post("/api/retailer-users",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    retailer:z.enum(["flipkart","amazon-in"]).default("flipkart"),
+    reference:z.string().trim().max(160).optional(),
+    name:z.string().trim().min(2).max(160),
+    phone:z.string().trim().min(10).max(32),
+    line1:z.string().trim().min(3).max(240),
+    line2:z.string().trim().max(240).optional(),
+    city:z.string().trim().min(2).max(120),
+    state:z.string().trim().min(2).max(120),
+    postalCode:z.string().trim().min(6).max(12),
+    country:z.string().trim().length(2).default("IN"),
+    accountReference:z.string().trim().min(1).max(240),
+    password:z.string().max(1000).optional(),
+    maxConcurrentOrders:z.number().int().min(1).max(100).default(1)
+  }).parse(req.body??{});
+  const phone=body.phone.replace(/\D/g,""),postal=body.postalCode.replace(/\D/g,"");
+  if(phone.length<10||phone.length>15)return reply.code(400).send({error:"invalid_phone"});
+  if(body.country.toUpperCase()==="IN"&&postal.length!==6)return reply.code(400).send({error:"invalid_postal_code"});
+  const externalReference=(body.reference?.trim()||(`${body.retailer.toUpperCase()}-${body.accountReference}`)).slice(0,160);
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const customer=await client.query(
+      `insert into customers(tenant_id,external_reference,display_name,phone)
+       values($1,$2,$3,$4)
+       on conflict(tenant_id,external_reference) do update
+       set display_name=excluded.display_name,phone=excluded.phone,updated_at=now()
+       returning id,external_reference,display_name,phone`,
+      [p.tenantId,externalReference,body.name,phone]
+    );
+    const customerId=customer.rows[0].id;
+    let book=await client.query(
+      "select id,name from address_books where tenant_id=$1 and name='Retailer users' order by created_at limit 1 for update",
+      [p.tenantId]
+    );
+    if(!book.rows[0])book=await client.query(
+      "insert into address_books(tenant_id,name,created_by) values($1,'Retailer users',$2) returning id,name",
+      [p.tenantId,p.id]
+    );
+    const address=await client.query(
+      `insert into addresses(address_book_id,customer_id,recipient,phone,line1,line2,city,state,postal_code,country,reference)
+       values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       on conflict(address_book_id,reference) do update set
+         customer_id=excluded.customer_id,recipient=excluded.recipient,phone=excluded.phone,
+         line1=excluded.line1,line2=excluded.line2,city=excluded.city,state=excluded.state,
+         postal_code=excluded.postal_code,country=excluded.country
+       returning id,recipient,phone,line1,line2,city,state,postal_code,country,reference`,
+      [book.rows[0].id,customerId,body.name,phone,body.line1,body.line2||null,body.city,body.state,postal,body.country.toUpperCase(),externalReference]
+    );
+
+    const login=body.accountReference.slice(0,240);
+    const byLogin=await client.query(
+      "select id,customer_id from retailer_accounts where tenant_id=$1 and retailer=$2 and account_reference=$3 limit 1 for update",
+      [p.tenantId,body.retailer,login]
+    );
+    const byCustomer=await client.query(
+      "select id from retailer_accounts where tenant_id=$1 and customer_id=$2 and retailer=$3 limit 1 for update",
+      [p.tenantId,customerId,body.retailer]
+    );
+    if(byLogin.rows[0]&&byCustomer.rows[0]&&String(byLogin.rows[0].id)!==String(byCustomer.rows[0].id)){
+      await client.query("rollback");
+      return reply.code(409).send({error:"retailer_user_account_conflict"});
+    }
+    let account:any;
+    if(byLogin.rows[0]){
+      if(byLogin.rows[0].customer_id&&String(byLogin.rows[0].customer_id)!==String(customerId)){
+        await client.query("rollback");
+        return reply.code(409).send({error:"retailer_account_already_bound_to_another_user"});
+      }
+      const updated=await client.query(
+        `update retailer_accounts set customer_id=$1,label=$2,active=true,max_concurrent_orders=$3,updated_at=now()
+         where id=$4 and tenant_id=$5
+         returning id,customer_id,retailer,account_reference,label,profile_key,auth_status,credential_status,active,max_concurrent_orders,session_status`,
+        [customerId,body.name,body.maxConcurrentOrders,byLogin.rows[0].id,p.tenantId]
+      );
+      account=updated.rows[0];
+    }else{
+      if(byCustomer.rows[0]){
+        const updated=await client.query(
+          `update retailer_accounts set account_reference=$1,label=$2,active=true,max_concurrent_orders=$3,updated_at=now()
+           where id=$4 and tenant_id=$5
+           returning id,customer_id,retailer,account_reference,label,profile_key,auth_status,credential_status,active,max_concurrent_orders,session_status`,
+          [login,body.name,body.maxConcurrentOrders,byCustomer.rows[0].id,p.tenantId]
+        );
+        account=updated.rows[0];
+      }else{
+        const inserted=await client.query(
+          `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,label,auth_status,active,max_concurrent_orders,created_by,updated_at)
+           values($1,$2,$3,$4,$5,'AUTH_REQUIRED',true,$6,$7,now())
+           returning id,customer_id,retailer,account_reference,label,profile_key,auth_status,credential_status,active,max_concurrent_orders,session_status`,
+          [p.tenantId,customerId,body.retailer,login,body.name,body.maxConcurrentOrders,p.id]
+        );
+        account=inserted.rows[0];
+      }
+    }
+    if(body.password){
+      const encrypted=encryptJson({password:body.password},config.DATA_ENCRYPTION_KEY_BASE64);
+      await client.query(
+        `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
+         values($1,$2,$3,$4,$5,$6,now())
+         on conflict(tenant_id,retailer_account_id) do update
+         set ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,created_by=excluded.created_by,updated_at=now()`,
+        [p.tenantId,account.id,encrypted.ciphertext,encrypted.iv,encrypted.authTag,p.id]
+      );
+      const credential=await client.query(
+        "update retailer_accounts set credential_status='STORED',last_credential_update_at=now(),updated_at=now() where id=$1 and tenant_id=$2 returning credential_status",
+        [account.id,p.tenantId]
+      );
+      account.credential_status=credential.rows[0]?.credential_status||"STORED";
+    }
+    await client.query("commit");
+    await audit(db,p.tenantId,p.id,"retailer_user.saved","retailer_account",account.id,{retailer:body.retailer,customerReference:externalReference});
+    return reply.code(201).send({customer:customer.rows[0],address:address.rows[0],account});
+  }catch(error){
+    await client.query("rollback");throw error;
+  }finally{client.release()}
 });
 
 app.get("/api/recipients",async(req)=>{
@@ -582,6 +733,8 @@ app.get("/api/retailer-accounts",async(req)=>{
   const limitParam=params.length+1,offsetParam=params.length+2;
   const {rows}=await db.query(`
     select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
+      addr.recipient address_recipient,addr.phone address_phone,addr.line1 address_line1,addr.line2 address_line2,
+      addr.city address_city,addr.state address_state,addr.postal_code address_postal_code,addr.country address_country,
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
       ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
       ra.session_status,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
@@ -594,6 +747,11 @@ app.get("/api/retailer-accounts",async(req)=>{
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor
     from retailer_accounts ra
     left join customers c on c.id=ra.customer_id
+    left join lateral (
+      select a.recipient,a.phone,a.line1,a.line2,a.city,a.state,a.postal_code,a.country
+      from addresses a where a.customer_id=ra.customer_id
+      limit 1
+    ) addr on true
     where ${where.join(" and ")}
     order by ra.retailer,coalesce(ra.label,ra.account_reference),ra.id
     limit $${limitParam} offset $${offsetParam}

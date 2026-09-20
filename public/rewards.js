@@ -61,8 +61,9 @@
     $('#availableSuperCoins').textContent=String(summary.available_rewards||0);
     $('#pendingRefunds').textContent=moneyMinor(summary.pending_refund_minor||0);
     $('#settledRefunds').textContent=moneyMinor(summary.settled_refund_minor||0);
-    $('#accountPoolTitle').textContent=retailerName(retailer)+' account pool';
-    $('#accountPoolMeta').textContent=`${accounts.length} loaded · ${active} active · capacity grows by importing more authorised accounts`;
+    $('#accountPoolTitle').textContent=retailerName(retailer)+' users & sessions';
+    const bound=accounts.filter(a=>a.customer_id).length;
+    $('#accountPoolMeta').textContent=`${accounts.length} accounts · ${bound} user/address profiles · ${active} active`;
     if($('#rewardCount'))$('#rewardCount').textContent=String(summary.available_rewards||0);
 
     $('#retailerAccountPool').innerHTML=operational.length?operational.map(account=>{
@@ -83,26 +84,36 @@
             ?'VERIFYING SESSION'
             :'SESSION NOT VERIFIED';
       const sessionAction=account.session_worker_id&&sessionStatus!=='READY'
-        ?'<button type="button" class="secondary" data-open-session>Open session</button>'
+        ?'<button type="button" class="secondary" data-open-session>Open OTP session</button>'
         :'';
+      const verifyAction=sessionStatus!=='READY'
+        ?'<button type="button" class="secondary" data-verify-session>Verify login</button>'
+        :'';
+      const identity=account.customer_id
+        ?esc(account.display_name||account.label||account.account_reference)+' · '+esc(account.customer_reference||'BOUND USER')
+        :'LOGIN-ONLY POOL ACCOUNT';
+      const addressMeta=account.customer_id
+        ?[account.address_line1,account.address_line2,account.address_city,account.address_state,account.address_postal_code].filter(Boolean).map(esc).join(' · ')
+        :'No delivery user/address bound';
       return `
         <article class="retailer-account-row" data-account-id="${esc(account.id)}">
           <div class="account-main">
-            <strong>${esc(account.label||account.account_reference)}</strong>
-            <small>${esc(account.account_reference)} · ${esc(status)} · credentials ${esc(credential)}</small>
+            <strong>${identity}</strong>
+            <small>Flipkart login: ${esc(account.account_reference)} · ${esc(status)} · ${esc(credential)}</small>
+            <small>${addressMeta}</small>
             <small class="session-line ${sessionStatus==='READY'?'ready':sessionStatus==='REAUTH_REQUIRED'?'attention':''}">${esc(sessionMeta)}</small>
           </div>
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
           <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
-          <div class="account-actions">${sessionAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
+          <div class="account-actions">${verifyAction}${sessionAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
-    }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' accounts yet</strong><span>Use Manage accounts to import the first account pool.</span></div>';
+    }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and login.</span></div>';
   }
   async function load(){
     const encoded=encodeURIComponent(retailer);
     const [accountResult,financeResult]=await Promise.allSettled([
-      request('/api/retailer-accounts?retailer='+encoded+'&poolOnly=true&limit=1000'),
+      request('/api/retailer-accounts?retailer='+encoded+'&limit=1000'),
       request('/api/retailer-finance?retailer='+encoded+'&limit=1000')
     ]);
     if(accountResult.status==='fulfilled')accounts=accountResult.value.accounts||[];
@@ -110,6 +121,14 @@
     if(financeResult.status==='fulfilled')finance=financeResult.value;
     else console.error(financeResult.reason);
     render();
+  }
+  function openRetailerUser(){
+    retailer='flipkart';
+    if($('#retailerPoolSelector'))$('#retailerPoolSelector').value='flipkart';
+    $('#retailerUserError').textContent='';
+    $('#retailerUsersBulkError').textContent='';
+    const dialog=$('#retailerUserDialog');
+    if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');
   }
   function openManager(){
     const dialog=$('#retailerAccountsDialog');
@@ -136,10 +155,69 @@
     }catch(error){alert(error.message)}
     finally{button.disabled=false;button.textContent=previous}
   });
-    $('#manageRetailerAccounts')?.addEventListener('click',openManager);
+  $('#addRetailerUser')?.addEventListener('click',openRetailerUser);
+  $('#closeRetailerUser')?.addEventListener('click',()=>$('#retailerUserDialog').close());
+  $('#cancelRetailerUser')?.addEventListener('click',()=>$('#retailerUserDialog').close());
+  $('#manageRetailerAccounts')?.addEventListener('click',openManager);
   $('#refreshRetailerAccounts')?.addEventListener('click',load);
   $('#closeRetailerAccounts')?.addEventListener('click',()=>$('#retailerAccountsDialog').close());
   $('#cancelRetailerAccounts')?.addEventListener('click',()=>$('#retailerAccountsDialog').close());
+
+  $('#retailerUserForm')?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const button=$('#saveRetailerUser'),form=new FormData(event.currentTarget);
+    button.disabled=true;button.textContent='Saving…';$('#retailerUserError').textContent='';
+    try{
+      const result=await request('/api/retailer-users',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          retailer:'flipkart',
+          reference:String(form.get('reference')||'').trim()||undefined,
+          name:String(form.get('name')||'').trim(),
+          phone:String(form.get('phone')||'').trim(),
+          accountReference:String(form.get('accountReference')||'').trim(),
+          line1:String(form.get('line1')||'').trim(),
+          line2:String(form.get('line2')||'').trim()||undefined,
+          city:String(form.get('city')||'').trim(),
+          state:String(form.get('state')||'').trim(),
+          postalCode:String(form.get('postalCode')||'').trim(),
+          country:'IN',
+          password:String(form.get('password')||'')||undefined,
+          maxConcurrentOrders:Math.max(1,Math.min(100,Number(form.get('maxConcurrentOrders')||1)))
+        })
+      });
+      let queued=false;
+      try{
+        const workerState=await request('/api/execution-workers');
+        if((workerState.workers||[]).length){
+          await request('/api/retailer-accounts/prepare',{
+            method:'POST',headers:{'content-type':'application/json'},
+            body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:20})
+          });
+          queued=true;
+        }
+      }catch{}
+      event.currentTarget.reset();$('#retailerUserDialog').close();
+      await load();
+      toast(queued?'User saved. OrderGrid is opening the Flipkart login for OTP verification.':'User and address saved. Start the secure browser worker, then click Verify login.');
+    }catch(error){$('#retailerUserError').textContent=error.message}
+    finally{button.disabled=false;button.textContent='Save user & prepare login'}
+  });
+
+  $('#retailerUsersBulkForm')?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const button=$('#importRetailerUsers'),file=$('#retailerUsersBulkFile')?.files?.[0];
+    button.disabled=true;button.textContent='Importing…';$('#retailerUsersBulkError').textContent='';
+    try{
+      if(!file)throw new Error('Choose a CSV or XLSX file');
+      const data=new FormData();data.append('file',file,file.name);
+      const result=await request('/api/address-books/import',{method:'POST',body:data});
+      event.currentTarget.reset();$('#retailerUserDialog').close();
+      await load();
+      toast(result.count+' users imported · '+result.retailerAccountsBound+' retailer login(s) bound');
+    }catch(error){$('#retailerUsersBulkError').textContent=error.message}
+    finally{button.disabled=false;button.textContent='Import users & addresses'}
+  });
 
   $('#retailerAccountsFile')?.addEventListener('change',async event=>{
     const file=event.target.files?.[0];if(!file)return;
@@ -200,6 +278,21 @@
   $('#retailerAccountPool')?.addEventListener('click',async event=>{
     const row=event.target.closest('[data-account-id]');if(!row)return;
     const account=accounts.find(x=>x.id===row.dataset.accountId);if(!account)return;
+    const verify=event.target.closest('[data-verify-session]');
+    if(verify){
+      verify.disabled=true;const previous=verify.textContent;verify.textContent='Queuing…';
+      try{
+        const workerState=await request('/api/execution-workers');
+        if(!(workerState.workers||[]).length)throw new Error('Start the OrderGrid secure browser worker first.');
+        await request('/api/retailer-accounts/prepare',{
+          method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:20})
+        });
+        await load();toast('Login verification queued. Complete Flipkart OTP/sign-in in the OrderGrid secure browser.');
+      }catch(error){alert(error.message)}
+      finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
+      return;
+    }
     const open=event.target.closest('[data-open-session]');
     if(open){
       open.disabled=true;const previous=open.textContent;open.textContent='Opening…';
