@@ -91,6 +91,15 @@ must(automation.includes("automation-control-center"),"autopilot contract: premi
 must(automationCss.includes(".automation-layout"),"autopilot contract: premium layout styles missing");
 must(automationCss.includes(".automation-policy"),"autopilot contract: policy console styles missing");
 must(navigation.includes("let view='hidden'"),"navigation contract: unknown sections must not leak into Dashboard");
+must(navigation.includes("else if(s.classList.contains('metrics'))view='hidden'"),"dashboard density contract: legacy metrics must stay out of Dashboard");
+must(!navigation.includes("command-dashboard')||s.classList.contains('metrics')"),"dashboard density contract: legacy metrics must not share overview route");
+must(dashboard.includes("button.textContent='↻'"),"dashboard density contract: refresh button must remain icon-only");
+must(!dashboard.includes("button.textContent='Refresh dashboard'"),"dashboard density contract: refresh label must not be written into compact icon button");
+must(automation.includes("automation-column-left"),"autopilot density contract: independent left stack missing");
+must(automation.includes("automation-column-right"),"autopilot density contract: independent right stack missing");
+must(workspaceCss.includes(".automation-column"),"autopilot density contract: independent column styles missing");
+must(workspaceCss.includes("grid-template-columns:repeat(2,minmax(0,1fr))"),"autopilot density contract: compact two-column workflow matrix missing");
+must(workspaceCss.includes("flex-direction:column!important"),"autopilot density contract: policy form must be forced into vertical flow");
 must(html.includes('href="workspace-premium.css"'),"premium shell contract: workspace stylesheet must be loaded");
 must(sw.includes("'./workspace-premium.css'"),"premium shell contract: workspace stylesheet must be precached");
 must(workspaceCss.includes(".overview-kpi-strip"),"premium shell contract: dashboard density styles missing");
