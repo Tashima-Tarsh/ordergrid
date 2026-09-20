@@ -20,22 +20,60 @@ import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router
 import { ensureBasketVirtualCard } from "./card-provisioning.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
-async function getAutomationPolicy(tenantId:string){
-  await db.query(
-    "insert into automation_policies(tenant_id) values($1) on conflict(tenant_id) do nothing",
-    [tenantId]
-  );
+type AutomationPolicy={
+  automation_enabled:boolean;
+  auto_assign_virtual_card:boolean;
+  auto_continue_checkout:boolean;
+  max_active_orders:number;
+  failure_pause_percent:number|string;
+  max_price_increase_percent:number|string;
+  max_order_value_minor:number|string;
+  max_batch_variance_percent:number|string;
+  price_breach_action:"PAUSE_ORDER"|"PAUSE_BATCH";
+  run_mode:"MANUAL"|"CONTINUOUS";
+  inherit_parent_policy:boolean;
+  allow_child_policy_relaxation:boolean;
+  updated_at:string;
+  inherited_from_tenant_id?:string|null;
+  effective_source?:"LOCAL"|"INHERITED_GUARDRAILS"|"CHILD_OVERRIDE_ALLOWED";
+};
+async function readAutomationPolicy(tenantId:string){
+  await db.query("insert into automation_policies(tenant_id) values($1) on conflict(tenant_id) do nothing",[tenantId]);
   const {rows}=await db.query(
-    "select automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,updated_at from automation_policies where tenant_id=$1",
+    "select automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,max_price_increase_percent,max_order_value_minor,max_batch_variance_percent,price_breach_action,run_mode,inherit_parent_policy,allow_child_policy_relaxation,updated_at from automation_policies where tenant_id=$1",
     [tenantId]
   );
-  return rows[0] as {
-    automation_enabled:boolean;
-    auto_assign_virtual_card:boolean;
-    auto_continue_checkout:boolean;
-    max_active_orders:number;
-    failure_pause_percent:number|string;
-    updated_at:string;
+  return rows[0] as AutomationPolicy;
+}
+function minCap(a:number,b:number){
+  if(a<=0)return b;
+  if(b<=0)return a;
+  return Math.min(a,b);
+}
+async function getAutomationPolicy(tenantId:string){
+  const local=await readAutomationPolicy(tenantId);
+  const relation=await db.query("select parent_tenant_id from dealer_relationships where child_tenant_id=$1 and status='ACTIVE' limit 1",[tenantId]);
+  const parentTenantId=relation.rows[0]?.parent_tenant_id as string|undefined;
+  if(!parentTenantId||!local.inherit_parent_policy)return {...local,inherited_from_tenant_id:null,effective_source:"LOCAL" as const};
+  const parent=await readAutomationPolicy(parentTenantId);
+  if(parent.allow_child_policy_relaxation){
+    return {...local,inherited_from_tenant_id:parentTenantId,effective_source:"CHILD_OVERRIDE_ALLOWED" as const};
+  }
+  return {
+    ...local,
+    automation_enabled:Boolean(parent.automation_enabled&&local.automation_enabled),
+    auto_assign_virtual_card:Boolean(parent.auto_assign_virtual_card&&local.auto_assign_virtual_card),
+    auto_continue_checkout:Boolean(parent.auto_continue_checkout&&local.auto_continue_checkout),
+    max_active_orders:Math.min(Number(parent.max_active_orders),Number(local.max_active_orders)),
+    failure_pause_percent:Math.min(Number(parent.failure_pause_percent),Number(local.failure_pause_percent)),
+    max_price_increase_percent:Math.min(Number(parent.max_price_increase_percent),Number(local.max_price_increase_percent)),
+    max_order_value_minor:minCap(Number(parent.max_order_value_minor),Number(local.max_order_value_minor)),
+    max_batch_variance_percent:Math.min(Number(parent.max_batch_variance_percent),Number(local.max_batch_variance_percent)),
+    price_breach_action:parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER",
+    run_mode:parent.run_mode==="MANUAL"?"MANUAL":local.run_mode,
+    allow_child_policy_relaxation:false,
+    inherited_from_tenant_id:parentTenantId,
+    effective_source:"INHERITED_GUARDRAILS" as const
   };
 }
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
