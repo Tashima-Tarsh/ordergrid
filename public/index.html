@@ -24,7 +24,7 @@
         </li>
         <li class="flow-step" data-flow-step="recipients">
           <span class="flow-number">2</span>
-          <div class="flow-copy"><small>RECIPIENTS</small><h3>Recipients & retailer accounts</h3><p id="flowRecipientsSummary">Import recipients and bind their Amazon / retailer account references.</p></div>
+          <div class="flow-copy"><small>RECIPIENTS</small><h3>Recipients & retailer accounts</h3><p id="flowRecipientsSummary">Import recipients and bind their Amazon / retailer account references.</p><div id="recipientAccounts" class="recipient-accounts"><p class="muted">No recipients imported yet.</p></div><button type="button" class="secondary flow-edit" id="flowImportRecipients">Import recipients</button></div>
           <span class="flow-state" id="flowRecipientsState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="approval">
@@ -34,7 +34,7 @@
         </li>
         <li class="flow-step" data-flow-step="checkout">
           <span class="flow-number">4</span>
-          <div class="flow-copy"><small>CHECKOUT</small><h3>OrderGrid execution</h3><p id="flowCheckoutSummary">Approved customer baskets are sent to isolated retailer sessions.</p></div>
+          <div class="flow-copy"><small>CHECKOUT</small><h3>OrderGrid Checkout Engine</h3><p id="flowCheckoutSummary">Approved customer baskets are sent to isolated retailer sessions.</p><div class="checkout-engine"><div><span class="engine-dot" id="engineDot"></span><div><strong id="engineName">OrderGrid Checkout Engine</strong><small id="engineMeta">Checking API and execution capacity…</small></div></div><span class="engine-status" id="engineStatus">CHECKING</span></div></div>
           <span class="flow-state" id="flowCheckoutState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="confirmation">
