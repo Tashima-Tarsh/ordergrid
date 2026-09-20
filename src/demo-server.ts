@@ -346,6 +346,7 @@ app.post("/api/batches/:id/approve",async(req,reply)=>{
   for(const group of basketGroups.values()){
     baskets.unshift({id:randomUUID(),tenant_id:activeDealerId,batch_id:id,status:"READY",retailer:group.retailer,account_reference:group.account,customer_reference:group.address.reference||group.address.id,recipient:group.address.recipient,city:group.address.city,postal_code:group.address.postal_code,payment_route:batch.payment_route,batch_name:batch.name,item_count:group.tasks.length,amount_minor:group.tasks.reduce((n,t)=>n+t.amount_minor,0),auth_status:"READY"});
   }
+  const automationPolicy=activeAutomationPolicy();if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){let n=0;for(const basket of activeBaskets().filter(b=>b.batch_id===id&&b.status==="READY").slice(0,automationPolicy.max_active_orders)){basket.status="CLAIMED";basket.expires_at=Date.now()+20*60_000;n++;}}
   return {ok:true,baskets:basketGroups.size};
 });
 app.get("/api/reports/orders.csv",async(_,reply)=>{const csv=["customer_reference,recipient,retailer,account_reference,status,amount_minor",...activeBaskets().map(b=>[b.customer_reference,b.recipient,b.retailer,b.account_reference,b.status,b.amount_minor].map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");reply.header("content-type","text/csv; charset=utf-8").header("content-disposition",'attachment; filename="ordergrid-orders.csv"');return csv;});
