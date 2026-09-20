@@ -32,6 +32,43 @@ app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok"}}
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body); const {rows}=await db.query("select id,tenant_id,role,password_hash from users where email=$1 and active",[input.email.toLowerCase()]); const u=rows[0]; if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"}); const token=randomBytes(32).toString("base64url"); await db.query("insert into sessions(id_hash,user_id,expires_at) values($1,$2,now()+interval '12 hours')",[tokenHash(token),u.id]); reply.setCookie("session",token,{httpOnly:true,secure:config.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200}); return {user:{id:u.id,role:u.role}};});
 app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)await db.query("delete from sessions where id_hash=$1",[tokenHash(raw)]);reply.clearCookie("session",{path:"/"});return {ok:true}});
 app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await Promise.all([db.query("select status,count(*)::int count,coalesce(sum(estimated_total_minor),0)::bigint total from order_batches where tenant_id=$1 group by status",[p.tenantId]),db.query("select status,count(*)::int count from purchase_orders where tenant_id=$1 group by status",[p.tenantId])]);return {batches:b.rows,orders:o.rows};});
+app.get("/api/control-center",async(req)=>{
+  const p=req.principal!;
+  const [customers,accounts,baskets,cards,issuers,retailers]=await Promise.all([
+    db.query(`select count(*)::int total from customers where tenant_id=$1 and active`,[p.tenantId]),
+    db.query(`
+      select count(*)::int total,
+        count(*) filter(where credential_status in ('STORED','READY'))::int credentials_stored,
+        count(*) filter(where auth_status='READY')::int authenticated,
+        count(*) filter(where auth_status in ('AUTH_REQUIRED','CHALLENGE','LOCKED'))::int needs_attention
+      from retailer_accounts where tenant_id=$1
+    `,[p.tenantId]),
+    db.query(`
+      select count(*)::int total,
+        count(*) filter(where cb.status in ('READY','CLAIMED'))::int ready,
+        count(*) filter(where cb.status='OPENED')::int in_progress,
+        count(*) filter(where cb.status in ('REQUIRES_ACTION','FAILED'))::int needs_attention,
+        count(*) filter(where cb.status='CONFIRMED')::int confirmed,
+        count(*) filter(where cb.virtual_card_id is not null)::int cards_bound,
+        count(*) filter(where b.payment_route='Corporate virtual card' and cb.virtual_card_id is null and cb.status<>'CONFIRMED')::int cards_needed
+      from checkout_baskets cb
+      join order_batches b on b.id=cb.batch_id
+      where cb.tenant_id=$1
+    `,[p.tenantId]),
+    db.query(`select count(*)::int total,count(*) filter(where status='ACTIVE')::int active from virtual_cards where tenant_id=$1`,[p.tenantId]),
+    db.query(`select count(*)::int connected from issuer_connections where tenant_id=$1 and status='CONNECTED'`,[p.tenantId]),
+    db.query(`select retailer,count(*)::int accounts from retailer_accounts where tenant_id=$1 group by retailer order by count(*) desc,retailer limit 50`,[p.tenantId])
+  ]);
+  return {
+    service:"AVAILABLE",
+    customers:Number(customers.rows[0]?.total||0),
+    accounts:accounts.rows[0]||{total:0,credentials_stored:0,authenticated:0,needs_attention:0},
+    orders:baskets.rows[0]||{total:0,ready:0,in_progress:0,needs_attention:0,confirmed:0,cards_bound:0,cards_needed:0},
+    cards:{...cards.rows[0],programme_connected:Number(issuers.rows[0]?.connected||0)>0},
+    retailers:retailers.rows
+  };
+});
+
 app.get("/api/batches",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select b.id,b.name,b.status,b.currency,b.payment_route,b.estimated_total_minor,b.created_at,count(i.id)::int item_count,count(distinct i.address_id)::int recipient_count from order_batches b left join batch_items i on i.batch_id=b.id where b.tenant_id=$1 group by b.id order by b.created_at desc limit 100`,[p.tenantId]);return {batches:rows};});
 const retailerAccountColumns:Record<string,string>={
   amazon_account:"amazon-in",amazon_in_account:"amazon-in",amazon_user_id:"amazon-in",amazon_username:"amazon-in",amazon_login:"amazon-in",
@@ -432,6 +469,22 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
     order by po.created_at
   `,[id,p.tenantId]);
   const prepared=items.rows.map(item=>({...item,executionUrl:verifiedRetailerUrl(item.product_url)}));
+  let credentials:null|{login:string;password:string}=null;
+  const storedCredential=await db.query(
+    `select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1`,
+    [p.tenantId,rows[0].retailer_account_id]
+  );
+  if(storedCredential.rows[0]){
+    const decrypted=decryptJson({
+      ciphertext:storedCredential.rows[0].ciphertext,
+      iv:storedCredential.rows[0].iv,
+      authTag:storedCredential.rows[0].auth_tag
+    },config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+    if(decrypted.password){
+      credentials={login:rows[0].account_reference,password:String(decrypted.password)};
+      await db.query("update private.retailer_credentials set last_used_at=now() where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,rows[0].retailer_account_id]);
+    }
+  }
   await audit(db,p.tenantId,p.id,"bulk_basket.execution_started","checkout_basket",id,{workerId:body.workerId,customerId:rows[0].customer_id,retailerAccountId:rows[0].retailer_account_id,items:prepared.length});
   reply.header("cache-control","no-store");
   return {
@@ -443,6 +496,7 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
     accountReference:rows[0].account_reference,
     retailer:rows[0].retailer,
     authStatus:rows[0].auth_status,
+    credentials,
     paymentRoute:rows[0].payment_route,
     address:{recipient:rows[0].recipient,line1:rows[0].line1,line2:rows[0].line2,city:rows[0].city,state:rows[0].state,postalCode:rows[0].postal_code,country:rows[0].country},
     items:prepared
