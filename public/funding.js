@@ -103,27 +103,46 @@
   $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
   $('#issuerForm').onsubmit=async event=>{
     event.preventDefault();
-    const button=$('#saveIssuer'),form=new FormData(event.currentTarget);
+    const button=$('#saveIssuer'),form=new FormData(event.currentTarget),providerCode=String(form.get('provider'));
+    const optional=name=>{const value=String(form.get(name)||'').trim();return value||undefined};
     button.disabled=true;button.textContent='Saving…';$('#issuerError').textContent='';
     try{
-      provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-        provider:'enkash',
+      const common={
+        provider:providerCode,
         bankName:String(form.get('bankName')),
         programmeName:String(form.get('programmeName')),
-        cardNetwork:String(form.get('cardNetwork')),
-        baseUrl:String(form.get('baseUrl')),
-        tokenUrl:String(form.get('tokenUrl')),
-        partnerId:String(form.get('partnerId')),
-        basicAuth:String(form.get('basicAuth')),
-        username:String(form.get('username')),
-        password:String(form.get('password')),
-        clientId:String(form.get('clientId')),
-        companyId:String(form.get('companyId')),
-        cardAccountId:String(form.get('cardAccountId'))
-      })});
-      event.currentTarget.reset();$('#issuerDialog').close();await load();toast('Card programme connected');
+        cardNetwork:String(form.get('cardNetwork'))
+      };
+      let payload;
+      if(providerCode==='enkash'){
+        payload={...common,
+          baseUrl:String(form.get('baseUrl')),tokenUrl:String(form.get('tokenUrl')),partnerId:String(form.get('partnerId')),
+          basicAuth:String(form.get('basicAuth')),username:String(form.get('username')),password:String(form.get('password')),
+          clientId:String(form.get('clientId')),companyId:String(form.get('companyId')),cardAccountId:String(form.get('cardAccountId'))
+        };
+      }else{
+        payload={...common,
+          integrationMode:String(form.get('integrationMode')),
+          baseUrl:String(form.get('bankBaseUrl')),
+          authMode:String(form.get('authMode')),
+          tokenUrl:optional('bankTokenUrl'),clientId:optional('bankClientId'),clientSecret:optional('bankClientSecret'),
+          bearerToken:optional('bankBearerToken'),username:optional('bankUsername'),password:optional('bankPassword'),
+          apiKey:optional('bankApiKey'),apiKeyHeader:optional('bankApiKeyHeader'),
+          parentAccountReference:String(form.get('parentAccountReference')),
+          healthPath:optional('healthPath'),createCardPath:String(form.get('createCardPath')),
+          controlCardPath:optional('controlCardPath'),loadCardPath:optional('loadCardPath'),
+          createCardTemplate:String(form.get('createCardTemplate')),
+          controlCardTemplate:optional('controlCardTemplate'),loadCardTemplate:optional('loadCardTemplate'),
+          responseCardIdPath:String(form.get('responseCardIdPath')),
+          responseAccountIdPath:optional('responseAccountIdPath'),responseMaskedNumberPath:optional('responseMaskedNumberPath'),
+          responseStatusPath:optional('responseStatusPath'),responseBalancePath:optional('responseBalancePath'),
+          responseBalanceUnit:String(form.get('responseBalanceUnit')||'MINOR')
+        };
+      }
+      provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+      event.currentTarget.reset();$('#issuerDialog').close();await load();toast('Bank card programme connected');
     }catch(error){$('#issuerError').textContent=error.message}
-    finally{button.disabled=false;button.textContent='Save'}
+    finally{button.disabled=false;button.textContent='Test & connect'}
   };
   $('#disconnectIssuer').onclick=async()=>{
     if(!confirm('Remove this card programme? Existing card records will remain.'))return;
