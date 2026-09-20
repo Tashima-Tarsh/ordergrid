@@ -205,6 +205,23 @@ app.post("/api/address-books/import",async(req,reply)=>{
   }
 });
 
+app.get("/api/recipients",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query(`
+    select a.id,c.external_reference customer_reference,a.recipient,a.phone,a.city,a.state,a.postal_code,
+      coalesce(jsonb_object_agg(ra.retailer,ra.account_reference) filter(where ra.id is not null),'{}'::jsonb) retailer_accounts
+    from addresses a
+    join address_books ab on ab.id=a.address_book_id
+    join customers c on c.id=a.customer_id
+    left join retailer_accounts ra on ra.customer_id=c.id and ra.tenant_id=ab.tenant_id
+    where ab.tenant_id=$1
+    group by a.id,c.external_reference
+    order by a.created_at desc
+    limit 5000
+  `,[p.tenantId]);
+  return {recipients:rows};
+});
+
 app.get("/api/customers",async(req)=>{
   const p=req.principal!;
   const {rows}=await db.query(`
@@ -403,9 +420,9 @@ app.get("/api/bulk-baskets",async(req)=>{
   await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
   const {rows}=await db.query(`
     select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
-           cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,
+           cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,cb.payment_status,
            c.external_reference customer_reference,
-           ra.profile_key,ra.auth_status,
+           ra.profile_key,ra.auth_status,ra.credential_status,
            a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
            count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
     from checkout_baskets cb
