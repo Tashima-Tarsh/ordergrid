@@ -318,38 +318,93 @@ app.delete("/api/dealer-users/:userId",async(req,reply)=>{
 
 app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await Promise.all([db.query("select status,count(*)::int count,coalesce(sum(estimated_total_minor),0)::bigint total from order_batches where tenant_id=$1 group by status",[p.tenantId]),db.query("select status,count(*)::int count from purchase_orders where tenant_id=$1 group by status",[p.tenantId])]);return {batches:b.rows,orders:o.rows};});
 app.get("/api/automation",async(req)=>{
-  const p=req.principal!,policy=await getAutomationPolicy(p.tenantId);
+  const p=req.principal!,policy=await getAutomationPolicy(p.tenantId),localPolicy=await readAutomationPolicy(p.tenantId);
   const [accounts,orders,cards,batches]=await Promise.all([
     db.query("select count(*)::int total,count(*) filter(where credential_status in ('STORED','READY'))::int credentials_ready,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where auth_status in ('AUTH_REQUIRED','CHALLENGE','LOCKED'))::int needs_attention from retailer_accounts where tenant_id=$1",[p.tenantId]),
-    db.query("select count(*)::int total,count(*) filter(where status in ('READY','CLAIMED'))::int ready,count(*) filter(where status='OPENED')::int in_progress,count(*) filter(where status in ('REQUIRES_ACTION','FAILED'))::int needs_attention,count(*) filter(where status='CONFIRMED')::int confirmed,count(*) filter(where virtual_card_id is not null)::int cards_assigned from checkout_baskets where tenant_id=$1",[p.tenantId]),
+    db.query("select count(*)::int total,count(*) filter(where status in ('READY','CLAIMED'))::int ready,count(*) filter(where status='OPENED')::int in_progress,count(*) filter(where status in ('REQUIRES_ACTION','FAILED'))::int needs_attention,count(*) filter(where status='CONFIRMED')::int confirmed,count(*) filter(where virtual_card_id is not null)::int cards_assigned,count(*) filter(where commercial_status='APPROVED')::int price_approved,count(*) filter(where commercial_status='REVIEW_REQUIRED')::int price_review from checkout_baskets where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int total,count(*) filter(where status='ACTIVE')::int active from virtual_cards where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int total,count(*) filter(where status in ('APPROVED','PARTIAL'))::int active,count(*) filter(where status='COMPLETE')::int complete from order_batches where tenant_id=$1",[p.tenantId])
   ]);
   const a=accounts.rows[0]||{},o=orders.rows[0]||{},v=cards.rows[0]||{},b=batches.rows[0]||{};
   return {
     policy,
+    localPolicy,
     summary:{
       ready:Number(o.ready||0),
       inProgress:Number(o.in_progress||0),
       needsAttention:Number(o.needs_attention||0),
-      confirmed:Number(o.confirmed||0)
+      confirmed:Number(o.confirmed||0),
+      priceApproved:Number(o.price_approved||0),
+      priceReview:Number(o.price_review||0)
     },
     workflows:[
       {id:"accounts",name:"Account authentication",status:Number(a.needs_attention||0)>0?"NEEDS_ATTENTION":Number(a.total||0)>0?"ACTIVE":"READY",detail:Number(a.authenticated||0)+" authenticated · "+Number(a.credentials_ready||0)+" credentials ready"},
       {id:"preparation",name:"Order validation & preparation",status:Number(o.ready||0)>0?"ACTIVE":Number(o.total||0)>0?"READY":"IDLE",detail:Number(o.ready||0)+" orders prepared for next action"},
+      {id:"commercial",name:"Price & commercial validation",status:Number(o.price_review||0)>0?"NEEDS_ATTENTION":Number(o.price_approved||0)>0?"ACTIVE":"READY",detail:Number(o.price_approved||0)+" price checks approved · "+Number(o.price_review||0)+" need review"},
       {id:"cards",name:"Virtual-card assignment",status:Number(o.cards_assigned||0)>0?"ACTIVE":Number(o.total||0)>0?"READY":"READY",detail:Number(o.cards_assigned||0)+" order cards assigned · "+Number(v.active||0)+" active cards"},
       {id:"checkout",name:"Checkout continuation",status:Number(o.needs_attention||0)>0?"NEEDS_ATTENTION":Number(o.in_progress||0)>0?"ACTIVE":Number(o.ready||0)>0?"READY":"IDLE",detail:Number(o.in_progress||0)+" in progress · "+Number(o.ready||0)+" ready"},
       {id:"confirmation",name:"Retailer confirmation",status:Number(o.confirmed||0)>0?"ACTIVE":"READY",detail:Number(o.confirmed||0)+" retailer-confirmed orders"},
-      {id:"batch",name:"Batch protection",status:Number(b.active||0)>0?"ACTIVE":"READY",detail:"Pause threshold "+Number(policy.failure_pause_percent)+"% · "+Number(b.active||0)+" active batches"},
+      {id:"batch",name:"Batch protection",status:Number(b.active||0)>0?"ACTIVE":"READY",detail:"Failure pause "+Number(policy.failure_pause_percent)+"% · batch variance "+Number(policy.max_batch_variance_percent)+"%"},
       {id:"reconciliation",name:"Order reconciliation",status:Number(b.complete||0)>0?"ACTIVE":"READY",detail:Number(b.complete||0)+" completed batches"}
     ],
     mandatoryRules:[
       {name:"One order, one virtual card",status:"ENFORCED"},
+      {name:"Final payable amount checked before final retailer submission",status:"ENFORCED"},
       {name:"Retailer-confirmed completion evidence",status:"ENFORCED"},
       {name:"Protected verification is never bypassed",status:"ENFORCED"}
     ],
-    canEdit:["OWNER","APPROVER"].includes(p.role)
+    canEdit:["OWNER","APPROVER"].includes(p.role),
+    canRelaxChildren:p.role==="OWNER"&&p.tenantId===p.homeTenantId
   };
+});
+
+app.get("/api/automation/preflight",async(req)=>{
+  const p=req.principal!,policy=await getAutomationPolicy(p.tenantId);
+  const [orders,accounts,issuer]=await Promise.all([
+    db.query(`
+      select
+        count(distinct cb.id) filter(where cb.status='READY')::int ready,
+        count(distinct cb.id) filter(where cb.status in ('REQUIRES_ACTION','FAILED'))::int needs_attention,
+        coalesce(sum(po.amount_minor) filter(where cb.status in ('READY','CLAIMED','OPENED')),0)::bigint approved_exposure_minor,
+        count(po.id) filter(where po.amount_minor>0)::int priced_lines
+      from checkout_baskets cb
+      left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+      where cb.tenant_id=$1
+    `,[p.tenantId]),
+    db.query("select count(*)::int total,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where credential_status in ('STORED','READY'))::int credentials_ready from retailer_accounts where tenant_id=$1",[p.tenantId]),
+    db.query("select count(*)::int connected from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId])
+  ]);
+  const o=orders.rows[0]||{},a=accounts.rows[0]||{};
+  return {
+    eligibleOrders:Number(o.ready||0),
+    needsAttention:Number(o.needs_attention||0),
+    retailerAccounts:Number(a.total||0),
+    authenticatedAccounts:Number(a.authenticated||0),
+    credentialReadyAccounts:Number(a.credentials_ready||0),
+    pricedLines:Number(o.priced_lines||0),
+    approvedExposureMinor:Number(o.approved_exposure_minor||0),
+    cardProgrammeConnected:Number(issuer.rows[0]?.connected||0)>0,
+    policy
+  };
+});
+
+app.post("/api/automation/start",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  await db.query("update automation_policies set automation_enabled=true,updated_by=$1,updated_at=now() where tenant_id=$2",[p.id,p.tenantId]);
+  const policy=await getAutomationPolicy(p.tenantId);
+  const result=await claimReadyBaskets(p.tenantId,p.id,Number(policy.max_active_orders||8),policy);
+  if("error" in result)return reply.code(409).send({error:result.error});
+  await audit(db,p.tenantId,p.id,"automation.started","automation_policy",p.tenantId,{claimed:result.claimed});
+  return {started:true,...result,policy};
+});
+
+app.post("/api/automation/pause",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"policy_permission_required"});
+  await db.query("update automation_policies set automation_enabled=false,updated_by=$1,updated_at=now() where tenant_id=$2",[p.id,p.tenantId]);
+  await audit(db,p.tenantId,p.id,"automation.paused","automation_policy",p.tenantId);
+  return {paused:true};
 });
 
 app.put("/api/automation/policy",async(req,reply)=>{
@@ -360,14 +415,43 @@ app.put("/api/automation/policy",async(req,reply)=>{
     autoAssignVirtualCard:z.boolean(),
     autoContinueCheckout:z.boolean(),
     maxActiveOrders:z.number().int().min(1).max(50),
-    failurePausePercent:z.number().min(0).max(100)
+    failurePausePercent:z.number().min(0).max(100),
+    maxPriceIncreasePercent:z.number().min(0).max(100),
+    maxOrderValueMinor:z.number().int().min(0),
+    maxBatchVariancePercent:z.number().min(0).max(100),
+    priceBreachAction:z.enum(["PAUSE_ORDER","PAUSE_BATCH"]),
+    runMode:z.enum(["MANUAL","CONTINUOUS"]),
+    inheritParentPolicy:z.boolean(),
+    allowChildPolicyRelaxation:z.boolean().default(false)
   }).parse(req.body);
+  const allowRelaxation=p.role==="OWNER"&&p.tenantId===p.homeTenantId?body.allowChildPolicyRelaxation:false;
   const {rows}=await db.query(
-    "insert into automation_policies(tenant_id,automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,updated_by,updated_at) values($1,$2,$3,$4,$5,$6,$7,now()) on conflict(tenant_id) do update set automation_enabled=excluded.automation_enabled,auto_assign_virtual_card=excluded.auto_assign_virtual_card,auto_continue_checkout=excluded.auto_continue_checkout,max_active_orders=excluded.max_active_orders,failure_pause_percent=excluded.failure_pause_percent,updated_by=excluded.updated_by,updated_at=now() returning automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,updated_at",
-    [p.tenantId,body.automationEnabled,body.autoAssignVirtualCard,body.autoContinueCheckout,body.maxActiveOrders,body.failurePausePercent,p.id]
+    `insert into automation_policies(
+      tenant_id,automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,
+      max_price_increase_percent,max_order_value_minor,max_batch_variance_percent,price_breach_action,run_mode,
+      inherit_parent_policy,allow_child_policy_relaxation,updated_by,updated_at
+    ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
+    on conflict(tenant_id) do update set
+      automation_enabled=excluded.automation_enabled,
+      auto_assign_virtual_card=excluded.auto_assign_virtual_card,
+      auto_continue_checkout=excluded.auto_continue_checkout,
+      max_active_orders=excluded.max_active_orders,
+      failure_pause_percent=excluded.failure_pause_percent,
+      max_price_increase_percent=excluded.max_price_increase_percent,
+      max_order_value_minor=excluded.max_order_value_minor,
+      max_batch_variance_percent=excluded.max_batch_variance_percent,
+      price_breach_action=excluded.price_breach_action,
+      run_mode=excluded.run_mode,
+      inherit_parent_policy=excluded.inherit_parent_policy,
+      allow_child_policy_relaxation=excluded.allow_child_policy_relaxation,
+      updated_by=excluded.updated_by,updated_at=now()
+    returning *`,
+    [p.tenantId,body.automationEnabled,body.autoAssignVirtualCard,body.autoContinueCheckout,body.maxActiveOrders,body.failurePausePercent,
+     body.maxPriceIncreasePercent,body.maxOrderValueMinor,body.maxBatchVariancePercent,body.priceBreachAction,body.runMode,
+     body.inheritParentPolicy,allowRelaxation,p.id]
   );
   await audit(db,p.tenantId,p.id,"automation.policy_updated","automation_policy",p.tenantId,body);
-  return {policy:rows[0]};
+  return {localPolicy:rows[0],policy:await getAutomationPolicy(p.tenantId)};
 });
 
 app.get("/api/control-center",async(req)=>{
