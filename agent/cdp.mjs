@@ -271,7 +271,7 @@ async function driveCheckout(port,{address,paymentRoute,accountCredentials,comme
 
 
 function flipkartProductSnapshotScript(){
-  return \`(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,180000);
+  return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,180000);
     const lower=text.toLowerCase();
     const clean=v=>String(v??'').replace(/\\s+/g,' ').trim();
     const parseMoney=value=>{const m=clean(value).replace(/,/g,'').match(/(?:₹|rs\\.?|inr)?\\s*([0-9]+(?:\\.[0-9]{1,2})?)/i);if(!m)return null;const n=Number(m[1]);return Number.isFinite(n)?Math.round(n*100):null;};
@@ -294,22 +294,22 @@ function flipkartProductSnapshotScript(){
     const offerAvailability=clean(offers?.availability).toLowerCase(),available=explicitOos?false:offerAvailability?(!/outofstock|soldout|discontinued/.test(offerAvailability)):true;
     const canonical=document.querySelector('link[rel="canonical"]')?.href||location.href,pid=new URL(location.href).searchParams.get('pid');
     return {title,category:categoryText||null,isMobile,seller,sellingPriceMinor,mrpMinor,priceSource:priceSource||null,available,canonicalUrl:canonical,pid,href:location.href};
-  })()\`;
+  })()`;
 }
 
 function flipkartCartStateScript(productUrl){
-  return \`(()=>{const target=\${JSON.stringify(productUrl)};
+  return `(()=>{const target=${JSON.stringify(productUrl)};
     const wanted=new URL(target),wantedPid=wanted.searchParams.get('pid'),wantedKey=(wanted.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';
     const clean=v=>String(v??'').replace(/\\s+/g,' ').trim();
     const locate=()=>{const links=[...document.querySelectorAll('a[href*="/p/"]')],link=links.find(a=>{try{const u=new URL(a.href,location.href),pid=u.searchParams.get('pid'),key=(u.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';return Boolean((wantedPid&&pid===wantedPid)||(wantedKey&&key===wantedKey))}catch{return false}});if(!link)return null;let node=link;for(let i=0;i<10&&node;i++,node=node.parentElement){const txt=clean(node.innerText),controls=[...node.querySelectorAll('button,[role="button"],input')];if(/remove|save for later|quantity|delivery/i.test(txt)&&controls.length)return node}return link.parentElement};
     const row=locate();if(!row)return {present:false,quantity:0};
     const input=[...row.querySelectorAll('input')].find(x=>/^\\d+$/.test(String(x.value||'').trim()));let quantity=input?Number(input.value):null;if(!Number.isInteger(quantity)||quantity<1){const m=clean(row.innerText).match(/(?:qty|quantity)\\s*:?\\s*(\\d{1,2})/i);quantity=m?Number(m[1]):1}
     return {present:true,quantity:Number(quantity)||1};
-  })()\`;
+  })()`;
 }
 
 function flipkartCartProbeScript(productUrl,originalQuantity){
-  return \`(async()=>{const target=\${JSON.stringify(productUrl)},original=\${JSON.stringify(Number(originalQuantity)||0)},pause=ms=>new Promise(r=>setTimeout(r,ms));
+  return `(async()=>{const target=${JSON.stringify(productUrl)},original=${JSON.stringify(Number(originalQuantity)||0)},pause=ms=>new Promise(r=>setTimeout(r,ms));
     const wanted=new URL(target),wantedPid=wanted.searchParams.get('pid'),wantedKey=(wanted.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'',clean=v=>String(v??'').replace(/\\s+/g,' ').trim(),visible=el=>Boolean(el)&&getComputedStyle(el).display!=='none'&&getComputedStyle(el).visibility!=='hidden';
     const locate=()=>{const links=[...document.querySelectorAll('a[href*="/p/"]')],link=links.find(a=>{try{const u=new URL(a.href,location.href),pid=u.searchParams.get('pid'),key=(u.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';return Boolean((wantedPid&&pid===wantedPid)||(wantedKey&&key===wantedKey))}catch{return false}});if(!link)return null;let node=link;for(let i=0;i<11&&node;i++,node=node.parentElement){const txt=clean(node.innerText),controls=[...node.querySelectorAll('button,[role="button"],input')];if(/remove|save for later|quantity|delivery/i.test(txt)&&controls.length)return node}return link.parentElement};
     const qty=row=>{if(!row)return 0;const input=[...row.querySelectorAll('input')].find(x=>/^\\d+$/.test(String(x.value||'').trim()));if(input)return Number(input.value)||0;const m=clean(row.innerText).match(/(?:qty|quantity)\\s*:?\\s*(\\d{1,2})/i);return m?Number(m[1]):1};
@@ -318,7 +318,7 @@ function flipkartCartProbeScript(productUrl,originalQuantity){
     for(let attempt=0;attempt<9;attempt++){row=locate();if(!row)break;current=qty(row);const plus=button(row,'plus');if(!plus||plus.disabled||plus.getAttribute('aria-disabled')==='true'){verified=true;reason='PLUS_DISABLED';max=current;break}plus.click();await pause(900);row=locate();const next=qty(row),page=clean((row?.innerText||'')+' '+[...document.querySelectorAll('[role="alert"],[class*="toast" i],[class*="snackbar" i]')].map(x=>x.innerText).join(' '));if(next>current){max=Math.max(max,next);if(max>=10){reason='PROBED_TO_10';break}continue}if(/maximum|max qty|max(?:imum)? quantity|only \\d+|cannot add more|limit|allowed quantity|seller.{0,30}limit/i.test(page)){verified=true;reason='RETAILER_LIMIT';max=current;break}reason='QUANTITY_DID_NOT_CHANGE';break}
     let restored=true;row=locate();if(original>0){for(let guard=0;row&&qty(row)>original&&guard<12;guard++){const minus=button(row,'minus');if(!minus){restored=false;break}minus.click();await pause(500);row=locate()}}else if(row){const remove=[...row.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent))||/remove/i.test(clean(el.getAttribute?.('aria-label'))));if(remove){remove.click();await pause(500);const confirm=[...document.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent)));if(confirm&&locate())confirm.click();await pause(450)}else restored=false}
     return {maxQuantity:max,maxQuantityVerified:verified,reason,restored};
-  })()\`;
+  })()`;
 }
 
 async function readFlipkartCartState(port,productUrl){
