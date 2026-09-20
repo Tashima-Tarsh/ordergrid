@@ -34,7 +34,7 @@
     return [...groups.values()];
   }
 
-  function render({batches,tasks,workers}){
+  function render({batches,tasks,workers,recipients,runtime}){
     const batch=batches[0]||null;
     const products=groupProducts(tasks);
     const recipients=new Set(tasks.map(t=>t.address_id).filter(Boolean)).size;
@@ -43,6 +43,7 @@
     const failed=tasks.filter(t=>t.status==='FAILED').length;
     const total=tasks.reduce((sum,t)=>sum+Number(t.amount_minor||0),0);
     const workerOnline=workers.length>0;
+    const engine=runtime?.checkoutEngine||workers[0]||null;
     const hasBatch=Boolean(batch);
     const approved=Boolean(batch&&['APPROVED','PARTIAL','COMPLETE'].includes(batch.status))||tasks.length>0;
     const allConfirmed=tasks.length>0&&confirmed===tasks.length;
@@ -56,6 +57,20 @@
     if(allConfirmed)setStep('confirmation','complete','COMPLETE',`${confirmed} retailer-confirmed order line${confirmed===1?'':'s'} reconciled.`);
     else if(confirmed)setStep('confirmation','current',`${confirmed} CONFIRMED`,`${confirmed} confirmed; ${pending+failed} still pending or requiring attention.`);
     else setStep('confirmation','waiting','WAITING','Genuine retailer order IDs will appear here after placement.');
+
+    const recipientHost=$('#recipientAccounts');
+    if(recipientHost){
+      recipientHost.innerHTML=recipients.length?recipients.slice(0,12).map(r=>{
+        const amazon=r.retailer_accounts?.amazon;
+        const flipkart=r.retailer_accounts?.flipkart;
+        const account=amazon?`Amazon · ${amazon}`:flipkart?`Flipkart · ${flipkart}`:'Retailer account not bound';
+        return `<div class="recipient-account"><div><strong>${esc(r.customer_reference)}</strong><span>${esc(r.recipient)} · ${esc(r.city)} ${esc(r.postal_code)}</span></div><small>${esc(account)}</small></div>`;
+      }).join('')+(recipients.length>12?`<div class="recipient-more">+${recipients.length-12} more recipients</div>`:''):'<p class="muted">No recipients imported yet.</p>';
+    }
+    if($('#engineName'))$('#engineName').textContent=engine?.hostname||engine?.id||'OrderGrid Checkout Engine';
+    if($('#engineStatus'))$('#engineStatus').textContent=workerOnline?'ONLINE':'OFFLINE';
+    if($('#engineMeta'))$('#engineMeta').textContent=workerOnline?`${runtime?.api||'OrderGrid API'} connected · capacity ${engine?.capacity||workers[0]?.capacity||8} concurrent retailer profiles`:'Checkout engine is not connected.';
+    $('#engineDot')?.classList.toggle('online',workerOnline);
 
     const cartBatch=$('#cartBatchName');
     if(cartBatch)cartBatch.textContent=batch?batch.name:'No active batch';
@@ -78,12 +93,14 @@
     if(loading)return;
     loading=true;
     try{
-      const [batchData,taskData,workerData]=await Promise.all([
+      const [batchData,taskData,workerData,recipientData,runtime]=await Promise.all([
         request('/api/batches'),
         request('/api/checkout-tasks'),
-        request('/api/execution-workers').catch(()=>({workers:[]}))
+        request('/api/execution-workers').catch(()=>({workers:[]})),
+        request('/api/recipients').catch(()=>({recipients:[]})),
+        request('/api/runtime').catch(()=>null)
       ]);
-      render({batches:batchData.batches||[],tasks:taskData.tasks||[],workers:workerData.workers||[]});
+      render({batches:batchData.batches||[],tasks:taskData.tasks||[],workers:workerData.workers||[],recipients:recipientData.recipients||[],runtime});
     }catch(error){
       console.debug('Fulfilment cart refresh skipped',error);
     }finally{
@@ -92,7 +109,7 @@
   }
 
   document.addEventListener('click',event=>{
-    if(event.target.closest('#flowAddProducts'))document.querySelector('#newBatch')?.click();
+    if(event.target.closest('#flowAddProducts,#flowImportRecipients'))document.querySelector('#newBatch')?.click();
   });
   window.addEventListener('ordergrid:update',load);
   window.addEventListener('ordergrid:bulk-refresh',load);
