@@ -56,8 +56,8 @@
 
       <section class="automation-card automation-policy">
         <div class="automation-card-head">
-          <div><span>POLICY ENGINE</span><h3>Dealer automation policy</h3></div>
-          <span class="policy-scope" id="policyScope">Current dealer</span>
+          <div><span>POLICY ENGINE</span><h3>Workspace automation policy</h3></div>
+          <span class="policy-scope" id="policyScope">Current workspace</span>
         </div>
         <div id="effectivePolicyBanner" class="effective-policy-banner"></div>
         <form id="automationPolicyForm">
@@ -85,14 +85,6 @@
             <label class="policy-toggle">
               <span><b>Automatic checkout continuation</b><small>Continue ordinary retailer checkout until a protected verification or policy gate.</small></span>
               <input type="checkbox" name="autoContinueCheckout">
-            </label>
-            <label class="policy-toggle">
-              <span><b>Inherit Main Dealer policy</b><small>Apply Main Dealer ceilings while allowing stricter child settings.</small></span>
-              <input type="checkbox" name="inheritParentPolicy">
-            </label>
-            <label class="policy-toggle" id="childRelaxationRow">
-              <span><b>Allow sub-dealers to relax policy</b><small>Permit child dealers to set limits above Main Dealer ceilings.</small></span>
-              <input type="checkbox" name="allowChildPolicyRelaxation">
             </label>
           </div>
 
@@ -176,15 +168,13 @@
       </article>
     `).join('');
 
-    const inherited=Boolean(policy.inherited_from_tenant_id);
-    $('#policyScope').textContent=inherited?'Main Dealer guardrails active':'Current dealer';
+    $('#policyScope').textContent='Current workspace';
     $('#effectivePolicyBanner').innerHTML=`
       <strong>Effective policy</strong>
       <span>Price +${Number(policy.max_price_increase_percent||0)}%</span>
       <span>Order cap ${Number(policy.max_order_value_minor||0)>0?moneyMinor(policy.max_order_value_minor):'No cap'}</span>
       <span>Batch +${Number(policy.max_batch_variance_percent||0)}%</span>
       <span>${esc(String(policy.price_breach_action||'PAUSE_ORDER').replaceAll('_',' '))}</span>
-      ${inherited?'<small>Includes Main Dealer limits</small>':''}
     `;
 
     const form=$('#automationPolicyForm');
@@ -197,14 +187,9 @@
     form.elements.maxBatchVariancePercent.value=Number(local.max_batch_variance_percent||3);
     form.elements.priceBreachAction.value=local.price_breach_action||'PAUSE_ORDER';
     form.elements.runMode.value=local.run_mode||'MANUAL';
-    form.elements.inheritParentPolicy.checked=Boolean(local.inherit_parent_policy);
-    form.elements.allowChildPolicyRelaxation.checked=Boolean(local.allow_child_policy_relaxation);
-
-    $('#childRelaxationRow').hidden=!data.canRelaxChildren;
-    $('#policyLastUpdated').textContent=local.updated_at?'Last changed '+new Date(local.updated_at).toLocaleString('en-IN'):'Default dealer policy';
+    $('#policyLastUpdated').textContent=local.updated_at?'Last changed '+new Date(local.updated_at).toLocaleString('en-IN'):'Default workspace policy';
     $('#policyPermission').textContent=data.canEdit?'Owner / Approver policy access':'View-only policy access';
     [...form.elements].forEach(el=>{if(el instanceof HTMLInputElement||el instanceof HTMLSelectElement||el instanceof HTMLButtonElement)el.disabled=!data.canEdit});
-    if(data.canEdit&&!data.canRelaxChildren)form.elements.allowChildPolicyRelaxation.disabled=true;
 
     $('#automationMandatoryRules').innerHTML=(data.mandatoryRules||[]).map(rule=>`
       <div><span class="rule-lock">◆</span><div><strong>${esc(rule.name)}</strong><small>System safeguard</small></div><b>${esc(rule.status)}</b></div>
@@ -220,9 +205,8 @@
     if(Number(policy.max_order_value_minor||0)===0)health.push({state:'REVIEW',title:'No absolute order cap',detail:'Price variance is enforced, but there is no additional maximum order value.'});
     if(Number(policy.max_active_orders||0)>20)health.push({state:'REVIEW',title:'High concurrency policy',detail:'Maximum active orders is above 20. Review retailer and card-programme capacity.'});
     if(Number(policy.failure_pause_percent||0)>25)health.push({state:'REVIEW',title:'Loose failure guard',detail:'Failure pause threshold is above 25%.'});
-    if(!policy.automation_enabled)health.push({state:'PAUSED',title:'Autopilot paused',detail:'Automated order preparation and continuation are disabled for this dealer.'});
-    if(inherited)health.push({state:'HEALTHY',title:'Main Dealer guardrails applied',detail:'Effective policy includes inherited parent limits.'});
-    if(!health.length)health.push({state:'HEALTHY',title:'Policy configuration healthy',detail:'Current dealer automation settings are aligned with active order controls.'});
+    if(!policy.automation_enabled)health.push({state:'PAUSED',title:'Autopilot paused',detail:'Automated order preparation and continuation are disabled for this workspace.'});
+    if(!health.length)health.push({state:'HEALTHY',title:'Policy configuration healthy',detail:'Current workspace automation settings are aligned with active order controls.'});
 
     $('#automationHealthState').textContent=health.some(x=>x.state==='ACTION')?'ACTION REQUIRED':health.some(x=>x.state==='REVIEW')?'REVIEW':'HEALTHY';
     $('#automationHealthList').innerHTML=health.map(h=>`
@@ -291,9 +275,7 @@
           maxOrderValueMinor:Math.round(Number(form.elements.maxOrderValueRupees.value||0)*100),
           maxBatchVariancePercent:Number(form.elements.maxBatchVariancePercent.value),
           priceBreachAction:form.elements.priceBreachAction.value,
-          runMode:form.elements.runMode.value,
-          inheritParentPolicy:form.elements.inheritParentPolicy.checked,
-          allowChildPolicyRelaxation:form.elements.allowChildPolicyRelaxation.checked
+          runMode:form.elements.runMode.value
         })
       });
       if(window.toast)window.toast('Automation policy updated');
