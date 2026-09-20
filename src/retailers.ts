@@ -29,6 +29,8 @@ export function retailerForProductUrl(value:string):RetailerIdentity {
   const host=url.hostname.toLowerCase().replace(/.$/,"");
   const known=SUPPORTED.find(r=>r.hosts.some(root=>hostMatches(host,root)));
   if(known)return{id:known.id,name:known.name,host,mode:"ORDERGRID_WORKER"};
+  const brandLookalike=SUPPORTED.some(r=>r.hosts.some(root=>host.includes(root)&&!hostMatches(host,root)));
+  if(brandLookalike)throw new Error("Retailer hostname does not match the expected domain");
   if(!publicStoreHost(host))throw new Error("Unsupported retailer product URL");
   return{id:`store:${host}`,name:host.replace(/^www\./,""),host,mode:"ORDERGRID_WORKER"};
 }
