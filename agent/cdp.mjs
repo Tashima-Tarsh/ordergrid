@@ -108,10 +108,24 @@ function retailerAuthScript(credentials){
     return {acted:false};
   })()`;
 }
-function pageStateScript(postalCode,paymentRoute){
+function pageStateScript(postalCode,paymentRoute,commercialApprovedAmountMinor){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,120000);
     const lower=text.toLowerCase();
+    const route=${JSON.stringify(paymentRoute)};
+    const approvedAmount=${commercialApprovedAmountMinor==null?"null":JSON.stringify(commercialApprovedAmountMinor)};
     const valueOf=e=>String(e?.value||e?.getAttribute?.('value')||e?.innerText||e?.textContent||e?.getAttribute?.('aria-label')||'').trim();
+    const parseMoney=value=>{const match=String(value||'').replace(/,/g,'').match(/(?:₹|rs\\.?|inr)?\\s*(\\d+(?:\\.\\d{1,2})?)/i);if(!match)return null;const n=Number(match[1]);return Number.isFinite(n)?Math.round(n*100):null;};
+    const findPayableAmountMinor=()=>{
+      const selectors=[
+        '[data-testid*="grand-total" i]','[data-testid*="order-total" i]','[data-testid*="payable" i]',
+        '[id*="grandTotal" i]','[id*="orderTotal" i]','[id*="payable" i]',
+        '[class*="grand-total" i]','[class*="order-total" i]','[class*="payable" i]'
+      ];
+      for(const selector of selectors){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(valueOf(el));if(amount!==null)return amount;}}
+      const labelled=text.match(/(?:order total|grand total|amount payable|total payable|payable amount|total amount)[^₹0-9]{0,40}(?:₹|rs\\.?|inr)?\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)/i);
+      if(labelled){const n=Number(String(labelled[1]).replace(/,/g,''));if(Number.isFinite(n))return Math.round(n*100);}
+      return null;
+    };
     const orderPatterns=[/\\b\\d{3}-\\d{7}-\\d{7}\\b/,/\\bOD[0-9A-Z]{8,}\\b/i,/\\b(?:order(?:\\s+id|\\s+number|#)?)[\\s:#-]*([A-Z0-9][A-Z0-9._\\/-]{4,79})/i];
     let orderId=null;
     for(const re of orderPatterns){const m=text.match(re);if(m){orderId=m[1]||m[0];break;}}
@@ -127,25 +141,31 @@ function pageStateScript(postalCode,paymentRoute){
     if(hasOtp)return {state:'CHALLENGE',code:'OTP_REQUIRED',message:'Retailer OTP or verification code is required',href:location.href};
     if(has3ds)return {state:'CHALLENGE',code:'PAYMENT_AUTH_REQUIRED',message:'Bank/issuer authentication is required',href:location.href};
     const cardInput=document.querySelector('input[autocomplete="cc-number"],input[name*="cardNumber" i],input[id*="cardNumber" i]');
-    if(cardInput&&!${JSON.stringify(paymentRoute)}.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'A card payment method must be supplied through an approved issuer/PCI flow',href:location.href};
+    if(cardInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'A card payment method must be supplied through an approved issuer/PCI flow',href:location.href};
     const postcode=${JSON.stringify(postalCode||"")};
     if(postcode&&/select.*address|delivery address|choose.*address/i.test(lower)){
       const addressBlocks=[...document.querySelectorAll('address,[class*="address" i],[data-testid*="address" i]')];
       const match=addressBlocks.find(x=>String(x.innerText||'').includes(postcode));
       if(match){const root=match.closest('li,div,section,form')||match;const btn=[...root.querySelectorAll('button,input[type="submit"],a')].find(x=>/(use this address|deliver to this address|select|continue)/i.test(valueOf(x)));if(btn){btn.click();return {state:'RUNNING',action:'ADDRESS_SELECTED',href:location.href};}}
     }
-    if(${JSON.stringify(paymentRoute)}.toLowerCase().includes('cash')){
+    if(route.toLowerCase().includes('cash')){
       const controls=[...document.querySelectorAll('label,button,input[type="radio"],div[role="radio"]')];
       const cod=controls.find(x=>/(cash on delivery|pay on delivery|cod)/i.test(valueOf(x)));
       if(cod){const input=cod.matches?.('input')?cod:cod.querySelector?.('input[type="radio"]');(input||cod).click();return {state:'RUNNING',action:'COD_SELECTED',href:location.href};}
     }
     const candidates=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(x=>!x.disabled&&x.getAttribute('aria-disabled')!=='true');
-    const patterns=[
-      /proceed to (buy|checkout)/i,/proceed to checkout/i,/checkout/i,
-      /use this address/i,/deliver to this address/i,/continue/i,
-      /place (your )?order/i,/pay now/i,/confirm (and )?(pay|order)/i,/buy now/i
-    ];
-    for(const re of patterns){const el=candidates.find(x=>re.test(valueOf(x)));if(el){el.click();return {state:'RUNNING',action:valueOf(el).slice(0,80),href:location.href};}}
+    const normalPatterns=[/proceed to (buy|checkout)/i,/proceed to checkout/i,/checkout/i,/use this address/i,/deliver to this address/i,/continue/i];
+    for(const re of normalPatterns){const el=candidates.find(x=>re.test(valueOf(x)));if(el){el.click();return {state:'RUNNING',action:valueOf(el).slice(0,80),href:location.href};}}
+    const finalPatterns=[/place (your )?order/i,/pay now/i,/confirm (and )?(pay|order)/i,/buy now/i,/submit order/i];
+    for(const re of finalPatterns){
+      const el=candidates.find(x=>re.test(valueOf(x)));
+      if(el){
+        const amountMinor=findPayableAmountMinor();
+        if(amountMinor===null)return {state:'CHALLENGE',code:'PRICE_NOT_VERIFIED',message:'Final payable amount could not be verified before order submission',href:location.href};
+        if(approvedAmount!==amountMinor)return {state:'COMMERCIAL_CHECK',amountMinor,currency:'INR',action:valueOf(el).slice(0,80),href:location.href};
+        el.click();return {state:'RUNNING',action:valueOf(el).slice(0,80),amountMinor,href:location.href};
+      }
+    }
     return {state:'CHALLENGE',code:'REVIEW_REQUIRED',message:'OrderGrid reached a retailer step that requires review or a retailer-specific connector update',href:location.href};
   })()`;
 }
@@ -164,7 +184,7 @@ export function cartUrlFor(retailer,productUrl){
   if(known[retailer])return known[retailer];
   const url=new URL(productUrl);return `${url.origin}/cart`;
 }
-async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials}){
+async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials,commercialApprovedAmountMinor}){
   for(let round=0;round<12;round++){
     const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&/^https?:/.test(t.url||""));
     const target=targets.find(t=>/(checkout|cart|order|payment|pay|secure|buy)/i.test(t.url||""))||targets[0];
@@ -174,7 +194,7 @@ async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials}){
       await waitReady(connection);
       const auth=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(auth?.acted){await sleep(1400);continue;}
-      const state=await evaluate(connection,pageStateScript(postalCode,paymentRoute));
+      const state=await evaluate(connection,pageStateScript(postalCode,paymentRoute,commercialApprovedAmountMinor));
       if(!state)return {state:"FAILED",code:"NO_PAGE_STATE",message:"Retailer page did not return an execution state"};
       if(state.state==="CONFIRMED"||state.state==="CHALLENGE")return state;
       await sleep(1200);
@@ -184,7 +204,7 @@ async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials}){
   return {state:"CHALLENGE",code:"CHECKOUT_TIMEOUT",message:"Retailer checkout needs review before OrderGrid can continue"};
 }
 
-export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,resume=false}){
+export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,commercialApprovedAmountMinor=null,resume=false}){
   const port=await ensureChrome(chrome,directory);
   const results=[];
   if(!resume){
@@ -204,6 +224,6 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     const cartUrl=cartUrlFor(retailer,items[0]?.executionUrl);
     if(cartUrl)await createTarget(port,cartUrl);
   }
-  const state=await driveCheckout(port,{postalCode:address?.postalCode,paymentRoute,accountCredentials});
+  const state=await driveCheckout(port,{postalCode:address?.postalCode,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
   return {...state,results};
 }
