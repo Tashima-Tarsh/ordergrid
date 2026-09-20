@@ -155,6 +155,6 @@
   });
   window.addEventListener('ordergrid:update',load);
   window.addEventListener('ordergrid:bulk-refresh',load);
-  setInterval(load,5000);
+  setInterval(load,15000);
   load();
 })();
