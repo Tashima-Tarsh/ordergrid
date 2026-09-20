@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -41,8 +41,16 @@ must(html.includes('<script src="funding.js"></script>'),"frontend contract: fun
 must(sw.includes("'./funding.js'"),"frontend contract: service worker must cache funding.js");
 must(funding.includes("openIssuerConnector"),"frontend contract: Connect bank open handler missing");
 must(funding.includes("closeIssuerConnector"),"frontend contract: funding setup close handler missing");
-must(funding.includes("issuer-connect-inline"),"frontend contract: funding setup must mount inline in Cards & Funding");
-must(funding.includes("scrollIntoView"),"frontend contract: funding setup must remain visible after opening");
+must(!funding.includes("classList.add('issuer-connect-inline')"),"frontend contract: funding setup must remain a real modal, not inline");
+must(funding.includes("document.body.classList.add('issuer-connect-open')"),"frontend contract: card setup modal must lock page background");
+must(funding.includes("ordergrid:cards-open"),"frontend contract: Cards navigation must open card setup");
+must(navigation.includes("ordergrid:cards-open"),"navigation contract: Cards click must request setup modal");
+must(html.includes('id="fundingSourceCard"'),"frontend contract: clickable funding detail card missing");
+must(html.includes('id="fundingBank"'),"frontend contract: funding bank detail missing");
+must(html.includes('id="fundingProgramme"'),"frontend contract: funding programme detail missing");
+must(html.includes('id="fundingCardIdentity"'),"frontend contract: safe funding card identity detail missing");
+must(html.includes('id="issuerModalStatus"'),"frontend contract: setup modal status summary missing");
+must(files["public/finance.css"].includes("#issuerDialog.issuer-connect-overlay"),"frontend contract: real card setup overlay styling missing");
 must(funding.includes("await load()"),"frontend contract: connector must refresh bank state before opening");
 must(funding.includes("'/api/cards/provider/connect'"),"frontend contract: issuer connect API missing from client");
 must(funding.includes("'/api/cards'"),"frontend contract: virtual card create API missing from client");
