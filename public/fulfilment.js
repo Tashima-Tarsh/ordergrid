@@ -34,10 +34,10 @@
     return [...groups.values()];
   }
 
-  function render({batches,tasks,workers,recipients,runtime}){
+  function render({batches,tasks,workers,recipientRecords,runtime}){
     const batch=batches[0]||null;
     const products=groupProducts(tasks);
-    const recipients=new Set(tasks.map(t=>t.address_id).filter(Boolean)).size;
+    const recipientCount=new Set(tasks.map(t=>t.address_id).filter(Boolean)).size;
     const confirmed=tasks.filter(t=>doneStatuses.has(t.status)).length;
     const pending=tasks.filter(t=>!doneStatuses.has(t.status)&&t.status!=='FAILED').length;
     const failed=tasks.filter(t=>t.status==='FAILED').length;
@@ -49,7 +49,7 @@
     const allConfirmed=tasks.length>0&&confirmed===tasks.length;
 
     setStep('products',products.length?'complete':hasBatch?'current':'current',products.length?'DONE':'START',products.length?`${products.length} product${products.length===1?'':'s'} in the active procurement batch.`:'Add the products to procure for every recipient.');
-    setStep('recipients',recipients?'complete':products.length?'current':'waiting',recipients?'DONE':'WAITING',recipients?`${recipients} recipient${recipients===1?'':'s'} imported and bound to the batch.`:'Import recipients and bind their Amazon / retailer account references.');
+    setStep('recipients',recipientCount?'complete':products.length?'current':'waiting',recipientCount?'DONE':'WAITING',recipientCount?`${recipientCount} recipient${recipientCount===1?'':'s'} imported and bound to the batch.`:'Import recipients and bind their Amazon / retailer account references.');
     setStep('approval',approved?'complete':recipients?'current':'waiting',approved?'APPROVED':'WAITING',approved?`${batch?.payment_route||'Payment route'} approved for execution.`:'Review estimated value and payment route before execution.');
     if(allConfirmed)setStep('checkout','complete','DONE',`All ${tasks.length} order lines completed retailer checkout.`);
     else if(approved)setStep('checkout','current',workerOnline?'RUNNING':'WORKER OFFLINE',workerOnline?`${pending} order line${pending===1?'':'s'} ready or running through OrderGrid.`:'Start an OrderGrid execution worker to place approved baskets.');
@@ -60,12 +60,12 @@
 
     const recipientHost=$('#recipientAccounts');
     if(recipientHost){
-      recipientHost.innerHTML=recipients.length?recipients.slice(0,12).map(r=>{
+      recipientHost.innerHTML=recipientRecords.length?recipientRecords.slice(0,12).map(r=>{
         const amazon=r.retailer_accounts?.amazon;
         const flipkart=r.retailer_accounts?.flipkart;
         const account=amazon?`Amazon · ${amazon}`:flipkart?`Flipkart · ${flipkart}`:'Retailer account not bound';
         return `<div class="recipient-account"><div><strong>${esc(r.customer_reference)}</strong><span>${esc(r.recipient)} · ${esc(r.city)} ${esc(r.postal_code)}</span></div><small>${esc(account)}</small></div>`;
-      }).join('')+(recipients.length>12?`<div class="recipient-more">+${recipients.length-12} more recipients</div>`:''):'<p class="muted">No recipients imported yet.</p>';
+      }).join('')+(recipientRecords.length>12?`<div class="recipient-more">+${recipientRecords.length-12} more recipients</div>`:''):'<p class="muted">No recipients imported yet.</p>';
     }
     if($('#engineName'))$('#engineName').textContent=engine?.hostname||engine?.id||'OrderGrid Checkout Engine';
     if($('#engineStatus'))$('#engineStatus').textContent=workerOnline?'ONLINE':'OFFLINE';
@@ -80,7 +80,7 @@
         <div><strong>${esc(p.title)}</strong><small>${esc(p.retailer)} · Qty ${p.quantity}</small></div>
         <div class="cart-item-price">${money(p.total)}</div>
       </div>`).join(''):'<p class="muted">Add products to see them here.</p>';
-    if($('#cartRecipients'))$('#cartRecipients').textContent=String(recipients);
+    if($('#cartRecipients'))$('#cartRecipients').textContent=String(recipientCount);
     if($('#cartLines'))$('#cartLines').textContent=String(tasks.length||batch?.item_count||0);
     if($('#cartPayment'))$('#cartPayment').textContent=batch?.payment_route||'—';
     if($('#cartSubtotal'))$('#cartSubtotal').textContent=money(total||batch?.estimated_total_minor||0);
@@ -100,7 +100,7 @@
         request('/api/recipients').catch(()=>({recipients:[]})),
         request('/api/runtime').catch(()=>null)
       ]);
-      render({batches:batchData.batches||[],tasks:taskData.tasks||[],workers:workerData.workers||[],recipients:recipientData.recipients||[],runtime});
+      render({batches:batchData.batches||[],tasks:taskData.tasks||[],workers:workerData.workers||[],recipientRecords:recipientData.recipients||[],runtime});
     }catch(error){
       console.debug('Fulfilment cart refresh skipped',error);
     }finally{
