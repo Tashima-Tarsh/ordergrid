@@ -55,11 +55,17 @@ try{
 
   const form=new FormData();
   form.append("file",new Blob([
-    "reference,recipient,phone,line1,city,state,postal_code,amazon_account\n"+
-    "SMOKE-001,Smoke Test,9876543210,1 Test Road,New Delhi,Delhi,110001,smoke-amazon-account\n"
+    "reference,recipient,phone,line1,city,state,postal_code,amazon_user_id,amazon_password,retailer,retailer_login,retailer_password\n"+
+    "SMOKE-001,Smoke Test,9876543210,1 Test Road,New Delhi,Delhi,110001,smoke-amazon-account,amazon-secret,merchant.example,store-user,store-secret\n"
   ],{type:"text/csv"}),"recipients.csv");
   const imported=await json("/api/address-books/import",{method:"POST",body:form});
   assert(imported.body.count===1,"recipient import count was not 1");
+  assert(imported.body.retailerAccountsBound===2,`expected 2 retailer accounts, got ${imported.body.retailerAccountsBound}`);
+  assert(imported.body.credentialsStored===2,`expected 2 protected credentials, got ${imported.body.credentialsStored}`);
+  const control=await json("/api/control-center");
+  assert(control.body.service==="AVAILABLE","control center service was not available");
+  assert(control.body.accounts?.total===2,`control center expected 2 accounts, got ${control.body.accounts?.total}`);
+  assert(control.body.accounts?.credentials_stored===2,`control center expected 2 protected credentials, got ${control.body.accounts?.credentials_stored}`);
   const addressId=imported.body.addressIds?.[0];
   assert(addressId,"recipient import did not return address id");
 
@@ -69,12 +75,20 @@ try{
     body:JSON.stringify({
       name:"Amazon smoke batch",
       paymentRoute:"Corporate virtual card",
-      items:[{
-        productUrl:"https://www.amazon.in/dp/B0TEST1234",
-        quantity:1,
-        addressId,
-        estimatedUnitPriceMinor:99900
-      }]
+      items:[
+        {
+          productUrl:"https://www.amazon.in/dp/B0TEST1234",
+          quantity:1,
+          addressId,
+          estimatedUnitPriceMinor:99900
+        },
+        {
+          productUrl:"https://merchant.example/item/device",
+          quantity:2,
+          addressId,
+          estimatedUnitPriceMinor:49900
+        }
+      ]
     })
   });
   assert(created.body.id,"batch creation did not return id");
@@ -82,25 +96,28 @@ try{
 
   const approved=await json(`/api/batches/${created.body.id}/approve`,{method:"POST"});
   assert(approved.body.ok===true,"batch approval failed");
-  assert(approved.body.baskets===1,"approval did not create one basket");
+  assert(approved.body.baskets===2,`approval did not create two baskets: ${approved.body.baskets}`);
 
   const basketList=await json("/api/bulk-baskets");
-  const basket=basketList.body.baskets?.find(b=>b.batch_id===created.body.id);
-  assert(basket,"approved batch basket not found");
-  assert(basket.status==="READY",`basket expected READY, got ${basket.status}`);
+  const amazonBasket=basketList.body.baskets?.find(b=>b.batch_id===created.body.id&&b.retailer==="amazon-in");
+  const storeBasket=basketList.body.baskets?.find(b=>b.batch_id===created.body.id&&b.retailer==="store:merchant.example");
+  assert(amazonBasket,"approved Amazon basket not found");
+  assert(storeBasket,"approved generic retailer basket not found");
+  assert(amazonBasket.status==="READY",`Amazon basket expected READY, got ${amazonBasket.status}`);
+  assert(storeBasket.status==="READY",`store basket expected READY, got ${storeBasket.status}`);
 
   const queued=await json("/api/bulk-queue/claim",{
     method:"POST",
     headers:{"content-type":"application/json"},
     body:JSON.stringify({limit:10})
   });
-  assert(queued.body.claimed===1,`expected claimed=1, got ${queued.body.claimed}`);
+  assert(queued.body.claimed===2,`expected claimed=2, got ${queued.body.claimed}`);
 
   const afterQueue=await json("/api/bulk-baskets");
-  const queuedBasket=afterQueue.body.baskets.find(b=>b.id===basket.id);
-  assert(queuedBasket?.status==="CLAIMED",`basket expected CLAIMED, got ${queuedBasket?.status}`);
+  assert(afterQueue.body.baskets.find(b=>b.id===amazonBasket.id)?.status==="CLAIMED","Amazon basket was not queued");
+  assert(afterQueue.body.baskets.find(b=>b.id===storeBasket.id)?.status==="CLAIMED","generic retailer basket was not queued");
 
-  const redirect=await fetch(base+`/api/bulk-baskets/${basket.id}/browser-checkout?redirect=1`,{
+  const redirect=await fetch(base+`/api/bulk-baskets/${amazonBasket.id}/browser-checkout?redirect=1`,{
     headers:{cookie},
     redirect:"manual"
   });
@@ -109,6 +126,10 @@ try{
   assert(location.startsWith("https://www.amazon.in/gp/aws/cart/add.html?"),`unexpected Amazon redirect: ${location}`);
   assert(location.includes("ASIN.1=B0TEST1234"),`Amazon redirect missing ASIN: ${location}`);
   assert(location.includes("Quantity.1=1"),`Amazon redirect missing quantity: ${location}`);
+
+  const storeRedirect=await fetch(base+`/api/bulk-baskets/${storeBasket.id}/browser-checkout?redirect=1`,{headers:{cookie},redirect:"manual"});
+  assert([302,303].includes(storeRedirect.status),`generic retailer redirect expected 302/303, got ${storeRedirect.status}`);
+  assert(storeRedirect.headers.get("location")==="https://merchant.example/item/device","generic retailer redirect URL mismatch");
 
   await json("/api/execution-worker/heartbeat",{
     method:"POST",
@@ -120,30 +141,44 @@ try{
     headers:{"content-type":"application/json"},
     body:JSON.stringify({limit:5})
   });
-  assert(assigned.body.assigned===1,`expected worker assigned=1, got ${assigned.body.assigned}`);
+  assert(assigned.body.assigned===2,`expected worker assigned=2, got ${assigned.body.assigned}`);
 
   const queue=await json(`/api/bulk-queue?workerId=${encodeURIComponent(workerId)}`);
-  assert(queue.body.baskets?.some(b=>b.id===basket.id),"assigned basket missing from worker queue");
+  assert(queue.body.baskets?.some(b=>b.id===amazonBasket.id),"assigned Amazon basket missing from worker queue");
+  assert(queue.body.baskets?.some(b=>b.id===storeBasket.id),"assigned generic basket missing from worker queue");
 
-  const opened=await json(`/api/bulk-queue/${basket.id}/open`,{
+  const opened=await json(`/api/bulk-queue/${amazonBasket.id}/open`,{
     method:"POST",
     headers:{"content-type":"application/json"},
     body:JSON.stringify({workerId})
   });
-  assert(opened.body.basketId===basket.id,"worker open returned wrong basket");
+  assert(opened.body.basketId===amazonBasket.id,"worker open returned wrong Amazon basket");
   assert(opened.body.retailer==="amazon-in","worker open did not identify Amazon");
   assert(opened.body.items?.length===1,"worker open did not return one item");
   assert(opened.body.items[0].executionUrl==="https://www.amazon.in/dp/B0TEST1234","worker execution URL mismatch");
+  assert(opened.body.credentials?.login==="smoke-amazon-account","Amazon login was not handed to assigned session");
+  assert(opened.body.credentials?.password==="amazon-secret","Amazon password was not recovered from protected storage");
+
+  const storeOpened=await json(`/api/bulk-queue/${storeBasket.id}/open`,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({workerId})
+  });
+  assert(storeOpened.body.retailer==="store:merchant.example","generic retailer identity mismatch");
+  assert(storeOpened.body.credentials?.login==="store-user","generic retailer login mismatch");
+  assert(storeOpened.body.credentials?.password==="store-secret","generic retailer password mismatch");
 
   console.log("ORDERGRID_SMOKE_OK");
   console.log(JSON.stringify({
     login:200,
     recipientImport:1,
     batchStatus:"APPROVED",
-    basketsCreated:1,
-    queueClaimed:1,
+    basketsCreated:2,
+    queueClaimed:2,
     amazonRedirect:true,
-    workerAssigned:1,
+    genericRetailerRedirect:true,
+    credentialsProtected:2,
+    workerAssigned:2,
     workerOpen:true
   }));
 }catch(error){
