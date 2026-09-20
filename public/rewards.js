@@ -165,7 +165,8 @@
 
   $('#retailerUserForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
-    const button=$('#saveRetailerUser'),form=new FormData(event.currentTarget);
+    const formElement=event.currentTarget;
+    const button=$('#saveRetailerUser'),form=new FormData(formElement);
     button.disabled=true;button.textContent='Saving…';$('#retailerUserError').textContent='';
     try{
       const result=await request('/api/retailer-users',{
@@ -196,7 +197,7 @@
           queued=true;
         }
       }catch{}
-      event.currentTarget.reset();$('#retailerUserDialog').close();
+      formElement.reset();$('#retailerUserDialog').close();
       await load();
       toast(queued?'User saved. OrderGrid is opening the Flipkart login for OTP verification.':'User and address saved. Start the secure browser worker, then click Verify login.');
     }catch(error){$('#retailerUserError').textContent=error.message}
@@ -212,6 +213,7 @@
 
   $('#retailerUsersBulkForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
+    const formElement=event.currentTarget;
     const button=$('#importRetailerUsers'),file=$('#retailerUsersBulkFile')?.files?.[0];
     button.disabled=true;button.textContent='Importing & preparing…';$('#retailerUsersBulkError').textContent='';
     try{
@@ -230,7 +232,7 @@
           queued=Number(prepared.count||0);
         }
       }catch{}
-      event.currentTarget.reset();
+      formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
       await load();
@@ -262,7 +264,8 @@
 
   $('#retailerAccountsForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
-    const button=$('#saveRetailerAccounts'),form=new FormData(event.currentTarget);
+    const formElement=event.currentTarget;
+    const button=$('#saveRetailerAccounts'),form=new FormData(formElement);
     button.disabled=true;button.textContent='Importing…';$('#retailerAccountsError').textContent='';
     try{
       const selectedRetailer=String(form.get('retailer')||'flipkart');
@@ -291,7 +294,7 @@
         $('#retailerAccountImportPreview').textContent=`Imported ${imported} of ${prepared.length} account(s)…`;
       }
       retailer=selectedRetailer;$('#retailerPoolSelector').value=retailer;
-      event.currentTarget.reset();$('#retailerAccountsDialog').close();
+      formElement.reset();$('#retailerAccountsDialog').close();
       await load();toast(imported+' retailer account(s) added to the pool');
     }catch(error){$('#retailerAccountsError').textContent=error.message}
     finally{button.disabled=false;button.textContent='Import accounts'}
