@@ -1,17 +1,17 @@
 import type { Config } from "./config.js";
 
 export type CardholderInput={
-  email:string;
-  mobile:string;
-  firstName:string;
-  lastName:string;
-  gender:"M"|"F"|"O";
-  pan:string;
-  specialDate:string;
+  email?:string;
+  mobile?:string;
+  firstName?:string;
+  lastName?:string;
+  gender?:"M"|"F"|"O";
+  pan?:string;
+  specialDate?:string;
 };
 
 export type IssuedCard={
-  provider:"enkash";
+  provider:string;
   providerCardId:string;
   providerAccountId:string;
   maskedNumber?:string;
@@ -23,8 +23,8 @@ export interface VirtualCardIssuer {
   provider:string;
   configured():boolean;
   testConnection():Promise<void>;
-  createCard(input:{cardholder:CardholderInput;label?:string}):Promise<IssuedCard>;
-  configureCard(input:{providerCardId:string;providerAccountId:string;onlineAllowed:boolean;posAllowed:boolean}):Promise<void>;
+  createCard(input:{cardholder:CardholderInput;label?:string;amountMinor?:number}):Promise<IssuedCard>;
+  configureCard(input:{providerCardId:string;providerAccountId:string;onlineAllowed:boolean;posAllowed:boolean}):Promise<"APPLIED"|"NOT_SUPPORTED">;
   loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}):Promise<void>;
 }
 
@@ -33,7 +33,7 @@ export class DisabledVirtualCardIssuer implements VirtualCardIssuer {
   configured(){return false}
   async testConnection(){throw new Error("card_issuer_not_connected")}
   async createCard():Promise<IssuedCard>{throw new Error("card_issuer_not_connected")}
-  async configureCard():Promise<void>{throw new Error("card_issuer_not_connected")}
+  async configureCard():Promise<"APPLIED"|"NOT_SUPPORTED">{throw new Error("card_issuer_not_connected")}
   async loadCard():Promise<void>{throw new Error("card_issuer_not_connected")}
 }
 
@@ -83,8 +83,9 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
     if(json.response_code!==undefined&&Number(json.response_code)!==0)throw new Error(String(json.response_message||"enkash_card_request_failed").slice(0,180));
     return json.payload??json;
   }
-  async createCard(input:{cardholder:CardholderInput;label?:string}):Promise<IssuedCard>{
+  async createCard(input:{cardholder:CardholderInput;label?:string;amountMinor?:number}):Promise<IssuedCard>{
     const c=input.cardholder;
+    if(!c.email||!c.mobile||!c.firstName||!c.lastName||!c.gender||!c.pan||!c.specialDate)throw new Error("cardholder_profile_required");
     const payload:any=await this.request("/api/v0/partner/enKashCard",{
       companyId:this.config.ENKASH_COMPANY_ID,
       cardAccountId:this.config.ENKASH_CARD_ACCOUNT_ID,
@@ -116,6 +117,7 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
       onlineAllowed:input.onlineAllowed,
       posAllowed:input.posAllowed
     });
+    return "APPLIED" as const;
   }
   async loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}){
     await this.request("/api/v0/partner/enKashCard/balance",{

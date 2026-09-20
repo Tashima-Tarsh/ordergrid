@@ -44,15 +44,16 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
     return {status:"PROGRAMME_REQUIRED" as const,cardId:null};
   }
-  const cardholder=configuredCardholder(config);
-  if(!cardholder){
+  const configuredHolder=configuredCardholder(config);
+  if(state.issuer.provider==="enkash"&&!configuredHolder){
     await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
     return {status:"CARDHOLDER_PROFILE_REQUIRED" as const,cardId:null};
   }
+  const cardholder=configuredHolder??{};
 
   const expectedMinor=Math.max(100,Number(row.amount_minor||0));
   const amountMinor=Math.max(expectedMinor,Math.floor(Number(fundingAmountMinor||expectedMinor)));
-  const issued=await state.issuer.createCard({cardholder,label:`OrderGrid ${row.retailer} ${basketId.slice(0,8)}`});
+  const issued=await state.issuer.createCard({cardholder,label:`OrderGrid ${row.retailer} ${basketId.slice(0,8)}`,amountMinor});
   let cardId:string;
   try{
     const inserted=await db.query(
@@ -79,13 +80,13 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
 
   try{
     try{
-      await state.issuer.configureCard({
+      const controlStatus=await state.issuer.configureCard({
         providerCardId:issued.providerCardId,
         providerAccountId:issued.providerAccountId,
         onlineAllowed:true,
         posAllowed:false
       });
-      await db.query("update virtual_cards set channel_control_status='APPLIED',updated_at=now() where id=$1",[cardId]);
+      await db.query("update virtual_cards set channel_control_status=$1,updated_at=now() where id=$2",[controlStatus,cardId]);
     }catch(error){
       await db.query("update virtual_cards set channel_control_status='FAILED',status='CONTROL_FAILED',updated_at=now() where id=$1",[cardId]);
       await db.query("update checkout_baskets set payment_status='FAILED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
@@ -97,7 +98,7 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
       amountMinor,
       reference:`ordergrid-order-${basketId}`
     });
-    await db.query("update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2",[amountMinor,cardId]);
+    await db.query("update virtual_cards set balance_minor=greatest(balance_minor,$1),status='ACTIVE',updated_at=now() where id=$2",[amountMinor,cardId]);
     await db.query("update checkout_baskets set virtual_card_id=$1,payment_status='CARD_ASSIGNED',updated_at=now() where id=$2 and tenant_id=$3",[cardId,basketId,tenantId]);
     return {status:"CARD_ASSIGNED" as const,cardId};
   }catch(error){

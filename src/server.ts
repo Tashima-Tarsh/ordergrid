@@ -15,11 +15,12 @@ import { decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } fro
 import { createOrderQueue } from "./queue.js";
 import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
-import { disconnectTenantIssuer, loadTenantIssuer, testAndSaveEnKashConnection } from "./issuer-connections.js";
+import { disconnectTenantIssuer, loadTenantIssuer, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
 import { ensureBasketVirtualCard } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
 import { stateCodeForName, validateGstin } from "./gst.js";
+import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 type AutomationPolicy={
@@ -740,7 +741,7 @@ app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.
 
 app.get("/api/issuers",async(req)=>{
   const p=req.principal!;
-  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,connected_at,updated_at from issuer_connections where tenant_id=$1 order by provider",[p.tenantId]);
+  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,capabilities,connected_at,updated_at from issuer_connections where tenant_id=$1 order by bank_name,provider",[p.tenantId]);
   return {issuers:rows};
 });
 app.get("/api/funding-policies",async(req)=>{
@@ -787,34 +788,110 @@ app.delete("/api/funding-policies/:id",async(req,reply)=>{
   return {ok:true};
 });
 
-app.get("/api/cards/provider",async(req)=>{const p=req.principal!,state=await loadTenantIssuer(db,config,p.tenantId);return {provider:state.issuer.provider,configured:state.issuer.configured(),source:state.source,connectionId:state.connectionId,...state.metadata};});
+app.get("/api/cards/banks",async()=>({banks:BANK_VIRTUAL_CARD_PROFILES}));
+
+app.get("/api/cards/provider",async(req)=>{
+  const p=req.principal!,state=await loadTenantIssuer(db,config,p.tenantId);
+  return {provider:state.issuer.provider,configured:state.issuer.configured(),source:state.source,connectionId:state.connectionId,...state.metadata};
+});
+
 app.post("/api/cards/provider/connect",async(req,reply)=>{
   const p=req.principal!;
   if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});
-  const httpsUrl=z.string().url().refine(v=>new URL(v).protocol==="https:",{message:"HTTPS URL required"});
-  const body=z.object({
-    provider:z.literal("enkash"),
+  const publicHttps=z.string().url().refine(value=>{
+    try{
+      const url=new URL(value),host=url.hostname.toLowerCase();
+      if(url.protocol!=="https:"||url.username||url.password)return false;
+      if(host==="localhost"||host.endsWith(".local")||host==="::1"||host.startsWith("127.")||host.startsWith("10.")||host.startsWith("192.168.")||host.startsWith("169.254."))return false;
+      const m=host.match(/^172\.(\d{1,3})\./);if(m&&Number(m[1])>=16&&Number(m[1])<=31)return false;
+      return true;
+    }catch{return false}
+  },{message:"Public HTTPS URL required"});
+  const common={
     bankName:z.string().min(2).max(120),
     programmeName:z.string().min(2).max(120),
-    cardNetwork:z.enum(["VISA","MASTERCARD","RUPAY","AMEX","DINERS","OTHER"]),
-    baseUrl:httpsUrl,tokenUrl:httpsUrl,partnerId:z.string().min(1).max(200),basicAuth:z.string().min(1).max(1000),
+    cardNetwork:z.enum(["VISA","MASTERCARD","RUPAY","AMEX","DINERS","OTHER"])
+  };
+  const enKash=z.object({
+    provider:z.literal("enkash"),...common,
+    baseUrl:publicHttps,tokenUrl:publicHttps,partnerId:z.string().min(1).max(200),basicAuth:z.string().min(1).max(1000),
     username:z.string().min(1).max(200),password:z.string().min(1).max(500),clientId:z.string().min(1).max(200),
     companyId:z.string().min(1).max(200),cardAccountId:z.string().min(1).max(200)
-  }).parse(req.body);
+  });
+  const bankCode=z.enum(["hdfc","axis","icici","sbi","yes","kotak","indusind","idfc","bob","custom"]);
+  const relativePath=z.string().min(1).max(300).refine(v=>v.startsWith("/")&&!v.startsWith("//"),{message:"Relative API path required"});
+  const jsonTemplate=z.string().min(2).max(20000).refine(v=>{try{JSON.parse(v);return true}catch{return false}},{message:"Valid JSON template required"});
+  const generic=z.object({
+    provider:bankCode,...common,
+    integrationMode:z.enum(["PARENT_CARD_API","CUSTOM_BANK_API"]),
+    baseUrl:publicHttps,
+    authMode:z.enum(["OAUTH2_CLIENT_CREDENTIALS","BEARER","BASIC","API_KEY"]),
+    tokenUrl:publicHttps.optional(),
+    clientId:z.string().max(500).optional(),clientSecret:z.string().max(2000).optional(),
+    bearerToken:z.string().max(8000).optional(),username:z.string().max(500).optional(),password:z.string().max(2000).optional(),
+    apiKey:z.string().max(8000).optional(),apiKeyHeader:z.string().regex(/^[A-Za-z0-9-]{1,80}$/).optional(),
+    parentAccountReference:z.string().min(2).max(500),
+    healthPath:relativePath.optional(),
+    createCardPath:relativePath,
+    controlCardPath:relativePath.optional(),
+    loadCardPath:relativePath.optional(),
+    createCardTemplate:jsonTemplate,
+    controlCardTemplate:jsonTemplate.optional(),
+    loadCardTemplate:jsonTemplate.optional(),
+    responseCardIdPath:z.string().min(1).max(300),
+    responseAccountIdPath:z.string().max(300).optional(),
+    responseMaskedNumberPath:z.string().max(300).optional(),
+    responseStatusPath:z.string().max(300).optional(),
+    responseBalancePath:z.string().max(300).optional(),
+    responseBalanceUnit:z.enum(["MINOR","RUPEES"]).default("MINOR")
+  }).superRefine((value,ctx)=>{
+    if(value.authMode==="OAUTH2_CLIENT_CREDENTIALS"&&(!value.tokenUrl||!value.clientId||!value.clientSecret))ctx.addIssue({code:"custom",message:"OAuth token URL, client ID and client secret are required"});
+    if(value.authMode==="BEARER"&&!value.bearerToken)ctx.addIssue({code:"custom",message:"Bearer token is required"});
+    if(value.authMode==="BASIC"&&(!value.username||!value.password))ctx.addIssue({code:"custom",message:"Basic auth username and password are required"});
+    if(value.authMode==="API_KEY"&&!value.apiKey)ctx.addIssue({code:"custom",message:"API key is required"});
+    if(Boolean(value.controlCardPath)!==Boolean(value.controlCardTemplate))ctx.addIssue({code:"custom",message:"Control API path and template must be supplied together"});
+    if(Boolean(value.loadCardPath)!==Boolean(value.loadCardTemplate))ctx.addIssue({code:"custom",message:"Limit/load API path and template must be supplied together"});
+  });
+  const body=z.union([enKash,generic]).parse(req.body);
   try{
-    const saved=await testAndSaveEnKashConnection(db,config,{
+    if(body.provider==="enkash"){
+      const saved=await testAndSaveEnKashConnection(db,config,{
+        tenantId:p.tenantId,userId:p.id,
+        credentials:{ENKASH_BASE_URL:body.baseUrl,ENKASH_TOKEN_URL:body.tokenUrl,ENKASH_PARTNER_ID:body.partnerId,ENKASH_BASIC_AUTH:body.basicAuth,ENKASH_USERNAME:body.username,ENKASH_PASSWORD:body.password,ENKASH_CLIENT_ID:body.clientId,ENKASH_COMPANY_ID:body.companyId,ENKASH_CARD_ACCOUNT_ID:body.cardAccountId},
+        metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork}
+      });
+      await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:"enkash",bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork});
+      return {provider:"enkash",configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork};
+    }
+    const saved=await testAndSaveBankConnection(db,config,{
       tenantId:p.tenantId,userId:p.id,
-      credentials:{ENKASH_BASE_URL:body.baseUrl,ENKASH_TOKEN_URL:body.tokenUrl,ENKASH_PARTNER_ID:body.partnerId,ENKASH_BASIC_AUTH:body.basicAuth,ENKASH_USERNAME:body.username,ENKASH_PASSWORD:body.password,ENKASH_CLIENT_ID:body.clientId,ENKASH_COMPANY_ID:body.companyId,ENKASH_CARD_ACCOUNT_ID:body.cardAccountId},
-      metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork}
+      credentials:{
+        bankCode:body.provider,baseUrl:body.baseUrl,authMode:body.authMode,tokenUrl:body.tokenUrl,
+        clientId:body.clientId,clientSecret:body.clientSecret,bearerToken:body.bearerToken,username:body.username,password:body.password,
+        apiKey:body.apiKey,apiKeyHeader:body.apiKeyHeader,parentAccountReference:body.parentAccountReference,healthPath:body.healthPath,
+        createCardPath:body.createCardPath,controlCardPath:body.controlCardPath,loadCardPath:body.loadCardPath,
+        createCardTemplate:body.createCardTemplate,controlCardTemplate:body.controlCardTemplate,loadCardTemplate:body.loadCardTemplate,
+        responseCardIdPath:body.responseCardIdPath,responseAccountIdPath:body.responseAccountIdPath,responseMaskedNumberPath:body.responseMaskedNumberPath,
+        responseStatusPath:body.responseStatusPath,responseBalancePath:body.responseBalancePath,responseBalanceUnit:body.responseBalanceUnit
+      },
+      metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode}
     });
-    await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:"enkash",bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork});
-    return {provider:saved.issuer.provider,configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork};
+    await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:body.provider,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,integrationMode:body.integrationMode,capabilities:saved.capabilities});
+    return {provider:body.provider,configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode,capabilities:saved.capabilities};
   }catch(error:any){
     req.log.warn({err:String(error.message).slice(0,160)},"issuer connection test failed");
     return reply.code(400).send({error:"issuer_connection_failed",message:String(error.message).slice(0,160)});
   }
 });
-app.delete("/api/cards/provider",async(req,reply)=>{const p=req.principal!;if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});await disconnectTenantIssuer(db,p.tenantId);await audit(db,p.tenantId,p.id,"issuer.disconnected","issuer_connection",null,{provider:"enkash"});return {ok:true};});
+
+app.delete("/api/cards/provider",async(req,reply)=>{
+  const p=req.principal!;
+  if(p.role!=="OWNER")return reply.code(403).send({error:"owner_required"});
+  const provider=z.string().max(40).optional().parse((req.query as any)?.provider);
+  await disconnectTenantIssuer(db,p.tenantId,provider);
+  await audit(db,p.tenantId,p.id,"issuer.disconnected","issuer_connection",null,{provider:provider??"all"});
+  return {ok:true};
+});
 app.get("/api/cards",async(req)=>{
   const p=req.principal!,state=await loadTenantIssuer(db,config,p.tenantId);
   const {rows}=await db.query(`
@@ -844,19 +921,23 @@ app.post("/api/cards",async(req,reply)=>{
     customerId:z.string().uuid().optional(),
     checkoutBasketId:z.string().uuid().optional(),
     cardholder:z.object({
-      email:z.string().email(),
-      mobile:z.string().regex(/^\d{10,15}$/),
-      firstName:z.string().min(1).max(60),
-      lastName:z.string().min(1).max(60),
-      gender:z.enum(["M","F","O"]),
-      pan:z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/),
-      specialDate:z.string().regex(/^\d{2}-\d{2}-\d{4}$/)
-    })
+      email:z.string().email().optional(),
+      mobile:z.string().regex(/^\d{10,15}$/).optional(),
+      firstName:z.string().min(1).max(60).optional(),
+      lastName:z.string().min(1).max(60).optional(),
+      gender:z.enum(["M","F","O"]).optional(),
+      pan:z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
+      specialDate:z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional()
+    }).default({})
   }).parse(req.body);
   const scope=input.merchantScope??{type:"ALL" as const,value:undefined};
   if(scope.type==="RETAILER"&&!scope.value)return reply.code(400).send({error:"merchant_required"});
   const state=await loadTenantIssuer(db,config,p.tenantId,input.issuerConnectionId),cardIssuer=state.issuer;
   if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});
+  if(cardIssuer.provider==="enkash"){
+    const h=input.cardholder;
+    if(!h.email||!h.mobile||!h.firstName||!h.lastName||!h.gender||!h.pan||!h.specialDate)return reply.code(400).send({error:"cardholder_profile_required"});
+  }
 
   let ownerCustomerId=input.customerId??null;
   let ownerBasketId=input.checkoutBasketId??null;
@@ -876,7 +957,7 @@ app.post("/api/cards",async(req,reply)=>{
   const cards:any[]=[],failures:any[]=[];
   for(let i=0;i<input.quantity;i++){
     try{
-      const issued=await cardIssuer.createCard({cardholder:input.cardholder,label:input.label||`OrderGrid card ${i+1}`});
+      const issued=await cardIssuer.createCard({cardholder:input.cardholder,label:input.label||`OrderGrid card ${i+1}`,amountMinor:input.amountMinor});
       const merchantLabel=scope.type==="RETAILER"?`Retailer: ${scope.value}`:"All approved retailers";
       const inserted=await db.query(
         `insert into virtual_cards(
@@ -892,8 +973,8 @@ app.post("/api/cards",async(req,reply)=>{
       );
       const card=inserted.rows[0];
       try{
-        await cardIssuer.configureCard({providerCardId:issued.providerCardId,providerAccountId:issued.providerAccountId,onlineAllowed:true,posAllowed:false});
-        await db.query("update virtual_cards set channel_control_status='APPLIED',updated_at=now() where id=$1",[card.id]);
+        const controlStatus=await cardIssuer.configureCard({providerCardId:issued.providerCardId,providerAccountId:issued.providerAccountId,onlineAllowed:true,posAllowed:false});
+        await db.query("update virtual_cards set channel_control_status=$1,updated_at=now() where id=$2",[controlStatus,card.id]);
       }catch(error:any){
         await db.query("update virtual_cards set channel_control_status='FAILED',status='CONTROL_FAILED',updated_at=now() where id=$1",[card.id]);
         failures.push({index:i+1,providerCardId:issued.providerCardId,error:"issuer_control_failed"});
@@ -903,7 +984,7 @@ app.post("/api/cards",async(req,reply)=>{
       try{
         await cardIssuer.loadCard({providerCardId:issued.providerCardId,providerAccountId:issued.providerAccountId,amountMinor:input.amountMinor,reference:`ordergrid-${card.id}`});
         const loaded=await db.query(
-          "update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2 returning *",
+          "update virtual_cards set balance_minor=greatest(balance_minor,$1),status='ACTIVE',updated_at=now() where id=$2 returning *",
           [input.amountMinor,card.id]
         );
         cards.push(loaded.rows[0]);
@@ -924,9 +1005,10 @@ app.post("/api/cards/:id/load",async(req,reply)=>{
   const id=z.string().uuid().parse((req.params as any).id),body=z.object({amountMinor:z.number().int().min(100)}).parse(req.body);
   const {rows}=await db.query("select id,provider_card_id,provider_account_id,issuer_connection_id,channel_control_status from virtual_cards where id=$1 and tenant_id=$2",[id,p.tenantId]);
   if(!rows[0])return reply.code(404).send({error:"card_not_found"});
-  if(rows[0].channel_control_status!=="APPLIED")return reply.code(409).send({error:"card_controls_not_applied"});
+  if(!["APPLIED","NOT_SUPPORTED"].includes(rows[0].channel_control_status))return reply.code(409).send({error:"card_controls_not_ready"});
   const state=await loadTenantIssuer(db,config,p.tenantId,rows[0].issuer_connection_id),cardIssuer=state.issuer;
   if(!cardIssuer.configured())return reply.code(409).send({error:"card_issuer_not_connected"});
+  if(state.metadata.capabilities?.loadCard===false)return reply.code(409).send({error:"bank_limit_update_not_supported"});
   await cardIssuer.loadCard({providerCardId:rows[0].provider_card_id,providerAccountId:rows[0].provider_account_id,amountMinor:body.amountMinor,reference:`ordergrid-load-${id}-${Date.now()}`});
   const updated=await db.query("update virtual_cards set balance_minor=balance_minor+$1,status='ACTIVE',updated_at=now() where id=$2 returning *",[body.amountMinor,id]);
   await audit(db,p.tenantId,p.id,"virtual_card.loaded","virtual_card",id,{amountMinor:body.amountMinor});
