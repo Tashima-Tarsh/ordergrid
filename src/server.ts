@@ -356,7 +356,13 @@ app.put("/api/automation/policy",async(req,reply)=>{
      body.maxPriceIncreasePercent,body.maxOrderValueMinor,body.maxBatchVariancePercent,body.priceBreachAction,body.runMode,p.id]
   );
   await audit(db,p.tenantId,p.id,"automation.policy_updated","automation_policy",p.tenantId,body);
-  return {localPolicy:rows[0],policy:await getAutomationPolicy(p.tenantId)};
+  const policy=await getAutomationPolicy(p.tenantId);
+  let trigger={mode:policy.run_mode,fired:false,claimed:0,ids:[] as string[]};
+  if(policy.automation_enabled&&policy.run_mode==="CONTINUOUS"){
+    const result=await claimReadyBaskets(p.tenantId,p.id,Number(policy.max_active_orders||8),policy);
+    if(!("error" in result))trigger={mode:policy.run_mode,fired:true,claimed:result.claimed,ids:result.ids};
+  }
+  return {localPolicy:rows[0],policy,trigger};
 });
 
 app.get("/api/control-center",async(req)=>{
