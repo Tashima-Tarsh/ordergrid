@@ -144,44 +144,67 @@ app.get("/api/automation",async()=>{
   const inProgress=basketsNow.filter(b=>b.status==="OPENED").length;
   const needsAttention=basketsNow.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length;
   const confirmed=basketsNow.filter(b=>b.status==="CONFIRMED").length;
+  const priceApproved=basketsNow.filter(b=>(b as any).commercial_status==="APPROVED").length;
+  const priceReview=basketsNow.filter(b=>(b as any).commercial_status==="REVIEW_REQUIRED").length;
   return {
     policy,
-    summary:{ready,inProgress,needsAttention,confirmed},
+    localPolicy:policy,
+    summary:{ready,inProgress,needsAttention,confirmed,priceApproved,priceReview},
     workflows:[
       {id:"accounts",name:"Account authentication",status:needsAttention?"NEEDS_ATTENTION":accounts.length?"ACTIVE":"READY",detail:accounts.length+" retailer accounts in scope"},
       {id:"preparation",name:"Order validation & preparation",status:ready?"ACTIVE":basketsNow.length?"READY":"IDLE",detail:ready+" orders prepared for next action"},
+      {id:"commercial",name:"Price & commercial validation",status:priceReview?"NEEDS_ATTENTION":priceApproved?"ACTIVE":"READY",detail:priceApproved+" price checks approved · "+priceReview+" need review"},
       {id:"cards",name:"Virtual-card assignment",status:basketsNow.length?"READY":"READY",detail:"One card per corporate-card order"},
       {id:"checkout",name:"Checkout continuation",status:needsAttention?"NEEDS_ATTENTION":inProgress?"ACTIVE":ready?"READY":"IDLE",detail:inProgress+" in progress · "+ready+" ready"},
       {id:"confirmation",name:"Retailer confirmation",status:confirmed?"ACTIVE":"READY",detail:confirmed+" retailer-confirmed orders"},
-      {id:"batch",name:"Batch protection",status:basketsNow.length?"ACTIVE":"READY",detail:"Pause threshold "+policy.failure_pause_percent+"%"},
+      {id:"batch",name:"Batch protection",status:basketsNow.length?"ACTIVE":"READY",detail:"Failure pause "+policy.failure_pause_percent+"% · batch variance "+policy.max_batch_variance_percent+"%"},
       {id:"reconciliation",name:"Order reconciliation",status:confirmed?"ACTIVE":"READY",detail:confirmed+" confirmed orders ready for reconciliation"}
     ],
     mandatoryRules:[
       {name:"One order, one virtual card",status:"ENFORCED"},
+      {name:"Final payable amount checked before final retailer submission",status:"ENFORCED"},
       {name:"Retailer-confirmed completion evidence",status:"ENFORCED"},
       {name:"Protected verification is never bypassed",status:"ENFORCED"}
     ],
-    canEdit:true
+    canEdit:true,canRelaxChildren:true
   };
 });
+app.get("/api/automation/preflight",async()=>{
+  const policy=activeAutomationPolicy(),basketsNow=activeBaskets();
+  return {
+    eligibleOrders:basketsNow.filter(b=>b.status==="READY").length,
+    needsAttention:basketsNow.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length,
+    retailerAccounts:[...accountRefs.entries()].filter(([id])=>activeAddresses().some(a=>a.id===id)).reduce((n,[,refs])=>n+refs.size,0),
+    authenticatedAccounts:basketsNow.filter(b=>b.auth_status==="READY").length,
+    credentialReadyAccounts:[...credentialVault.keys()].filter(key=>activeAddresses().some(a=>key.startsWith(a.id+":"))).length,
+    pricedLines:activeTasks().filter(t=>t.amount_minor>0).length,
+    approvedExposureMinor:activeTasks().filter(t=>["REQUIRES_ACTION","READY","CLAIMED","OPENED"].includes(t.status)).reduce((n,t)=>n+t.amount_minor,0),
+    cardProgrammeConnected:false,
+    policy
+  };
+});
+app.post("/api/automation/start",async()=>{
+  const policy=activeAutomationPolicy();policy.automation_enabled=true;policy.updated_at=new Date().toISOString();
+  const effectiveLimit=policy.max_active_orders;let claimed=0;
+  for(const basket of activeBaskets().filter(b=>b.status==="READY").slice(0,effectiveLimit)){basket.status="CLAIMED";basket.expires_at=Date.now()+20*60_000;claimed++;}
+  return {started:true,claimed,policy};
+});
+app.post("/api/automation/pause",async()=>{const policy=activeAutomationPolicy();policy.automation_enabled=false;policy.updated_at=new Date().toISOString();return {paused:true};});
 app.put("/api/automation/policy",async(req)=>{
   const body=z.object({
-    automationEnabled:z.boolean(),
-    autoAssignVirtualCard:z.boolean(),
-    autoContinueCheckout:z.boolean(),
-    maxActiveOrders:z.number().int().min(1).max(50),
-    failurePausePercent:z.number().min(0).max(100)
+    automationEnabled:z.boolean(),autoAssignVirtualCard:z.boolean(),autoContinueCheckout:z.boolean(),
+    maxActiveOrders:z.number().int().min(1).max(50),failurePausePercent:z.number().min(0).max(100),
+    maxPriceIncreasePercent:z.number().min(0).max(100),maxOrderValueMinor:z.number().int().min(0),
+    maxBatchVariancePercent:z.number().min(0).max(100),priceBreachAction:z.enum(["PAUSE_ORDER","PAUSE_BATCH"]),
+    runMode:z.enum(["MANUAL","CONTINUOUS"]),inheritParentPolicy:z.boolean(),allowChildPolicyRelaxation:z.boolean().default(false)
   }).parse(req.body);
-  const policy={
-    automation_enabled:body.automationEnabled,
-    auto_assign_virtual_card:body.autoAssignVirtualCard,
-    auto_continue_checkout:body.autoContinueCheckout,
-    max_active_orders:body.maxActiveOrders,
-    failure_pause_percent:body.failurePausePercent,
-    updated_at:new Date().toISOString()
+  const policy:DemoAutomationPolicy={
+    automation_enabled:body.automationEnabled,auto_assign_virtual_card:body.autoAssignVirtualCard,auto_continue_checkout:body.autoContinueCheckout,
+    max_active_orders:body.maxActiveOrders,failure_pause_percent:body.failurePausePercent,max_price_increase_percent:body.maxPriceIncreasePercent,
+    max_order_value_minor:body.maxOrderValueMinor,max_batch_variance_percent:body.maxBatchVariancePercent,price_breach_action:body.priceBreachAction,
+    run_mode:body.runMode,inherit_parent_policy:body.inheritParentPolicy,allow_child_policy_relaxation:body.allowChildPolicyRelaxation,updated_at:new Date().toISOString()
   };
-  automationPolicies.set(activeDealerId,policy);
-  return {policy};
+  automationPolicies.set(activeDealerId,policy);return {policy,localPolicy:policy};
 });
 
 app.get("/api/control-center",async()=>{
