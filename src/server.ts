@@ -185,6 +185,16 @@ app.addHook("preHandler",async(req,reply)=>{
 });
 
 app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),queueMode:jobs?"bullmq":"direct"}});
+app.get("/api/worker-bootstrap",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  reply.header("cache-control","no-store, private");
+  return {
+    workerToken:config.WORKER_API_TOKEN,
+    ordergridUrl:config.APP_ORIGIN,
+    autoStartSupported:true
+  };
+});
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
   const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);

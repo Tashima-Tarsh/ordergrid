@@ -38,6 +38,20 @@ OrderGrid combines this reference with the retailer identity to select a persist
 
 ## Start the worker
 
+For a normal Windows workstation, sign in to OrderGrid, open **Retailer users**, click **Install / start worker**, download `ordergrid-worker.ps1`, and run it once. The installer:
+
+- verifies Node.js and Chrome;
+- signs in to OrderGrid with the authorized worker user;
+- obtains the machine token through the authenticated bootstrap endpoint;
+- protects the local password/token with Windows user encryption;
+- installs the worker under `%LOCALAPPDATA%\OrderGrid`;
+- starts it immediately;
+- registers it to start automatically when that Windows user signs in.
+
+Queued Flipkart session checks are picked up automatically when the worker comes online.
+
+For source/developer operation:
+
 ```powershell
 $env:ORDERGRID_URL = "https://your-ordergrid.example"
 npm run agent

@@ -144,13 +144,14 @@
   $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
     const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Preparing…';
     try{
-      const workerState=await request('/api/execution-workers');
-      if(!(workerState.workers||[]).length)throw new Error('Start the OrderGrid secure browser worker first, then click Prepare sessions.');
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:20})
       });
-      toast(result.count+' account session(s) queued. Complete retailer OTP/sign-in in the OrderGrid secure browser window; status updates automatically.');
+      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      toast((workerState.workers||[]).length
+        ?result.count+' account session(s) queued. Complete retailer OTP/sign-in in the OrderGrid secure browser window.'
+        :result.count+' account session(s) queued. Start the secure browser worker; it will pick them up automatically.');
       await load();
     }catch(error){alert(error.message)}
     finally{button.disabled=false;button.textContent=previous}
@@ -188,18 +189,19 @@
       });
       let queued=false;
       try{
-        const workerState=await request('/api/execution-workers');
-        if((workerState.workers||[]).length){
-          await request('/api/retailer-accounts/prepare',{
-            method:'POST',headers:{'content-type':'application/json'},
-            body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:20})
-          });
-          queued=true;
-        }
+        const prepared=await request('/api/retailer-accounts/prepare',{
+          method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:20})
+        });
+        queued=Number(prepared.count||0)>0;
       }catch{}
+      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      const online=(workerState.workers||[]).length>0;
       formElement.reset();$('#retailerUserDialog').close();
       await load();
-      toast(queued?'User saved. OrderGrid is opening the Flipkart login for OTP verification.':'User and address saved. Start the secure browser worker, then click Verify login.');
+      toast(queued
+        ?(online?'User saved. Flipkart login verification is queued and will open in the secure browser.':'User saved. Login verification is queued; start the secure browser worker and it will open Flipkart automatically.')
+        :'User saved, but login preparation could not be queued. Use Prepare all sessions.');
     }catch(error){$('#retailerUserError').textContent=error.message}
     finally{button.disabled=false;button.textContent='Save user & prepare login'}
   });
@@ -223,8 +225,7 @@
       let queued=0;
       const ids=result.retailerAccountIds||[];
       try{
-        const workerState=await request('/api/execution-workers');
-        if((workerState.workers||[]).length&&ids.length){
+        if(ids.length){
           const prepared=await request('/api/retailer-accounts/prepare',{
             method:'POST',headers:{'content-type':'application/json'},
             body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:20})
@@ -232,13 +233,15 @@
           queued=Number(prepared.count||0);
         }
       }catch{}
+      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      const online=(workerState.workers||[]).length>0;
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
       await load();
       toast(queued
-        ?result.count+' users imported · '+queued+' Flipkart session(s) queued for OTP verification'
-        :result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) bound. Start the secure browser worker to verify sessions.');
+        ?result.count+' users imported · '+queued+' Flipkart session(s) queued'+(online?'':' · start the secure browser worker to begin verification')
+        :result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) bound. Use Prepare all sessions.');
     }catch(error){$('#retailerUsersBulkError').textContent=error.message}
     finally{button.disabled=false;button.textContent='Import users & prepare sessions'}
   });
@@ -307,13 +310,14 @@
     if(verify){
       verify.disabled=true;const previous=verify.textContent;verify.textContent='Queuing…';
       try{
-        const workerState=await request('/api/execution-workers');
-        if(!(workerState.workers||[]).length)throw new Error('Start the OrderGrid secure browser worker first.');
         await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:20})
         });
-        await load();toast('Login verification queued. Complete Flipkart OTP/sign-in in the OrderGrid secure browser.');
+        const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+        await load();toast((workerState.workers||[]).length
+          ?'Login verification queued. Complete Flipkart OTP/sign-in in the OrderGrid secure browser.'
+          :'Login verification queued. Start the secure browser worker; it will open this Flipkart session automatically.');
       }catch(error){alert(error.message)}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
       return;
