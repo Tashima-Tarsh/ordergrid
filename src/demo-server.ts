@@ -36,6 +36,15 @@ const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===active
 const activeBatches=()=>batches.filter(b=>b.tenant_id===activeDealerId);
 const activeTasks=()=>tasks.filter(t=>t.tenant_id===activeDealerId);
 const activeBaskets=()=>baskets.filter(b=>b.tenant_id===activeDealerId);
+const automationPolicies=new Map<string,{automation_enabled:boolean;auto_assign_virtual_card:boolean;auto_continue_checkout:boolean;max_active_orders:number;failure_pause_percent:number;updated_at:string}>();
+function activeAutomationPolicy(){
+  let policy=automationPolicies.get(activeDealerId);
+  if(!policy){
+    policy={automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,updated_at:new Date().toISOString()};
+    automationPolicies.set(activeDealerId,policy);
+  }
+  return policy;
+}
 const credentialKey=randomBytes(32).toString("base64");
 const accountRefs=new Map<string,Map<string,string>>();
 const credentialVault=new Map<string,{ciphertext:Buffer;iv:Buffer;authTag:Buffer}>();
