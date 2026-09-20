@@ -9,7 +9,8 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { verifiedRetailerUrl } from "./retailers.js";
+import { retailerForProductUrl, verifiedRetailerUrl } from "./retailers.js";
+import { decryptJson, encryptJson } from "./security.js";
 
 const port=Number(process.env.PORT??3000);
 const email=(process.env.DEMO_EMAIL??"demo@ordergrid.in").toLowerCase();
@@ -24,6 +25,29 @@ type Basket={id:string;batch_id:string;status:string;retailer:string;account_ref
 type Worker={id:string;hostname:string;mode:"BULK";last_seen:number};
 const addresses=new Map<string,Address>(),items:Item[]=[],batches:Batch[]=[],tasks:Task[]=[],baskets:Basket[]=[],workers=new Map<string,Worker>();
 const addressesByReference=(reference:string)=>[...addresses.values()].find(a=>(a.reference||a.id)===reference);
+const credentialKey=randomBytes(32).toString("base64");
+const accountRefs=new Map<string,Map<string,string>>();
+const credentialVault=new Map<string,{ciphertext:Buffer;iv:Buffer;authTag:Buffer}>();
+const knownAccountColumns:Record<string,string>={
+  amazon_account:"amazon-in",amazon_user_id:"amazon-in",amazon_login:"amazon-in",
+  flipkart_account:"flipkart",flipkart_user_id:"flipkart",flipkart_login:"flipkart",
+  myntra_account:"myntra",myntra_user_id:"myntra",myntra_login:"myntra",
+  ajio_account:"ajio",ajio_user_id:"ajio",ajio_login:"ajio",
+  tatacliq_account:"tatacliq",tata_cliq_account:"tatacliq",tatacliq_user_id:"tatacliq",
+  meesho_account:"meesho",meesho_user_id:"meesho",
+  nykaa_account:"nykaa",nykaa_user_id:"nykaa",
+  jiomart_account:"jiomart",jiomart_user_id:"jiomart"
+};
+const knownPasswordColumns:Record<string,string[]>={
+  "amazon-in":["amazon_password","amazon_in_password"],flipkart:["flipkart_password"],myntra:["myntra_password"],
+  ajio:["ajio_password"],tatacliq:["tatacliq_password","tata_cliq_password"],meesho:["meesho_password"],nykaa:["nykaa_password"],jiomart:["jiomart_password"]
+};
+function importedRetailer(value:string){
+  const raw=value.trim().toLowerCase();if(!raw)return null;
+  const aliases:Record<string,string>={amazon:"amazon-in","amazon.in":"amazon-in",flipkart:"flipkart","flipkart.com":"flipkart",myntra:"myntra","myntra.com":"myntra",ajio:"ajio","ajio.com":"ajio",tatacliq:"tatacliq","tatacliq.com":"tatacliq",meesho:"meesho","meesho.com":"meesho",nykaa:"nykaa","nykaa.com":"nykaa",jiomart:"jiomart","jiomart.com":"jiomart"};
+  if(aliases[raw])return aliases[raw]!;
+  try{return retailerForProductUrl(/^https:\/\//i.test(raw)?raw:`https://${raw.replace(/^www\./,"")}/`).id}catch{return null}
+}
 const app=Fastify({logger:true,trustProxy:true});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:120,timeWindow:"1 minute"});
@@ -43,6 +67,17 @@ app.get("/api/cards",async()=>({cards:[],provider:"disabled",configured:false,so
 app.post("/api/cards/provider/connect",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only",message:"Issuer connection is available on the production OrderGrid API."}));
 app.delete("/api/cards/provider",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only"}));
 app.get("/api/runtime",async()=>({api:"OrderGrid API",mode:"showroom-real-browser-test",checkoutEngine:{id:"ordergrid-checkout-engine",status:"API_ONLINE",capacity:8,sessionModel:"isolated-local-browser-profiles"},database:"in-memory-showroom"}));
+app.get("/api/control-center",async()=>{
+  const accountEntries=[...accountRefs.entries()].flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
+  const retailerCounts=new Map<string,number>();for(const x of accountEntries)retailerCounts.set(x.retailer,(retailerCounts.get(x.retailer)||0)+1);
+  return {
+    service:"AVAILABLE",customers:addresses.size,
+    accounts:{total:accountEntries.length,credentials_stored:credentialVault.size,authenticated:baskets.filter(b=>b.auth_status==="READY").length,needs_attention:baskets.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length},
+    orders:{total:baskets.length,ready:baskets.filter(b=>["READY","CLAIMED"].includes(b.status)).length,in_progress:baskets.filter(b=>b.status==="OPENED").length,needs_attention:baskets.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length,confirmed:baskets.filter(b=>b.status==="CONFIRMED").length,cards_bound:0,cards_needed:baskets.filter(b=>b.payment_route==="Corporate virtual card"&&b.status!=="CONFIRMED").length},
+    cards:{total:0,active:0,programme_connected:false},
+    retailers:[...retailerCounts].map(([retailer,accounts])=>({retailer,accounts})).sort((a,b)=>b.accounts-a.accounts)
+  };
+});
 app.post("/api/execution-worker/heartbeat",async(req)=>{const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.literal("BULK").default("BULK")}).parse(req.body??{});workers.set(body.workerId,{id:body.workerId,hostname:body.hostname||"OrderGrid Windows Worker",mode:"BULK",last_seen:Date.now()});return {ok:true};});
 app.get("/api/execution-workers",async()=>({workers:[...workers.values()].filter(w=>Date.now()-w.last_seen<30_000).map(w=>({id:w.id,hostname:w.hostname,mode:w.mode,last_seen:new Date(w.last_seen).toISOString(),capacity:8,kind:"LOCAL_BROWSER"}))}));
 app.get("/api/recipients",async()=>({recipients:[...addresses.values()].map(a=>({id:a.id,customer_reference:a.reference||a.id,recipient:a.recipient,phone:a.phone,city:a.city,state:a.state,postal_code:a.postal_code,retailer_accounts:{amazon:a.amazon_account||null,flipkart:a.flipkart_account||null}}))}));
@@ -50,35 +85,66 @@ app.get("/api/bulk-baskets",async()=>{for(const b of baskets){if(["CLAIMED","OPE
 app.post("/api/bulk-queue/claim",async(req)=>{const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});let claimed=0;for(const basket of baskets.filter(b=>b.status==="READY").slice(0,body.limit)){basket.status="CLAIMED";basket.execution_worker_id=undefined;basket.expires_at=Date.now()+20*60_000;basket.auth_status="QUEUED";basket.failure_code=undefined;basket.failure_message="Queued for OrderGrid Checkout Engine";const address=addressesByReference(basket.customer_reference);for(const task of tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id)){task.status="CLAIMED";task.failure_code=undefined;task.failure_message="Queued for OrderGrid Checkout Engine"}claimed++;}return {claimed,queued:baskets.filter(b=>b.status==="CLAIMED").length};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),worker=workers.get(workerId);if(!worker||Date.now()-worker.last_seen>=30_000)return reply.code(409).send({error:"execution_worker_not_online"});let assigned=0;for(const basket of baskets.filter(b=>b.status==="CLAIMED"&&!b.execution_worker_id&&(!b.expires_at||b.expires_at>Date.now())).slice(0,body.limit)){basket.execution_worker_id=workerId;assigned++;}return {assigned};});
 app.get("/api/bulk-queue",async(req,reply)=>{const workerId=String((req.query as any)?.workerId||"");if(workerId.length<8)return reply.code(400).send({error:"worker_id_required"});for(const b of baskets){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets:baskets.filter(b=>b.execution_worker_id===workerId&&["CLAIMED","OPENED","REQUIRES_ACTION"].includes(b.status)).map(b=>({...b,customer_id:b.customer_reference,retailer_account_id:b.customer_reference+":"+b.retailer,profile_key:b.customer_reference+":"+b.retailer}))};});
-app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body),basket=baskets.find(b=>b.id===id);if(!basket||basket.execution_worker_id!==body.workerId||!["CLAIMED","OPENED","REQUIRES_ACTION"].includes(basket.status))return reply.code(409).send({error:"basket_unavailable_or_expired"});basket.status="OPENED";basket.opened_at=basket.opened_at||Date.now();basket.expires_at=Date.now()+20*60_000;basket.failure_code=undefined;basket.failure_message=undefined;basket.auth_status="SESSION ACTIVE";const address=addressesByReference(basket.customer_reference);if(!address)return reply.code(404).send({error:"recipient_not_found"});const basketTasks=tasks.filter(t=>t.batch_id===basket.batch_id&&t.address_id===address.id&&t.retailer===basket.retailer);reply.header("cache-control","no-store");return {basketId:id,customerId:basket.customer_reference,customerReference:basket.customer_reference,retailerAccountId:basket.customer_reference+":"+basket.retailer,profileKey:basket.customer_reference+":"+basket.retailer,accountReference:basket.account_reference,retailer:basket.retailer,authStatus:basket.auth_status,paymentRoute:basket.payment_route,address:{recipient:address.recipient,line1:address.line1,line2:address.line2||null,city:address.city,state:address.state,postalCode:address.postal_code,country:address.country},items:basketTasks.map(t=>({purchase_order_id:t.id,product_url:t.product_url,title:t.title,requested_quantity:t.requested_quantity,amount_minor:t.amount_minor,executionUrl:verifiedRetailerUrl(t.product_url)}))};});
+app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body),basket=baskets.find(b=>b.id===id);if(!basket||basket.execution_worker_id!==body.workerId||!["CLAIMED","OPENED","REQUIRES_ACTION"].includes(basket.status))return reply.code(409).send({error:"basket_unavailable_or_expired"});basket.status="OPENED";basket.opened_at=basket.opened_at||Date.now();basket.expires_at=Date.now()+20*60_000;basket.failure_code=undefined;basket.failure_message=undefined;basket.auth_status="SESSION ACTIVE";const address=addressesByReference(basket.customer_reference);if(!address)return reply.code(404).send({error:"recipient_not_found"});const basketTasks=tasks.filter(t=>t.batch_id===basket.batch_id&&t.address_id===address.id&&t.retailer===basket.retailer);let credentials:null|{login:string;password:string}=null;const stored=credentialVault.get(address.id+":"+basket.retailer);if(stored){const plain=decryptJson(stored,credentialKey) as {password?:string};if(plain.password)credentials={login:basket.account_reference,password:String(plain.password)}}reply.header("cache-control","no-store");return {basketId:id,customerId:basket.customer_reference,customerReference:basket.customer_reference,retailerAccountId:basket.customer_reference+":"+basket.retailer,profileKey:basket.customer_reference+":"+basket.retailer,accountReference:basket.account_reference,retailer:basket.retailer,authStatus:basket.auth_status,credentials,paymentRoute:basket.payment_route,address:{recipient:address.recipient,line1:address.line1,line2:address.line2||null,city:address.city,state:address.state,postalCode:address.postal_code,country:address.country},items:basketTasks.map(t=>({purchase_order_id:t.id,product_url:t.product_url,title:t.title,requested_quantity:t.requested_quantity,amount_minor:t.amount_minor,executionUrl:verifiedRetailerUrl(t.product_url)}))};});
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body),basket=baskets.find(b=>b.id===id);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});basket.status=body.state==="RUNNING"?"OPENED":body.state==="CHALLENGE"?"REQUIRES_ACTION":"FAILED";basket.failure_code=body.code;basket.failure_message=body.message;basket.auth_status=body.state==="CHALLENGE"?(body.code?.includes("LOGIN")?"AUTH REQUIRED":"ACTION REQUIRED"):body.state;for(const task of tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference)?.id)){task.status=basket.status;task.failure_code=body.code;task.failure_message=body.message||""}return {id,status:basket.status};});
 app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),retailerOrderId:z.string().min(3).max(80)}).parse(req.body),basket=baskets.find(b=>b.id===id);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});const orderId=body.retailerOrderId.trim();if(!(/\b\d{3}-\d{7}-\d{7}\b/.test(orderId)||/^OD[0-9A-Z]{8,}$/i.test(orderId)||/^[A-Z0-9][A-Z0-9._\/-]{4,79}$/i.test(orderId)))return reply.code(400).send({error:"invalid_retailer_order_id"});basket.status="CONFIRMED";basket.retailer_order_id=orderId;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;for(const task of tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference)?.id)){task.status="CONFIRMED";task.retailer_order_id=orderId;task.failure_code=undefined;task.failure_message=""}const batch=batches.find(b=>b.id===basket.batch_id);if(batch){const related=baskets.filter(b=>b.batch_id===batch.id);batch.status=related.every(b=>b.status==="CONFIRMED")?"COMPLETE":"PARTIAL"}return {id,status:"CONFIRMED",retailerOrderId:orderId};});
 app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
   const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id);
   if(!basket)return reply.code(404).send({error:"basket_not_found"});
-  if(basket.retailer!=="amazon-in")return reply.code(409).send({error:"browser_checkout_not_supported"});
   const address=addressesByReference(basket.customer_reference);
-  const basketTasks=tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer==="amazon-in"&&t.address_id===address?.id);
-  const parts:string[]=[];
-  let n=1;
-  for(const task of basketTasks){
-    const url=new URL(task.product_url);
-    const match=url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
-    const asin=(match?.[1]||url.searchParams.get("asin")||"").toUpperCase();
-    if(!/^[A-Z0-9]{10}$/.test(asin))continue;
-    parts.push("ASIN."+n+"="+encodeURIComponent(asin));
-    parts.push("Quantity."+n+"="+Math.max(1,Number(task.requested_quantity||1)));
-    n++;
+  const basketTasks=tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id);
+  if(!basketTasks.length)return reply.code(409).send({error:"basket_has_no_items"});
+  let checkoutUrl=verifiedRetailerUrl(basketTasks[0].product_url);
+  if(basket.retailer==="amazon-in"){
+    const parts:string[]=[];let n=1;
+    for(const task of basketTasks){
+      const url=new URL(task.product_url);const match=url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+      const asin=(match?.[1]||url.searchParams.get("asin")||"").toUpperCase();if(!/^[A-Z0-9]{10}$/.test(asin))continue;
+      parts.push("ASIN."+n+"="+encodeURIComponent(asin));parts.push("Quantity."+n+"="+Math.max(1,Number(task.requested_quantity||1)));n++;
+    }
+    if(parts.length)checkoutUrl="https://www.amazon.in/gp/aws/cart/add.html?"+parts.join("&");
   }
-  if(!parts.length)return reply.code(422).send({error:"amazon_asin_not_found",message:"Could not derive an Amazon ASIN from this product URL."});
-  const checkoutUrl="https://www.amazon.in/gp/aws/cart/add.html?"+parts.join("&");
   if(String((req.query as any)?.redirect||"")==="1")return reply.redirect(checkoutUrl);
-  return {checkoutUrl,basketId:basket.id,customerReference:basket.customer_reference,accountReference:basket.account_reference,items:n-1,note:"This opens Amazon in the current browser profile. Amazon controls login, address, payment, OTP/CAPTCHA/3DS and final order submission."};
+  return {checkoutUrl,basketId:basket.id,retailer:basket.retailer};
 });
 app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id);if(!basket)return reply.code(404).send({error:"basket_not_found"});basket.status="READY";basket.execution_worker_id=undefined;basket.expires_at=undefined;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;return {id,status:basket.status};});
 
-app.post("/api/address-books/import",async(req,reply)=>{const file=await req.file();if(!file)return reply.code(400).send({error:"file_required"});const buffer=await file.toBuffer();let rows:string[][]=[];if(file.filename.toLowerCase().endsWith(".xlsx")){const book=new ExcelJS.Workbook();await book.xlsx.load(buffer as any);const sheet=book.worksheets[0];if(!sheet)return reply.code(400).send({error:"empty_workbook"});sheet.eachRow(r=>rows.push((r.values as any[]).slice(1).map(v=>String(v??"").trim())));}else rows=buffer.toString("utf8").replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean).map(line=>line.split(",").map(v=>v.trim().replace(/^"|"$/g,"")));
-  if(rows.length<2)return reply.code(400).send({error:"no_address_rows"});const headers=rows[0]!.map(h=>h.toLowerCase().replace(/[ _-]+/g,"_"));for(const h of ["recipient","phone","line1","city","state","postal_code"])if(!headers.includes(h))return reply.code(400).send({error:"missing_column",column:h});const val=(row:string[],name:string)=>row[headers.indexOf(name)]??"";const ids:string[]=[];for(const row of rows.slice(1)){if(!row.some(Boolean))continue;const id=randomUUID();addresses.set(id,{id,recipient:val(row,"recipient"),phone:val(row,"phone"),line1:val(row,"line1"),line2:val(row,"line2"),city:val(row,"city"),state:val(row,"state"),postal_code:val(row,"postal_code"),country:val(row,"country")||"IN",reference:val(row,"reference")||"CUST-"+String(addresses.size+1).padStart(3,"0"),amazon_account:val(row,"amazon_account"),flipkart_account:val(row,"flipkart_account")});ids.push(id);}return reply.code(201).send({addressBook:{id:randomUUID(),name:file.filename},addressIds:ids,count:ids.length});});
+app.post("/api/address-books/import",async(req,reply)=>{
+  const file=await req.file();if(!file)return reply.code(400).send({error:"file_required"});
+  const buffer=await file.toBuffer();let rows:string[][]=[];
+  if(file.filename.toLowerCase().endsWith(".xlsx")){
+    const book=new ExcelJS.Workbook();await book.xlsx.load(buffer as any);const sheet=book.worksheets[0];
+    if(!sheet)return reply.code(400).send({error:"empty_workbook"});
+    sheet.eachRow(r=>rows.push((r.values as any[]).slice(1).map(v=>String(v??"").trim())));
+  }else rows=buffer.toString("utf8").replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean).map(line=>line.split(",").map(v=>v.trim().replace(/^"|"$/g,"")));
+  if(rows.length<2)return reply.code(400).send({error:"no_address_rows"});
+  const headers=rows[0]!.map(h=>h.toLowerCase().replace(/[ _-]+/g,"_"));
+  for(const h of ["recipient","phone","line1","city","state","postal_code"])if(!headers.includes(h))return reply.code(400).send({error:"missing_column",column:h});
+  const val=(row:string[],name:string)=>{const i=headers.indexOf(name);return i<0?"":row[i]??""};
+  const ids:string[]=[];let retailerAccountsBound=0,credentialsStored=0;
+  for(const row of rows.slice(1)){
+    if(!row.some(Boolean))continue;
+    const id=randomUUID();
+    const address:Address={id,recipient:val(row,"recipient"),phone:val(row,"phone"),line1:val(row,"line1"),line2:val(row,"line2"),city:val(row,"city"),state:val(row,"state"),postal_code:val(row,"postal_code"),country:val(row,"country")||"IN",reference:val(row,"reference")||"CUST-"+String(addresses.size+1).padStart(3,"0"),amazon_account:val(row,"amazon_account")||val(row,"amazon_user_id")||val(row,"amazon_login"),flipkart_account:val(row,"flipkart_account")||val(row,"flipkart_user_id")||val(row,"flipkart_login")};
+    addresses.set(id,address);ids.push(id);
+    const refs=new Map<string,string>();accountRefs.set(id,refs);
+    const seen=new Set<string>();
+    for(const [column,retailer] of Object.entries(knownAccountColumns)){
+      if(seen.has(retailer))continue;
+      const login=val(row,column).trim();if(!login)continue;seen.add(retailer);refs.set(retailer,login);retailerAccountsBound++;
+      const pw=(knownPasswordColumns[retailer]||[]).map(x=>val(row,x).trim()).find(Boolean);
+      if(pw){credentialVault.set(id+":"+retailer,encryptJson({password:pw},credentialKey));credentialsStored++;}
+    }
+    const genericRetailer=importedRetailer(val(row,"retailer"));
+    const genericLogin=(val(row,"retailer_login")||val(row,"retailer_user_id")||val(row,"retailer_username")).trim();
+    if(genericRetailer&&genericLogin&&!refs.has(genericRetailer)){
+      refs.set(genericRetailer,genericLogin);retailerAccountsBound++;
+      const pw=val(row,"retailer_password").trim();
+      if(pw){credentialVault.set(id+":"+genericRetailer,encryptJson({password:pw},credentialKey));credentialsStored++;}
+    }
+  }
+  return reply.code(201).send({addressBook:{id:randomUUID(),name:file.filename},addressIds:ids,count:ids.length,retailerAccountsBound,credentialsStored});
+});
 app.post("/api/batches",async(req,reply)=>{const input=z.object({name:z.string().min(3),paymentRoute:z.string().default("Corporate virtual card"),items:z.array(z.object({productUrl:z.string().url(),quantity:z.number().int().positive(),addressId:z.string().uuid(),estimatedUnitPriceMinor:z.number().int().positive()})).min(1)}).parse(req.body);const id=randomUUID(),created_at=new Date().toISOString(),total=input.items.reduce((n,i)=>n+i.quantity*i.estimatedUnitPriceMinor,0),recipient_count=new Set(input.items.map(i=>i.addressId)).size;const batch={id,name:input.name,status:"AWAITING_APPROVAL",currency:"INR",estimated_total_minor:total,created_at,item_count:input.items.length,recipient_count,payment_route:input.paymentRoute};batches.unshift(batch);for(const i of input.items){const host=new URL(i.productUrl).hostname;items.push({id:randomUUID(),batchId:id,product_url:i.productUrl,retailer:host.includes("amazon.")?"amazon-in":host.includes("flipkart.")?"flipkart":host,requested_quantity:i.quantity,addressId:i.addressId,unit_price_minor:i.estimatedUnitPriceMinor});}return reply.code(201).send({id,status:batch.status});});
 app.post("/api/batches/:id/approve",async(req,reply)=>{
   const id=z.string().uuid().parse((req.params as any).id),batch=batches.find(b=>b.id===id);
@@ -87,7 +153,7 @@ app.post("/api/batches/:id/approve",async(req,reply)=>{
   const basketGroups=new Map<string,{address:Address;retailer:string;account:string;tasks:Task[]}>();
   for(const item of items.filter(i=>i.batchId===id)){
     const a=addresses.get(item.addressId)!;
-    const account=item.retailer==="amazon-in"?(a.amazon_account||a.reference||a.id):item.retailer==="flipkart"?(a.flipkart_account||a.reference||a.id):(a.reference||a.id);
+    const account=accountRefs.get(a.id)?.get(item.retailer)||a.reference||a.id;
     const task:Task={id:randomUUID(),batch_id:id,address_id:a.id,status:"REQUIRES_ACTION",amount_minor:item.unit_price_minor*item.requested_quantity,failure_message:"Ready for OrderGrid Checkout Engine",product_url:item.product_url,title:new URL(item.product_url).hostname+" product",requested_quantity:item.requested_quantity,recipient:a.recipient,city:a.city,postal_code:a.postal_code,retailer:item.retailer,account_reference:account};
     tasks.unshift(task);
     const key=a.id+":"+item.retailer,group=basketGroups.get(key)||{address:a,retailer:item.retailer,account,tasks:[]};
