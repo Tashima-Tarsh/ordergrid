@@ -7,7 +7,7 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: npm run db:migrate && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -15,6 +15,8 @@ services:
       - key: APP_ORIGIN
         value: https://ordergrid-production.onrender.com
       - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
         sync: false
       - key: SESSION_SECRET
         generateValue: true
@@ -31,4 +33,36 @@ services:
       - key: CARD_PROVIDER_WEBHOOK_SECRET
         sync: false
       - key: SHOPIFY_STOREFRONT_TOKEN
+        sync: false
+      - key: ENKASH_BASE_URL
+        sync: false
+      - key: ENKASH_TOKEN_URL
+        sync: false
+      - key: ENKASH_PARTNER_ID
+        sync: false
+      - key: ENKASH_BASIC_AUTH
+        sync: false
+      - key: ENKASH_USERNAME
+        sync: false
+      - key: ENKASH_PASSWORD
+        sync: false
+      - key: ENKASH_CLIENT_ID
+        sync: false
+      - key: ENKASH_COMPANY_ID
+        sync: false
+      - key: ENKASH_CARD_ACCOUNT_ID
+        sync: false
+      - key: CARDHOLDER_EMAIL
+        sync: false
+      - key: CARDHOLDER_MOBILE
+        sync: false
+      - key: CARDHOLDER_FIRST_NAME
+        sync: false
+      - key: CARDHOLDER_LAST_NAME
+        sync: false
+      - key: CARDHOLDER_GENDER
+        sync: false
+      - key: CARDHOLDER_PAN
+        sync: false
+      - key: CARDHOLDER_SPECIAL_DATE
         sync: false
