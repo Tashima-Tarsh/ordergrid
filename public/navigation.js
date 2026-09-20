@@ -136,6 +136,7 @@ side.querySelectorAll('button[data-view]').forEach(button=>{
     const view=button.dataset.view;
     show(view);
     if(view==='cards')window.dispatchEvent(new CustomEvent('ordergrid:cards-open'));
+    if(view==='gst')window.dispatchEvent(new CustomEvent('ordergrid:gst-open'));
   });
 });
 document.addEventListener('click',e=>{
