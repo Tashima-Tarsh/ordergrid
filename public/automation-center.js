@@ -25,7 +25,7 @@
       <section class="automation-card automation-live">
         <div class="automation-card-head">
           <div><span>LIVE AUTOMATION</span><h3>Workflow state</h3></div>
-          <button class="secondary" id="autoRefresh">Refresh</button>
+          <div class="automation-head-actions"><span class="policy-scope" id="autoWorkflowCount">7 automations</span><button class="secondary" id="autoRefresh">Refresh</button></div>
         </div>
         <div id="automationWorkflowList" class="automation-workflow-list"></div>
       </section>
@@ -107,7 +107,8 @@
     $('#autoOverall').textContent=policy.automation_enabled?'ACTIVE':'PAUSED';
     section.classList.toggle('automation-paused',!policy.automation_enabled);
 
-    $('#automationWorkflowList').innerHTML=(data.workflows||[]).map((w,index)=>`
+    const workflows=data.workflows||[];$('#autoWorkflowCount').textContent=workflows.length+' automations';
+    $('#automationWorkflowList').innerHTML=workflows.map((w,index)=>`
       <article class="automation-workflow">
         <div class="automation-flow-index">${String(index+1).padStart(2,'0')}</div>
         <div class="automation-flow-copy"><strong>${esc(w.name)}</strong><small>${esc(w.detail)}</small></div>
@@ -152,8 +153,13 @@
       ]);
       render(automation,control);
     }catch(error){
-      $('#automationHealthState').textContent='UNAVAILABLE';
-      $('#automationHealthList').innerHTML='<div class="health-row action"><span></span><div><strong>Automation state unavailable</strong><small>'+esc(error.message)+'</small></div></div>';
+      if(!latest){
+        const names=['Account authentication','Order validation & preparation','Virtual-card assignment','Checkout continuation','Retailer confirmation','Batch protection','Order reconciliation'];
+        $('#autoWorkflowCount').textContent='7 automations';
+        $('#automationWorkflowList').innerHTML=names.map((name,index)=>'<article class="automation-workflow"><div class="automation-flow-index">'+String(index+1).padStart(2,'0')+'</div><div class="automation-flow-copy"><strong>'+esc(name)+'</strong><small>Waiting for live status</small></div><span class="workflow-status idle">WAITING</span></article>').join('');
+      }
+      $('#automationHealthState').textContent='RETRYING';
+      $('#automationHealthList').innerHTML='<div class="health-row review"><span></span><div><strong>Refreshing automation status</strong><small>'+esc(error.message)+'</small></div></div>';
     }
   }
 
