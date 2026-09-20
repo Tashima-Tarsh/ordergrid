@@ -7,22 +7,22 @@
         <div class="automation-command-copy">
           <p class="eyebrow">ORDERGRID AUTOPILOT</p>
           <h2>Automation command</h2>
-          <p>Live workflow state and policy controls, in one operating surface.</p>
+          <p>Operate approved orders under live commercial, payment and verification controls.</p>
         </div>
         <div class="automation-machine">
           <div class="automation-state">
             <span class="automation-state-dot"></span>
-            <div><small>AUTOPILOT</small><strong id="autoOverall">ACTIVE</strong></div>
+            <div><small>AUTOPILOT</small><strong id="autoOverall">CHECKING</strong></div>
           </div>
-          <button id="startAutopilot">▶ Start</button>
+          <button id="startAutopilot">▶ Run now</button>
           <button class="secondary" id="pauseAutopilot">Pause</button>
-          <button class="secondary premium-icon-button" id="autoRefresh" title="Refresh automation">↻</button>
+          <button class="secondary premium-icon-button" id="autoRefresh" title="Refresh automation" aria-label="Refresh automation">↻</button>
         </div>
       </div>
 
       <div class="automation-kpis">
-        <article><span>READY</span><strong id="autoReady">0</strong><small>Eligible now</small></article>
-        <article><span>IN PROGRESS</span><strong id="autoProgress">0</strong><small>Advancing</small></article>
+        <article><span>READY</span><strong id="autoReady">0</strong><small>Eligible / claimed</small></article>
+        <article><span>IN PROGRESS</span><strong id="autoProgress">0</strong><small>Worker opened</small></article>
         <article><span>ATTENTION</span><strong id="autoAttention">0</strong><small>Human review</small></article>
         <article><span>CONFIRMED</span><strong id="autoConfirmed">0</strong><small>Retailer-confirmed</small></article>
       </div>
@@ -48,75 +48,84 @@
       </div>
     </section>
 
-    <div class="automation-layout">
+    <div class="automation-layout automation-runtime-layout">
       <div class="automation-column automation-column-left">
-      <section class="automation-card automation-live">
-        <div class="automation-card-head">
-          <div><span>LIVE AUTOMATION</span><h3>Workflow state</h3></div>
-          <div class="automation-head-actions"><span class="policy-scope" id="autoWorkflowCount">8 automations</span></div>
-        </div>
-        <div id="automationWorkflowList" class="automation-workflow-list"></div>
-      </section>
+        <section class="automation-card automation-runtime">
+          <div class="automation-card-head">
+            <div><span>LIVE ENGINE</span><h3>What Autopilot is doing</h3></div>
+            <span class="policy-scope" id="runtimeMode">CHECKING</span>
+          </div>
 
-      <section class="automation-card automation-guardrails">
-        <div class="automation-card-head">
-          <div><span>MANDATORY CONTROLS</span><h3>Non-editable safeguards</h3></div>
-          <span class="guardrail-state">ENFORCED</span>
-        </div>
-        <div id="automationMandatoryRules" class="automation-rule-list"></div>
-      </section>
+          <div class="automation-runtime-grid">
+            <div><span>TRIGGER</span><strong id="runtimeTrigger">—</strong><small id="runtimeTriggerMeta">Loading policy</small></div>
+            <div><span>CHECKOUT</span><strong id="runtimeCheckout">—</strong><small>Ordinary checkout continuation</small></div>
+            <div><span>CARDS</span><strong id="runtimeCards">—</strong><small>Order-specific virtual card</small></div>
+            <div><span>QUEUE</span><strong id="runtimeQueue">0</strong><small>Ready / claimed orders</small></div>
+          </div>
+
+          <div id="runtimeMessage" class="automation-runtime-message">Loading live engine state…</div>
+          <div id="automationRuntimeSignals" class="automation-runtime-signals"></div>
+
+          <details class="automation-safeguards">
+            <summary><span><b>System safeguards</b><small>Non-editable platform protections</small></span><strong id="safeguardCount">Checking</strong></summary>
+            <div id="automationMandatoryRules" class="automation-rule-list compact"></div>
+          </details>
+        </section>
+
+        <section class="automation-card automation-health">
+          <div class="automation-card-head">
+            <div><span>POLICY HEALTH</span><h3>Configuration check</h3></div>
+            <span id="automationHealthState" class="health-state">CHECKING</span>
+          </div>
+          <div id="automationHealthList" class="automation-health-list"></div>
+        </section>
       </div>
 
       <div class="automation-column automation-column-right">
-      <section class="automation-card automation-policy">
-        <div class="automation-card-head">
-          <div><span>POLICY ENGINE</span><h3>Workspace automation policy</h3></div>
-          <span class="policy-scope" id="policyScope">Current workspace</span>
-        </div>
-        <div id="effectivePolicyBanner" class="effective-policy-banner"></div>
-        <form id="automationPolicyForm">
-          <div class="policy-grid policy-grid-primary">
-            <label><span>Run mode</span><select name="runMode"><option value="MANUAL">Manual start</option><option value="CONTINUOUS">Continuous</option></select><small>Start approved eligible orders manually or continuously.</small></label>
-            <label><span>Maximum active orders</span><input type="number" name="maxActiveOrders" min="1" max="50" required><small>Parallel orders Autopilot may advance at once.</small></label>
-            <label><span>Failure pause threshold (%)</span><input type="number" name="failurePausePercent" min="0" max="100" step="0.5" required><small>Pause the remaining queue when failures reach this percentage.</small></label>
+        <section class="automation-card automation-policy">
+          <div class="automation-card-head">
+            <div><span>POLICY ENGINE</span><h3>Workspace automation policy</h3></div>
+            <span class="policy-scope" id="policyScope">Current workspace</span>
           </div>
 
-          <div class="commercial-policy-block">
-            <div class="policy-section-title"><span>COMMERCIAL GUARDRAILS</span><strong>Final payable value controls</strong></div>
-            <div class="policy-grid commercial-grid">
-              <label><span>Maximum price increase (%)</span><input type="number" name="maxPriceIncreasePercent" min="0" max="100" step="0.1" required><small>Example: 5% permits ₹10,000 → ₹10,500.</small></label>
-              <label><span>Maximum order value (₹)</span><input type="number" name="maxOrderValueRupees" min="0" step="1" required><small>0 means no additional absolute order cap.</small></label>
-              <label><span>Maximum batch variance (%)</span><input type="number" name="maxBatchVariancePercent" min="0" max="100" step="0.1" required><small>Final projected batch value versus the approved estimate.</small></label>
-              <label><span>If a price rule is breached</span><select name="priceBreachAction"><option value="PAUSE_ORDER">Pause affected order</option><option value="PAUSE_BATCH">Pause entire batch</option></select><small>Human approval is required before that scope continues.</small></label>
+          <div id="effectivePolicyBanner" class="effective-policy-banner"></div>
+          <div id="policyTriggerExplainer" class="policy-trigger-explainer"></div>
+
+          <form id="automationPolicyForm">
+            <div class="policy-grid policy-grid-primary">
+              <label><span>Run mode</span><select name="runMode"><option value="MANUAL">Manual</option><option value="CONTINUOUS">Continuous</option></select><small>Manual = Run now. Continuous = trigger automatically when approved work becomes ready.</small></label>
+              <label><span>Maximum active orders</span><input type="number" name="maxActiveOrders" min="1" max="50" required><small>Maximum number Autopilot may advance concurrently.</small></label>
+              <label><span>Failure pause threshold (%)</span><input type="number" name="failurePausePercent" min="0" max="100" step="0.5" required><small>Pause remaining eligible work when the failure threshold is reached.</small></label>
             </div>
-          </div>
 
-          <div class="policy-toggle-grid">
-            <label class="policy-toggle">
-              <span><b>Automatic virtual-card assignment</b><small>Provision one order-specific virtual card when required.</small></span>
-              <input type="checkbox" name="autoAssignVirtualCard">
-            </label>
-            <label class="policy-toggle">
-              <span><b>Automatic checkout continuation</b><small>Continue ordinary retailer checkout until a protected verification or policy gate.</small></span>
-              <input type="checkbox" name="autoContinueCheckout">
-            </label>
-          </div>
+            <div class="commercial-policy-block">
+              <div class="policy-section-title"><span>COMMERCIAL GUARDRAILS</span><strong>Final payable value controls</strong></div>
+              <div class="policy-grid commercial-grid">
+                <label><span>Maximum price increase (%)</span><input type="number" name="maxPriceIncreasePercent" min="0" max="100" step="0.1" required><small>Maximum allowed increase versus approved expected value.</small></label>
+                <label><span>Maximum order value (₹)</span><input type="number" name="maxOrderValueRupees" min="0" step="1" required><small>0 means no additional absolute order cap.</small></label>
+                <label><span>Maximum batch variance (%)</span><input type="number" name="maxBatchVariancePercent" min="0" max="100" step="0.1" required><small>Final projected batch value versus approved estimate.</small></label>
+                <label><span>Price breach action</span><select name="priceBreachAction"><option value="PAUSE_ORDER">Pause affected order</option><option value="PAUSE_BATCH">Pause entire batch</option></select><small>Defines the scope requiring human approval after a breach.</small></label>
+              </div>
+            </div>
 
-          <div class="policy-save-row">
-            <div><span id="policyLastUpdated">Policy not changed in this session</span><small id="policyPermission"></small></div>
-            <button type="submit" id="saveAutomationPolicy">Save policy</button>
-          </div>
-          <p id="automationPolicyError" class="form-error"></p>
-        </form>
-      </section>
+            <div class="policy-toggle-grid">
+              <label class="policy-toggle">
+                <span><b>Automatic virtual-card assignment</b><small>Assign or provision an order-specific card when required.</small></span>
+                <input type="checkbox" name="autoAssignVirtualCard">
+              </label>
+              <label class="policy-toggle">
+                <span><b>Automatic checkout continuation</b><small>Allow an online native worker to continue ordinary checkout until a protected verification or policy gate.</small></span>
+                <input type="checkbox" name="autoContinueCheckout">
+              </label>
+            </div>
 
-      <section class="automation-card automation-health">
-        <div class="automation-card-head">
-          <div><span>POLICY HEALTH</span><h3>Configuration check</h3></div>
-          <span id="automationHealthState" class="health-state">CHECKING</span>
-        </div>
-        <div id="automationHealthList" class="automation-health-list"></div>
-      </section>
+            <div class="policy-save-row">
+              <div><span id="policyLastUpdated">Policy not changed in this session</span><small id="policyPermission"></small></div>
+              <button type="submit" id="saveAutomationPolicy">Save & apply</button>
+            </div>
+            <p id="automationPolicyError" class="form-error"></p>
+          </form>
+        </section>
       </div>
     </div>
   `;
@@ -153,36 +162,78 @@
     $('#pfPriceRule').textContent='Price increase · +'+Number(data.policy?.max_price_increase_percent||0)+'%';
   }
 
+  function renderRuntime(data){
+    const policy=data.policy||{},summary=data.summary||{},workflows=data.workflows||[];
+    const continuous=policy.run_mode==='CONTINUOUS',enabled=Boolean(policy.automation_enabled);
+    $('#runtimeMode').textContent=!enabled?'PAUSED':continuous?'CONTINUOUS':'MANUAL';
+    $('#runtimeTrigger').textContent=continuous?'AUTO':'RUN NOW';
+    $('#runtimeTriggerMeta').textContent=continuous?'Approved work triggers when it becomes ready':'Only runs when you press Run now';
+    $('#runtimeCheckout').textContent=policy.auto_continue_checkout?'ON':'OFF';
+    $('#runtimeCards').textContent=policy.auto_assign_virtual_card?'AUTO':'MANUAL';
+    $('#runtimeQueue').textContent=String(summary.ready||0);
+
+    const active=workflows.filter(w=>['ACTIVE','NEEDS_ATTENTION'].includes(String(w.status)));
+    const signalHost=$('#automationRuntimeSignals');
+    if(active.length){
+      signalHost.innerHTML=active.map(w=>`
+        <div class="runtime-signal ${workflowClass(w.status)}">
+          <span></span><div><strong>${esc(w.name)}</strong><small>${esc(w.detail)}</small></div>
+          <b>${esc(String(w.status).replaceAll('_',' '))}</b>
+        </div>
+      `).join('');
+    }else{
+      signalHost.innerHTML='<div class="runtime-empty"><strong>No active automation work</strong><span>Autopilot is waiting for an approved eligible order. READY/IDLE stage cards are intentionally hidden.</span></div>';
+    }
+
+    const ready=Number(summary.ready||0),attention=Number(summary.needsAttention||0),progress=Number(summary.inProgress||0);
+    $('#runtimeMessage').textContent=!enabled
+      ?'Autopilot is paused. Saved guardrails remain configured, but no new orders are claimed automatically.'
+      :continuous
+        ?(ready||progress?'Continuous mode is active. Eligible orders are being prepared under the saved policy.':'Continuous mode is armed. The next approved eligible batch will trigger automatically.')
+        :(ready?'Manual mode has eligible work waiting. Press Run now to claim it.':'Manual mode is ready. Press Run now whenever approved work becomes eligible.');
+    if(attention)$('#runtimeMessage').textContent=attention+' order(s) need human review; unaffected eligible work follows the current policy.';
+
+    const rules=data.mandatoryRules||[];
+    $('#safeguardCount').textContent=rules.length+' enforced';
+    $('#automationMandatoryRules').innerHTML=rules.map(rule=>`
+      <div><span class="rule-lock">✓</span><div><strong>${esc(rule.name)}</strong><small>Platform safeguard</small></div></div>
+    `).join('');
+  }
+
   function render(data,control){
     latest=data;latestControl=control;
     const policy=data.policy||{},local=data.localPolicy||policy;
+    const continuous=policy.run_mode==='CONTINUOUS',enabled=Boolean(policy.automation_enabled);
+
     $('#autoReady').textContent=String(data.summary?.ready||0);
     $('#autoProgress').textContent=String(data.summary?.inProgress||0);
     $('#autoAttention').textContent=String(data.summary?.needsAttention||0);
     $('#autoConfirmed').textContent=String(data.summary?.confirmed||0);
-    $('#autoOverall').textContent=policy.automation_enabled?'ACTIVE':'PAUSED';
-    section.classList.toggle('automation-paused',!policy.automation_enabled);
-    $('#startAutopilot').disabled=Boolean(policy.automation_enabled);
-    $('#pauseAutopilot').disabled=!policy.automation_enabled;
+    $('#autoOverall').textContent=!enabled?'PAUSED':continuous?'CONTINUOUS':'MANUAL';
+    section.classList.toggle('automation-paused',!enabled);
 
-    const workflows=data.workflows||[];
-    $('#autoWorkflowCount').textContent=workflows.length+' automations';
-    $('#automationWorkflowList').innerHTML=workflows.map((w,index)=>`
-      <article class="automation-workflow">
-        <div class="automation-flow-index">${String(index+1).padStart(2,'0')}</div>
-        <div class="automation-flow-copy"><strong>${esc(w.name)}</strong><small>${esc(w.detail)}</small></div>
-        <span class="workflow-status ${workflowClass(w.status)}">${esc(String(w.status).replaceAll('_',' '))}</span>
-      </article>
-    `).join('');
+    const start=$('#startAutopilot');
+    start.disabled=continuous&&enabled;
+    start.textContent=continuous?(enabled?'● Running':'▶ Start continuous'):'▶ Run now';
+    $('#pauseAutopilot').disabled=!enabled;
+
+    renderRuntime(data);
 
     $('#policyScope').textContent='Current workspace';
     $('#effectivePolicyBanner').innerHTML=`
       <strong>Effective policy</strong>
+      <span>${esc(String(policy.run_mode||'MANUAL'))}</span>
       <span>Price +${Number(policy.max_price_increase_percent||0)}%</span>
       <span>Order cap ${Number(policy.max_order_value_minor||0)>0?moneyMinor(policy.max_order_value_minor):'No cap'}</span>
       <span>Batch +${Number(policy.max_batch_variance_percent||0)}%</span>
       <span>${esc(String(policy.price_breach_action||'PAUSE_ORDER').replaceAll('_',' '))}</span>
     `;
+
+    $('#policyTriggerExplainer').innerHTML=continuous
+      ?enabled
+        ?'<strong>Continuous trigger is live</strong><span>Save & apply immediately re-evaluates the current READY queue. Newly approved batches trigger automatically when their checkout baskets become ready.</span>'
+        :'<strong>Continuous policy is saved but paused</strong><span>Save changes now, then press Start continuous to arm automatic triggering.</span>'
+      :'<strong>Manual trigger</strong><span>Saving changes updates guardrails only. Press Run now whenever you want Autopilot to claim the current eligible queue.</span>';
 
     const form=$('#automationPolicyForm');
     form.elements.autoAssignVirtualCard.checked=Boolean(local.auto_assign_virtual_card);
@@ -198,24 +249,20 @@
     $('#policyPermission').textContent=data.canEdit?'Owner / Approver policy access':'View-only policy access';
     [...form.elements].forEach(el=>{if(el instanceof HTMLInputElement||el instanceof HTMLSelectElement||el instanceof HTMLButtonElement)el.disabled=!data.canEdit});
 
-    $('#automationMandatoryRules').innerHTML=(data.mandatoryRules||[]).map(rule=>`
-      <div><span class="rule-lock">◆</span><div><strong>${esc(rule.name)}</strong><small>System safeguard</small></div><b>${esc(rule.status)}</b></div>
-    `).join('');
-
     const health=[];
     const cardsNeeded=Number(control?.orders?.cards_needed||0);
     const cardProgramme=Boolean(control?.cards?.programme_connected);
     if(policy.auto_assign_virtual_card&&cardsNeeded>0&&!cardProgramme)health.push({state:'ACTION',title:'Card programme required',detail:cardsNeeded+' orders require virtual cards but no card programme is connected.'});
-    if(!policy.auto_continue_checkout&&Number(data.summary?.ready||0)>0)health.push({state:'REVIEW',title:'Checkout continuation paused',detail:data.summary.ready+' ready orders will wait for manual continuation.'});
+    if(!policy.auto_continue_checkout&&Number(data.summary?.ready||0)>0)health.push({state:'REVIEW',title:'Checkout continuation is manual',detail:data.summary.ready+' ready/claimed orders will not be handed to the native worker automatically.'});
     if(Number(policy.max_price_increase_percent||0)>10)health.push({state:'REVIEW',title:'Wide price tolerance',detail:'Maximum price increase is above 10%. Review the commercial risk limit.'});
     if(Number(policy.max_batch_variance_percent||0)>10)health.push({state:'REVIEW',title:'Wide batch variance',detail:'Batch variance is above 10% of the approved estimate.'});
     if(Number(policy.max_order_value_minor||0)===0)health.push({state:'REVIEW',title:'No absolute order cap',detail:'Price variance is enforced, but there is no additional maximum order value.'});
     if(Number(policy.max_active_orders||0)>20)health.push({state:'REVIEW',title:'High concurrency policy',detail:'Maximum active orders is above 20. Review retailer and card-programme capacity.'});
     if(Number(policy.failure_pause_percent||0)>25)health.push({state:'REVIEW',title:'Loose failure guard',detail:'Failure pause threshold is above 25%.'});
-    if(!policy.automation_enabled)health.push({state:'PAUSED',title:'Autopilot paused',detail:'Automated order preparation and continuation are disabled for this workspace.'});
+    if(!enabled)health.push({state:'PAUSED',title:'Autopilot paused',detail:'No new automation work is claimed until you run or start Autopilot.'});
     if(!health.length)health.push({state:'HEALTHY',title:'Policy configuration healthy',detail:'Current workspace automation settings are aligned with active order controls.'});
 
-    $('#automationHealthState').textContent=health.some(x=>x.state==='ACTION')?'ACTION REQUIRED':health.some(x=>x.state==='REVIEW')?'REVIEW':'HEALTHY';
+    $('#automationHealthState').textContent=health.some(x=>x.state==='ACTION')?'ACTION REQUIRED':health.some(x=>x.state==='REVIEW')?'REVIEW':health.some(x=>x.state==='PAUSED')?'PAUSED':'HEALTHY';
     $('#automationHealthList').innerHTML=health.map(h=>`
       <div class="health-row ${h.state.toLowerCase()}"><span></span><div><strong>${esc(h.title)}</strong><small>${esc(h.detail)}</small></div></div>
     `).join('');
@@ -232,11 +279,8 @@
       render(automation,control);
       await loadPreflight();
     }catch(error){
-      if(!latest){
-        const names=['Account authentication','Order validation & preparation','Price & commercial validation','Virtual-card assignment','Checkout continuation','Retailer confirmation','Batch protection','Order reconciliation'];
-        $('#autoWorkflowCount').textContent='8 automations';
-        $('#automationWorkflowList').innerHTML=names.map((name,index)=>'<article class="automation-workflow"><div class="automation-flow-index">'+String(index+1).padStart(2,'0')+'</div><div class="automation-flow-copy"><strong>'+esc(name)+'</strong><small>Waiting for live status</small></div><span class="workflow-status idle">WAITING</span></article>').join('');
-      }
+      $('#autoOverall').textContent='RETRYING';
+      $('#runtimeMessage').textContent='Live automation status is refreshing: '+error.message;
       $('#automationHealthState').textContent='RETRYING';
       $('#automationHealthList').innerHTML='<div class="health-row review"><span></span><div><strong>Refreshing automation status</strong><small>'+esc(error.message)+'</small></div></div>';
     }
@@ -246,20 +290,21 @@
   $('#refreshPreflight').onclick=loadPreflight;
 
   $('#startAutopilot').onclick=async()=>{
-    const button=$('#startAutopilot');button.disabled=true;button.textContent='Starting…';
+    const button=$('#startAutopilot'),previous=button.textContent;
+    button.disabled=true;button.textContent='Applying…';
     try{
       const pf=await request('/api/automation/preflight');renderPreflight(pf);
       const result=await request('/api/automation/start',{method:'POST'});
-      if(window.toast)window.toast('Autopilot started · '+Number(result.claimed||0)+' order(s) prepared');
+      window.toast?.((latest?.policy?.run_mode==='CONTINUOUS'?'Continuous Autopilot started':'Run complete')+' · '+Number(result.claimed||0)+' order(s) prepared');
       await load();
-    }catch(error){alert(error.message)}
-    finally{button.textContent='Start Autopilot'}
+    }catch(error){$('#automationPolicyError').textContent=error.message}
+    finally{button.textContent=previous;await load()}
   };
 
   $('#pauseAutopilot').onclick=async()=>{
     const button=$('#pauseAutopilot');button.disabled=true;button.textContent='Pausing…';
-    try{await request('/api/automation/pause',{method:'POST'});if(window.toast)window.toast('Autopilot paused');await load()}
-    catch(error){alert(error.message)}
+    try{await request('/api/automation/pause',{method:'POST'});window.toast?.('Autopilot paused');await load()}
+    catch(error){$('#automationPolicyError').textContent=error.message}
     finally{button.textContent='Pause'}
   };
 
@@ -267,9 +312,9 @@
     event.preventDefault();
     const form=event.currentTarget,button=$('#saveAutomationPolicy');
     $('#automationPolicyError').textContent='';
-    button.disabled=true;button.textContent='Saving policy…';
+    button.disabled=true;button.textContent='Saving & applying…';
     try{
-      await request('/api/automation/policy',{
+      const result=await request('/api/automation/policy',{
         method:'PUT',
         headers:{'content-type':'application/json'},
         body:JSON.stringify({
@@ -285,10 +330,12 @@
           runMode:form.elements.runMode.value
         })
       });
-      if(window.toast)window.toast('Automation policy updated');
+      const trigger=result.trigger;
+      if(trigger?.fired)window.toast?.('Policy applied · '+Number(trigger.claimed||0)+' eligible order(s) prepared now');
+      else window.toast?.('Policy saved');
       await load();
     }catch(error){$('#automationPolicyError').textContent=error.message}
-    finally{button.disabled=latest?!latest.canEdit:false;button.textContent='Save policy'}
+    finally{button.disabled=latest?!latest.canEdit:false;button.textContent='Save & apply'}
   });
 
   window.addEventListener('ordergrid:update',load);
