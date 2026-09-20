@@ -18,3 +18,7 @@ alter table public.virtual_cards add constraint virtual_cards_channel_control_st
 
 create index if not exists issuer_connections_bank_code_idx
   on public.issuer_connections(tenant_id,bank_code,status);
+
+alter table public.funding_policies drop constraint if exists funding_policies_issuer_provider_check;
+alter table public.funding_policies add constraint funding_policies_issuer_provider_check
+  check (issuer_provider in ('axis','hdfc','icici','sbi','yes','kotak','indusind','idfc','bob','enkash','custom'));
