@@ -91,9 +91,10 @@
     const recipientHost=$('#recipientAccounts');
     if(recipientHost){
       recipientHost.innerHTML=recipientRecords.length?recipientRecords.slice(0,12).map(r=>{
-        const amazon=r.retailer_accounts?.amazon;
-        const flipkart=r.retailer_accounts?.flipkart;
-        const account=amazon?'Amazon · '+amazon:flipkart?'Flipkart · '+flipkart:'Account not added';
+        const entries=Object.entries(r.retailer_accounts||{}).filter(([,value])=>Boolean(value));
+        const first=entries[0];
+        const retailerLabel=first?String(first[0]).replace(/^store:/,'').replace('amazon-in','Amazon').replace('flipkart','Flipkart'):'';
+        const account=first?retailerLabel+' · '+String(first[1]):'Account not added';
         return '<div class="recipient-account"><div><strong>'+esc(r.customer_reference)+'</strong><span>'+esc(r.recipient)+' · '+esc(r.city)+' '+esc(r.postal_code)+'</span></div><small>'+esc(account)+'</small></div>';
       }).join('')+(recipientRecords.length>12?'<div class="recipient-more">+'+(recipientRecords.length-12)+' more recipients</div>':''):'<p class="muted">No recipients added yet.</p>';
     }
