@@ -159,7 +159,7 @@
 
   $('#cardProgramForm').onsubmit=async event=>{
     event.preventDefault();
-    if(!provider.configured){alert('Connect an approved card programme first.');return}
+    const selectedIssuer=issuers.find(x=>x.id===String($('#cardIssuer')?.value));if(!selectedIssuer){alert('Connect and select a bank card programme first.');return}
     const button=$('#createCards'),form=new FormData(event.currentTarget);
     const quantity=Number(form.get('quantity')),amountMinor=Math.round(Number(form.get('amount'))*100),merchant=String(form.get('merchantControl')||'all');
     button.disabled=true;button.textContent='Creating cards…';
@@ -170,18 +170,18 @@
         issuerConnectionId:String(form.get('issuerConnectionId')),
         merchantScope:merchant==='all'?{type:'ALL'}:{type:'RETAILER',value:merchant},
         label:String(form.get('label')||'OrderGrid procurement card'),
-        cardholder:{
-          email:String(form.get('email')),
-          mobile:String(form.get('mobile')).replace(/\D/g,''),
-          firstName:String(form.get('firstName')),
-          lastName:String(form.get('lastName')),
-          gender:String(form.get('gender')),
-          pan:String(form.get('pan')).trim().toUpperCase(),
-          specialDate:String(form.get('specialDate'))
-        }
+        cardholder:Object.fromEntries([
+          ['email',String(form.get('email')||'').trim()],
+          ['mobile',String(form.get('mobile')||'').replace(/\D/g,'')],
+          ['firstName',String(form.get('firstName')||'').trim()],
+          ['lastName',String(form.get('lastName')||'').trim()],
+          ['gender',String(form.get('gender')||'').trim()],
+          ['pan',String(form.get('pan')||'').trim().toUpperCase()],
+          ['specialDate',String(form.get('specialDate')||'').trim()]
+        ].filter(([,value])=>value))
       })});
       await load();$('#fundingApproval').checked=false;calculate();
-      toast(`${result.created} real virtual card(s) created and loaded${result.failed?' · '+result.failed+' failed':''}`);
+      toast(`${result.created} virtual card(s) created from the selected bank programme${result.failed?' · '+result.failed+' failed':''}`);
     }catch(error){alert(error.message)}
     finally{button.disabled=false;calculate()}
   };
@@ -189,10 +189,10 @@
   $('#virtualCardInventory').onclick=async event=>{
     const button=event.target.closest('[data-load]');if(!button)return;
     const row=button.closest('[data-card]'),card=cards.find(x=>x.id===row.dataset.card);
-    const rupees=Number(prompt(`Amount to load to ${card.label||card.provider_card_id} (₹):`));
+    const rupees=Number(prompt(`Additional limit / load amount for ${card.label||card.provider_card_id} (₹):`));
     if(!Number.isFinite(rupees)||rupees<=0)return;
     button.disabled=true;
-    try{await request(`/api/cards/${card.id}/load`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({amountMinor:Math.round(rupees*100)})});await load();toast('Funds added')}
+    try{await request(`/api/cards/${card.id}/load`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({amountMinor:Math.round(rupees*100)})});await load();toast('Card limit / funding updated')}
     catch(error){alert(error.message)}
     finally{button.disabled=false}
   };
