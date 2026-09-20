@@ -161,7 +161,7 @@ function secretEqual(a:string|undefined,b:string|undefined){
   return left.length===right.length&&timingSafeEqual(left,right);
 }
 function workerMachineRoute(req:any){
-  const path=String(req.url||"").split("?")[0];
+  const path=String(req.url||"").split("?",1)[0] ?? "";
   if(path.startsWith("/api/execution-worker/"))return true;
   if(path==="/api/bulk-queue"&&String(req.url||"").includes("workerId="))return true;
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
