@@ -1775,6 +1775,88 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   };
 });
 
+app.post("/api/bulk-queue/:id/stock-wait",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    workerId:z.string().min(8).max(128),
+    message:z.string().max(500).optional(),
+    observedPriceMinor:z.number().int().positive().nullable().optional()
+  }).parse(req.body);
+  const basket=await db.query(
+    `select cb.id,cb.batch_id,cb.status,cb.stock_watch_enabled,cb.stock_watch_started_at,
+      b.created_by,coalesce(sum(po.amount_minor),0)::bigint expected_minor
+     from checkout_baskets cb
+     join order_batches b on b.id=cb.batch_id
+     left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+     where cb.id=$1 and cb.tenant_id=$2 and cb.execution_worker_id=$3
+       and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+     group by cb.id,b.created_by`,
+    [id,p.tenantId,body.workerId]
+  );
+  const row=basket.rows[0];
+  if(!row)return reply.code(409).send({error:"basket_not_owned_by_worker"});
+  const policy=await getAutomationPolicy(p.tenantId);
+  const expectedMinor=Number(row.expected_minor||0);
+  let ceiling=Math.ceil(expectedMinor*(1+Number(policy.max_price_increase_percent||0)/100));
+  if(Number(policy.max_order_value_minor)>0)ceiling=Math.min(ceiling,Number(policy.max_order_value_minor));
+  const autoOrder=Boolean(policy.automation_enabled&&policy.auto_continue_checkout);
+  const firstWatch=!row.stock_watch_started_at;
+  const {rows}=await db.query(
+    `update checkout_baskets set
+       status='WAITING_STOCK',
+       stock_watch_enabled=true,
+       stock_watch_auto_order=$1,
+       stock_watch_max_amount_minor=coalesce(stock_watch_max_amount_minor,$2),
+       stock_watch_started_at=coalesce(stock_watch_started_at,now()),
+       stock_watch_expires_at=coalesce(stock_watch_expires_at,now()+interval '30 days'),
+       stock_last_checked_at=now(),
+       stock_next_check_at=now()+(stock_watch_interval_minutes::text||' minutes')::interval,
+       stock_last_message=$3,
+       failure_code='OUT_OF_STOCK',
+       failure_message=$3,
+       claimed_by=null,
+       expires_at=null,
+       updated_at=now()
+     where id=$4 and tenant_id=$5 and execution_worker_id=$6
+     returning id,status,stock_watch_auto_order,stock_watch_max_amount_minor,stock_next_check_at,stock_watch_expires_at`,
+    [autoOrder,Math.max(100,ceiling),body.message??"Retailer item is currently out of stock",id,p.tenantId,body.workerId]
+  );
+  if(firstWatch){
+    await createNotification({
+      tenantId:p.tenantId,userId:row.created_by,basketId:id,type:"STOCK_WATCH_STARTED",
+      title:"Stock watch started",
+      message:"OrderGrid will recheck this approved order and continue checkout automatically when stock returns within your price policy.",
+      idempotencyKey:`stock-watch-start:${id}`,
+      payload:{expectedMinor,maxAmountMinor:Math.max(100,ceiling),autoOrder,observedPriceMinor:body.observedPriceMinor??null}
+    });
+  }
+  await audit(db,p.tenantId,p.id,"stock_watch.waiting","checkout_basket",id,{workerId:body.workerId,autoOrder,maxAmountMinor:ceiling});
+  return rows[0];
+});
+
+app.post("/api/bulk-queue/:id/stock-available",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body);
+  const {rows}=await db.query(
+    `update checkout_baskets set stock_available_at=coalesce(stock_available_at,now()),stock_last_checked_at=now(),
+       stock_last_message='Stock is available; checkout resumed',updated_at=now()
+     where id=$1 and tenant_id=$2 and execution_worker_id=$3 and stock_watch_enabled and status='OPENED'
+     returning id,retailer,batch_id`,
+    [id,p.tenantId,body.workerId]
+  );
+  if(!rows[0])return reply.code(409).send({error:"stock_watch_not_active"});
+  const userId=await basketNotificationUser(p.tenantId,id);
+  await createNotification({
+    tenantId:p.tenantId,userId,basketId:id,type:"BACK_IN_STOCK",
+    title:"Back in stock",
+    message:"The watched item is orderable again. OrderGrid has resumed the same approved checkout task.",
+    idempotencyKey:`back-in-stock:${id}`,
+    payload:{retailer:rows[0].retailer}
+  });
+  await audit(db,p.tenantId,p.id,"stock_watch.available","checkout_basket",id,{workerId:body.workerId});
+  return {id,status:"OPENED"};
+});
+
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
   const body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);
@@ -1785,9 +1867,25 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   );
   if(!rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
   if(body.state==="CHALLENGE"){
-    const authStatus=/LOGIN|PASSWORD|AUTH/i.test(body.code??"")?"AUTH_REQUIRED":"CHALLENGE";
-    await db.query("update retailer_accounts set auth_status=$1,credential_status=case when $1='AUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,updated_at=now() where id=$2 and tenant_id=$3",[authStatus,rows[0].retailer_account_id,p.tenantId]);
+    const authStatus=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"")?"CHALLENGE":"CHALLENGE";
+    const isRetailerAuth=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"");
+    await db.query(
+      `update retailer_accounts set auth_status=$1,
+       session_status=case when $2 then 'REAUTH_REQUIRED' else session_status end,
+       session_checked_at=case when $2 then now() else session_checked_at end,
+       credential_status=case when $2 and credential_status='READY' then 'STORED' else credential_status end,
+       updated_at=now() where id=$3 and tenant_id=$4`,
+      [authStatus,isRetailerAuth,rows[0].retailer_account_id,p.tenantId]
+    );
     if(/PAYMENT|3DS|CARD/i.test(body.code??""))await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    const notifyUser=await basketNotificationUser(p.tenantId,id);
+    await createNotification({
+      tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"HUMAN_ACTION_REQUIRED",
+      title:isRetailerAuth?"Retailer verification required":"Payment verification required",
+      message:body.message??"This order needs a protected human verification step before automation can continue.",
+      idempotencyKey:`human-action:${id}:${body.code??"REVIEW"}:${Date.now().toString().slice(0,-4)}`,
+      payload:{code:body.code??null}
+    });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
     const policy=await getAutomationPolicy(p.tenantId);
