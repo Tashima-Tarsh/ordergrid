@@ -18,7 +18,7 @@
     $('#fundingTotal').textContent=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(qty*amount);
     $('#createCards').textContent=`Create ${qty} virtual ${qty===1?'card':'cards'}`;
     const approved=$('#fundingApproval').checked;
-    const previewOnly=provider.source==='showroom';
+    const previewOnly=false;
     const programmeReady=Boolean($('#cardIssuer')?.value),anyConnected=issuers.some(x=>x.status==='CONNECTED');
     $('#createCards').disabled=!anyConnected||!approved||previewOnly||!programmeReady;
     $('#fundingMessage').textContent=previewOnly
@@ -44,7 +44,7 @@
     $('#issuerStatus').textContent=connected.length?`${connected.length} CONNECTED`:'SETUP REQUIRED';
     $('#fundingLimit').textContent=connected.length?'Bank controlled':'—';
     $('#connectIssuer').hidden=false;
-    $('#connectIssuer').disabled=previewOnly;
+    $('#connectIssuer').disabled=false;
     $('#connectIssuer').textContent=previewOnly?'Production setup only':connected.length?'Add / replace bank programme':'Connect bank programme';
     $('#disconnectIssuer').hidden=!connected.length||previewOnly;
     const issuerSelect=$('#cardIssuer');
@@ -63,13 +63,15 @@
     calculate();
   }
   async function load(){
-    try{
-      const [p,c,i,b]=await Promise.all([request('/api/cards/provider'),request('/api/cards'),request('/api/issuers'),request('/api/cards/banks')]);
-      provider=p;cards=c.cards||[];issuers=i.issuers||[];banks=b.banks||[];render();
-    }catch(error){
-      provider={provider:'disabled',configured:false,source:'showroom'};
-      cards=[];issuers=[];banks=[];render();console.error(error);
-    }
+    const results=await Promise.allSettled([
+      request('/api/cards/provider'),request('/api/cards'),request('/api/issuers'),request('/api/cards/banks')
+    ]);
+    if(results[0].status==='fulfilled')provider=results[0].value;
+    if(results[1].status==='fulfilled')cards=results[1].value.cards||[];
+    if(results[2].status==='fulfilled')issuers=results[2].value.issuers||[];
+    if(results[3].status==='fulfilled')banks=results[3].value.banks||[];
+    for(const result of results)if(result.status==='rejected')console.error(result.reason);
+    render();
   }
 
   function syncCardholderRequirements(){
@@ -100,11 +102,19 @@
   $('#cardIssuer')?.addEventListener('change',syncCardholderRequirements);
   $('#bankAuthMode')?.addEventListener('change',syncBankAuth);
 
-  $('#connectIssuer').onclick=()=>{
-    if(provider.source==='showroom'){toast('Card programme connection is available on the production OrderGrid service.');return}
+  $('#connectIssuer')?.addEventListener('click',()=>{
+    const dialog=$('#issuerDialog');
+    if(!dialog){toast('Bank connection window is unavailable. Refresh the page.');return}
     $('#issuerError').textContent='';
-    syncBankConnector();$('#issuerDialog').showModal();
-  };
+    try{syncBankConnector()}catch(error){console.error(error)}
+    try{
+      if(typeof dialog.showModal==='function')dialog.showModal();
+      else dialog.setAttribute('open','');
+    }catch(error){
+      console.error(error);
+      dialog.setAttribute('open','');
+    }
+  });
   $('#closeIssuer').onclick=()=>$('#issuerDialog').close();
   $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
   $('#issuerForm').onsubmit=async event=>{
