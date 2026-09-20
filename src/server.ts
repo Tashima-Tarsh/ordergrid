@@ -1313,7 +1313,9 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
 
 app.get("/api/issuers",async(req)=>{
   const p=req.principal!;
-  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,capabilities,connected_at,updated_at from issuer_connections where tenant_id=$1 order by bank_name,provider",[p.tenantId]);
+  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,
+    funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,
+    capabilities,connected_at,updated_at from issuer_connections where tenant_id=$1 order by bank_name,provider",[p.tenantId]);
   return {issuers:rows};
 });
 app.get("/api/funding-policies",async(req)=>{
@@ -1382,7 +1384,11 @@ app.post("/api/cards/provider/connect",async(req,reply)=>{
   const common={
     bankName:z.string().min(2).max(120),
     programmeName:z.string().min(2).max(120),
-    cardNetwork:z.enum(["VISA","MASTERCARD","RUPAY","AMEX","DINERS","OTHER"])
+    cardNetwork:z.enum(["VISA","MASTERCARD","RUPAY","AMEX","DINERS","OTHER"]),
+    fundingCardholderName:z.string().trim().min(2).max(120).optional(),
+    fundingCardLast4:z.string().regex(/^\d{4}$/).optional(),
+    fundingCardExpiryMonth:z.number().int().min(1).max(12).optional(),
+    fundingCardExpiryYear:z.number().int().min(2024).max(2100).optional()
   };
   const enKash=z.object({
     provider:z.literal("enkash"),...common,
@@ -1430,10 +1436,10 @@ app.post("/api/cards/provider/connect",async(req,reply)=>{
       const saved=await testAndSaveEnKashConnection(db,config,{
         tenantId:p.tenantId,userId:p.id,
         credentials:{ENKASH_BASE_URL:body.baseUrl,ENKASH_TOKEN_URL:body.tokenUrl,ENKASH_PARTNER_ID:body.partnerId,ENKASH_BASIC_AUTH:body.basicAuth,ENKASH_USERNAME:body.username,ENKASH_PASSWORD:body.password,ENKASH_CLIENT_ID:body.clientId,ENKASH_COMPANY_ID:body.companyId,ENKASH_CARD_ACCOUNT_ID:body.cardAccountId},
-        metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork}
+        metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardholderName:body.fundingCardholderName,fundingCardLast4:body.fundingCardLast4,fundingCardExpiryMonth:body.fundingCardExpiryMonth,fundingCardExpiryYear:body.fundingCardExpiryYear}
       });
-      await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:"enkash",bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork});
-      return {provider:"enkash",configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork};
+      await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:"enkash",bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardLast4:body.fundingCardLast4??null});
+      return {provider:"enkash",configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardholderName:body.fundingCardholderName??null,fundingCardLast4:body.fundingCardLast4??null,fundingCardExpiryMonth:body.fundingCardExpiryMonth??null,fundingCardExpiryYear:body.fundingCardExpiryYear??null};
     }
     const saved=await testAndSaveBankConnection(db,config,{
       tenantId:p.tenantId,userId:p.id,
@@ -1446,10 +1452,10 @@ app.post("/api/cards/provider/connect",async(req,reply)=>{
         responseCardIdPath:body.responseCardIdPath,responseAccountIdPath:body.responseAccountIdPath,responseMaskedNumberPath:body.responseMaskedNumberPath,
         responseStatusPath:body.responseStatusPath,responseBalancePath:body.responseBalancePath,responseBalanceUnit:body.responseBalanceUnit
       },
-      metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode}
+      metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode,fundingCardholderName:body.fundingCardholderName,fundingCardLast4:body.fundingCardLast4,fundingCardExpiryMonth:body.fundingCardExpiryMonth,fundingCardExpiryYear:body.fundingCardExpiryYear}
     });
-    await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:body.provider,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,integrationMode:body.integrationMode,capabilities:saved.capabilities});
-    return {provider:body.provider,configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode,capabilities:saved.capabilities};
+    await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:body.provider,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,integrationMode:body.integrationMode,fundingCardLast4:body.fundingCardLast4??null,capabilities:saved.capabilities});
+    return {provider:body.provider,configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,bankCode:body.provider,integrationMode:body.integrationMode,fundingCardholderName:body.fundingCardholderName??null,fundingCardLast4:body.fundingCardLast4??null,fundingCardExpiryMonth:body.fundingCardExpiryMonth??null,fundingCardExpiryYear:body.fundingCardExpiryYear??null,capabilities:saved.capabilities};
   }catch(error:any){
     req.log.warn({err:String(error.message).slice(0,160)},"issuer connection test failed");
     return reply.code(400).send({error:"issuer_connection_failed",message:String(error.message).slice(0,160)});
