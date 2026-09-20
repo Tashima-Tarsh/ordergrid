@@ -177,13 +177,13 @@ app.put("/api/automation/policy",async(req)=>{
     maxActiveOrders:z.number().int().min(1).max(50),failurePausePercent:z.number().min(0).max(100),
     maxPriceIncreasePercent:z.number().min(0).max(100),maxOrderValueMinor:z.number().int().min(0),
     maxBatchVariancePercent:z.number().min(0).max(100),priceBreachAction:z.enum(["PAUSE_ORDER","PAUSE_BATCH"]),
-    runMode:z.enum(["MANUAL","CONTINUOUS"]),inheritParentPolicy:z.boolean(),allowChildPolicyRelaxation:z.boolean().default(false)
+    runMode:z.enum(["MANUAL","CONTINUOUS"])
   }).parse(req.body);
   const policy:DemoAutomationPolicy={
     automation_enabled:body.automationEnabled,auto_assign_virtual_card:body.autoAssignVirtualCard,auto_continue_checkout:body.autoContinueCheckout,
     max_active_orders:body.maxActiveOrders,failure_pause_percent:body.failurePausePercent,max_price_increase_percent:body.maxPriceIncreasePercent,
     max_order_value_minor:body.maxOrderValueMinor,max_batch_variance_percent:body.maxBatchVariancePercent,price_breach_action:body.priceBreachAction,
-    run_mode:body.runMode,inherit_parent_policy:body.inheritParentPolicy,allow_child_policy_relaxation:body.allowChildPolicyRelaxation,updated_at:new Date().toISOString()
+    run_mode:body.runMode,inherit_parent_policy:false,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()
   };
   automationPolicies.set(workspaceId,policy);return {policy,localPolicy:policy};
 });
