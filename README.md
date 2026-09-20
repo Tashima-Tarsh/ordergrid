@@ -607,6 +607,10 @@ npm run worker
 
 Native retailer worker:
 
+On Windows, use **Retailer users → Install / start worker** for the normal one-time setup. The installed worker starts immediately and at future Windows sign-ins, and picks up queued retailer-session verification automatically.
+
+For source/developer operation:
+
 ```bash
 npm run agent
 ```
