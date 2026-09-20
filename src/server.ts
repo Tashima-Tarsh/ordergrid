@@ -76,6 +76,39 @@ async function getAutomationPolicy(tenantId:string){
     effective_source:"INHERITED_GUARDRAILS" as const
   };
 }
+async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:number,policy:AutomationPolicy){
+  if(!policy.automation_enabled)return {error:"autopilot_paused" as const,claimed:0,ids:[] as string[]};
+  const effectiveLimit=Math.min(requestedLimit,Number(policy.max_active_orders||8));
+  const client=await db.connect();
+  const ids:string[]=[];
+  try{
+    await client.query("begin");
+    await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[tenantId]);
+    const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[tenantId,effectiveLimit]);
+    for(const row of picked.rows){
+      await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[userId,row.id]);
+      ids.push(row.id);
+    }
+    await client.query("commit");
+  }catch(error){
+    await client.query("rollback");throw error;
+  }finally{client.release()}
+  for(const basketId of ids){
+    await assignFundingRoute(db,tenantId,basketId);
+    let cardId=await assignAvailableVirtualCard(db,tenantId,basketId);
+    if(!cardId&&policy.auto_assign_virtual_card){
+      const card=await ensureBasketVirtualCard(db,config,tenantId,basketId,userId);
+      cardId=card.cardId;
+      if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
+        await db.query(
+          "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+          [basketId,tenantId]
+        );
+      }
+    }
+  }
+  return {claimed:ids.length,ids};
+}
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:120,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
