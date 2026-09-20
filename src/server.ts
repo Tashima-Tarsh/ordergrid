@@ -265,6 +265,7 @@ app.get("/api/automation",async(req)=>{
     },
     workflows:[
       {id:"accounts",name:"Account authentication",status:Number(a.needs_attention||0)>0?"NEEDS_ATTENTION":Number(a.total||0)>0?"ACTIVE":"READY",detail:Number(a.authenticated||0)+" authenticated · "+Number(a.credentials_ready||0)+" credentials ready"},
+      {id:"preparation",name:"Order validation & preparation",status:Number(o.ready||0)>0?"ACTIVE":Number(o.total||0)>0?"READY":"IDLE",detail:Number(o.ready||0)+" orders prepared for next action"},
       {id:"cards",name:"Virtual-card assignment",status:Number(o.cards_assigned||0)>0?"ACTIVE":Number(o.total||0)>0?"READY":"READY",detail:Number(o.cards_assigned||0)+" order cards assigned · "+Number(v.active||0)+" active cards"},
       {id:"checkout",name:"Checkout continuation",status:Number(o.needs_attention||0)>0?"NEEDS_ATTENTION":Number(o.in_progress||0)>0?"ACTIVE":Number(o.ready||0)>0?"READY":"IDLE",detail:Number(o.in_progress||0)+" in progress · "+Number(o.ready||0)+" ready"},
       {id:"confirmation",name:"Retailer confirmation",status:Number(o.confirmed||0)>0?"ACTIVE":"READY",detail:Number(o.confirmed||0)+" retailer-confirmed orders"},
