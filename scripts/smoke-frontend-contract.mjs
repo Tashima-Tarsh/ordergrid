@@ -126,6 +126,8 @@ must(automation.includes("▶ Start continuous"),"autopilot runtime contract: co
 must(workspaceCss.includes(".automation-runtime-grid"),"autopilot runtime contract: compact runtime styling missing");
 must(workspaceCss.includes(".automation-safeguards"),"autopilot runtime contract: compact safeguards disclosure missing");
 must(server.includes('policy.run_mode==="CONTINUOUS"'),"autopilot trigger contract: active continuous policy must trigger on save");
+must(server.includes("status in ('CLAIMED','OPENED') and expires_at>now()"),"autopilot concurrency contract: active orders must count toward max-active limit");
+must(server.includes("Number(policy.max_active_orders||8)-Number(active.rows[0]?.count||0)"),"autopilot concurrency contract: new claims must use remaining active capacity");
 must(server.includes("trigger={mode:policy.run_mode,fired:true"),"autopilot trigger contract: policy API must report immediate trigger result");
 must(worker.includes("triggerContinuousAutopilot"),"autopilot trigger contract: background batch worker must trigger continuous automation");
 must(worker.includes('policy.run_mode!=="CONTINUOUS"'),"autopilot trigger contract: background worker must respect run mode");
