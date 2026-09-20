@@ -221,7 +221,7 @@ must(server.includes(`session_check_requested_at=case when $1='REAUTH_REQUIRED' 
 must(cdp.includes('await connection.send("Page.bringToFront").catch(()=>null);'),"retailer session contract: protected retailer session must be brought to the user");
 must(html.includes('id="downloadOrderGridWorker"'),"retailer session contract: OrderGrid must expose its secure browser worker");
 must(files["public/rewards.js"].includes("OTP / MANUAL SIGN-IN"),"retailer session contract: account UI must support OTP/manual sign-in");
-must(files["public/rewards.js"].includes("Start the OrderGrid secure browser worker first"),"retailer session contract: account UI must explain offline worker prerequisite");
+must(files["public/rewards.js"].includes("Start the secure browser worker; it will pick"),"retailer session contract: account UI must explain offline worker queue behavior");
 must(html.includes('id="addRetailerUser"'),"retailer user contract: visible Add Flipkart user button missing");
 must(html.includes('id="retailerUserDialog"'),"retailer user contract: user/address onboarding dialog missing");
 must(files["public/rewards.js"].includes("'/api/retailer-users'"),"retailer user contract: single user save API missing from client");
