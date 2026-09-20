@@ -82,12 +82,15 @@ async function getAutomationPolicy(tenantId:string){
 }
 async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:number,policy:AutomationPolicy){
   if(!policy.automation_enabled)return {error:"autopilot_paused" as const,claimed:0,ids:[] as string[]};
-  const effectiveLimit=Math.min(requestedLimit,Number(policy.max_active_orders||8));
+  const requested=Math.min(requestedLimit,Number(policy.max_active_orders||8));
   const client=await db.connect();
   const ids:string[]=[];
   try{
     await client.query("begin");
     await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[tenantId]);
+    const active=await client.query("select count(*)::int count from checkout_baskets where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at>now()",[tenantId]);
+    const effectiveLimit=Math.max(0,Math.min(requested,Number(policy.max_active_orders||8)-Number(active.rows[0]?.count||0)));
+    if(effectiveLimit<1){await client.query("commit");return {claimed:0,ids};}
     const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[tenantId,effectiveLimit]);
     for(const row of picked.rows){
       await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[userId,row.id]);
