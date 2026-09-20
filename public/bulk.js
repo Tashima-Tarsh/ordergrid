@@ -129,6 +129,6 @@
 
   window.addEventListener('ordergrid:bulk-refresh',load);
   window.addEventListener('ordergrid:update',load);
-  setInterval(load,5000);
+  setInterval(load,15000);
   load();
 })();
