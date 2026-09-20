@@ -14,7 +14,9 @@ side.querySelectorAll('button[data-view]').forEach(button=>{
   button.addEventListener('click',e=>{
     e.preventDefault();
     e.stopPropagation();
-    show(button.dataset.view);
+    const view=button.dataset.view;
+    show(view);
+    if(view==='cards')window.dispatchEvent(new CustomEvent('ordergrid:cards-open'));
   });
 });
 document.addEventListener('click',e=>{
