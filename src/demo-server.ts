@@ -115,21 +115,23 @@ app.delete("/api/dealer-users/:userId",async(req,reply)=>{
   if(id==="demo-owner")return reply.code(409).send({error:"cannot_remove_current_user"});
   dealerUsers.delete(id);return {ok:true};
 });
-app.get("/api/dashboard",async()=>{const batchGroups=new Map<string,Batch[]>(),taskGroups=new Map<string,Task[]>();for(const b of batches)batchGroups.set(b.status,[...(batchGroups.get(b.status)??[]),b]);for(const t of tasks)taskGroups.set(t.status,[...(taskGroups.get(t.status)??[]),t]);return {batches:[...batchGroups].map(([status,list])=>({status,count:list.length,total:list.reduce((n,b)=>n+b.estimated_total_minor,0)})),orders:[...taskGroups].map(([status,list])=>({status,count:list.length}))};});
-app.get("/api/batches",async()=>({batches}));
-app.get("/api/checkout-tasks",async()=>({tasks}));
+app.get("/api/dashboard",async()=>{const batchGroups=new Map<string,Batch[]>(),taskGroups=new Map<string,Task[]>();for(const b of activeBatches())batchGroups.set(b.status,[...(batchGroups.get(b.status)??[]),b]);for(const t of activeTasks())taskGroups.set(t.status,[...(taskGroups.get(t.status)??[]),t]);return {batches:[...batchGroups].map(([status,list])=>({status,count:list.length,total:list.reduce((n,b)=>n+b.estimated_total_minor,0)})),orders:[...taskGroups].map(([status,list])=>({status,count:list.length}))};});
+app.get("/api/batches",async()=>({batches:activeBatches()}));
+app.get("/api/checkout-tasks",async()=>({tasks:activeTasks()}));
 app.get("/api/cards/provider",async()=>({provider:"disabled",configured:false,source:"showroom"}));
 app.get("/api/cards",async()=>({cards:[],provider:"disabled",configured:false,source:"showroom"}));
 app.post("/api/cards/provider/connect",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only",message:"Issuer connection is available on the production OrderGrid API."}));
 app.delete("/api/cards/provider",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only"}));
 app.get("/api/runtime",async()=>({api:"OrderGrid API",mode:"showroom-real-browser-test",checkoutEngine:{id:"ordergrid-checkout-engine",status:"API_ONLINE",capacity:8,sessionModel:"isolated-local-browser-profiles"},database:"in-memory-showroom"}));
 app.get("/api/control-center",async()=>{
-  const accountEntries=[...accountRefs.entries()].flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
+  const addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id)),basketsNow=activeBaskets();
+  const accountEntries=[...accountRefs.entries()].filter(([addressId])=>addressIds.has(addressId)).flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
   const retailerCounts=new Map<string,number>();for(const x of accountEntries)retailerCounts.set(x.retailer,(retailerCounts.get(x.retailer)||0)+1);
+  const protectedCredentials=[...credentialVault.keys()].filter(key=>addressIds.has(key.split(":")[0]||"")).length;
   return {
-    service:"AVAILABLE",customers:addresses.size,
-    accounts:{total:accountEntries.length,credentials_stored:credentialVault.size,authenticated:baskets.filter(b=>b.auth_status==="READY").length,needs_attention:baskets.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length},
-    orders:{total:baskets.length,ready:baskets.filter(b=>["READY","CLAIMED"].includes(b.status)).length,in_progress:baskets.filter(b=>b.status==="OPENED").length,needs_attention:baskets.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length,confirmed:baskets.filter(b=>b.status==="CONFIRMED").length,cards_bound:0,cards_needed:baskets.filter(b=>b.payment_route==="Corporate virtual card"&&b.status!=="CONFIRMED").length},
+    service:"AVAILABLE",customers:addressesNow.length,
+    accounts:{total:accountEntries.length,credentials_stored:protectedCredentials,authenticated:basketsNow.filter(b=>b.auth_status==="READY").length,needs_attention:basketsNow.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length},
+    orders:{total:basketsNow.length,ready:basketsNow.filter(b=>["READY","CLAIMED"].includes(b.status)).length,in_progress:basketsNow.filter(b=>b.status==="OPENED").length,needs_attention:basketsNow.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length,confirmed:basketsNow.filter(b=>b.status==="CONFIRMED").length,cards_bound:0,cards_needed:basketsNow.filter(b=>b.payment_route==="Corporate virtual card"&&b.status!=="CONFIRMED").length},
     cards:{total:0,active:0,programme_connected:false},
     retailers:[...retailerCounts].map(([retailer,accounts])=>({retailer,accounts})).sort((a,b)=>b.accounts-a.accounts)
   };
@@ -137,7 +139,7 @@ app.get("/api/control-center",async()=>{
 app.post("/api/execution-worker/heartbeat",async(req)=>{const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.literal("BULK").default("BULK")}).parse(req.body??{});workers.set(body.workerId,{id:body.workerId,hostname:body.hostname||"OrderGrid Windows Worker",mode:"BULK",last_seen:Date.now()});return {ok:true};});
 app.get("/api/execution-workers",async()=>({workers:[...workers.values()].filter(w=>Date.now()-w.last_seen<30_000).map(w=>({id:w.id,hostname:w.hostname,mode:w.mode,last_seen:new Date(w.last_seen).toISOString(),capacity:8,kind:"LOCAL_BROWSER"}))}));
 app.get("/api/recipients",async()=>({
-  recipients:[...addresses.values()].map(a=>({
+  recipients:activeAddresses().map(a=>({
     id:a.id,
     customer_reference:a.reference||a.id,
     recipient:a.recipient,
@@ -148,7 +150,7 @@ app.get("/api/recipients",async()=>({
     retailer_accounts:Object.fromEntries([...(accountRefs.get(a.id)||new Map<string,string>()).entries()])
   }))
 }));
-app.get("/api/bulk-baskets",async()=>{for(const b of baskets){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets};});
+app.get("/api/bulk-baskets",async()=>{for(const b of activeBaskets()){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets:activeBaskets()};});
 app.post("/api/bulk-queue/claim",async(req)=>{const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});let claimed=0;for(const basket of baskets.filter(b=>b.status==="READY").slice(0,body.limit)){basket.status="CLAIMED";basket.execution_worker_id=undefined;basket.expires_at=Date.now()+20*60_000;basket.auth_status="QUEUED";basket.failure_code=undefined;basket.failure_message="Queued for OrderGrid Checkout Engine";const address=addressesByReference(basket.customer_reference);for(const task of tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id)){task.status="CLAIMED";task.failure_code=undefined;task.failure_message="Queued for OrderGrid Checkout Engine"}claimed++;}return {claimed,queued:baskets.filter(b=>b.status==="CLAIMED").length};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),worker=workers.get(workerId);if(!worker||Date.now()-worker.last_seen>=30_000)return reply.code(409).send({error:"execution_worker_not_online"});let assigned=0;for(const basket of baskets.filter(b=>b.status==="CLAIMED"&&!b.execution_worker_id&&(!b.expires_at||b.expires_at>Date.now())).slice(0,body.limit)){basket.execution_worker_id=workerId;assigned++;}return {assigned};});
 app.get("/api/bulk-queue",async(req,reply)=>{const workerId=String((req.query as any)?.workerId||"");if(workerId.length<8)return reply.code(400).send({error:"worker_id_required"});for(const b of baskets){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets:baskets.filter(b=>b.execution_worker_id===workerId&&["CLAIMED","OPENED","REQUIRES_ACTION"].includes(b.status)).map(b=>({...b,customer_id:b.customer_reference,retailer_account_id:b.customer_reference+":"+b.retailer,profile_key:b.customer_reference+":"+b.retailer}))};});
