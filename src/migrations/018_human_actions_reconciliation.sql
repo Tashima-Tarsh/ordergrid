@@ -41,3 +41,28 @@ create index if not exists execution_worker_commands_claim_idx
   on public.execution_worker_commands(tenant_id,worker_id,status,requested_at);
 
 alter table public.execution_worker_commands enable row level security;
+
+
+create table if not exists public.retailer_order_observations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  retailer_account_id uuid not null references public.retailer_accounts(id) on delete cascade,
+  checkout_basket_id uuid references public.checkout_baskets(id) on delete cascade,
+  retailer text not null,
+  retailer_order_id text not null,
+  order_status text,
+  refund_status text,
+  refund_amount_minor bigint,
+  reward_units integer,
+  source_url text,
+  excerpt text,
+  observed_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(tenant_id,retailer_account_id,retailer_order_id),
+  check (refund_amount_minor is null or refund_amount_minor > 0)
+);
+
+create index if not exists retailer_order_observations_account_idx
+  on public.retailer_order_observations(tenant_id,retailer_account_id,observed_at desc);
+
+alter table public.retailer_order_observations enable row level security;
