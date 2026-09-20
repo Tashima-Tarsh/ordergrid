@@ -528,7 +528,10 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   if(!rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
   if(body.state==="CHALLENGE"){
     const authStatus=/LOGIN|PASSWORD|AUTH/i.test(body.code??"")?"AUTH_REQUIRED":"CHALLENGE";
-    await db.query("update retailer_accounts set auth_status=$1,updated_at=now() where id=$2 and tenant_id=$3",[authStatus,rows[0].retailer_account_id,p.tenantId]);
+    await db.query("update retailer_accounts set auth_status=$1,credential_status=case when $1='AUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,updated_at=now() where id=$2 and tenant_id=$3",[authStatus,rows[0].retailer_account_id,p.tenantId]);
+    if(/PAYMENT|3DS|CARD/i.test(body.code??""))await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+  }else if(body.state==="FAILED"){
+    await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
   }
   await audit(db,p.tenantId,p.id,"bulk_basket.progress","checkout_basket",id,{workerId:body.workerId,state:body.state,code:body.code??null,retailerAccountId:rows[0].retailer_account_id});
   return {id:rows[0].id,status:rows[0].status};
@@ -581,8 +584,8 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     );
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
-    await client.query("update checkout_baskets set status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),updated_at=now() where id=$2",[retailerOrderId,id]);
-    await client.query("update retailer_accounts set auth_status='READY',last_authenticated_at=now(),updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId]);
+    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),updated_at=now() where id=$2",[retailerOrderId,id]);
+    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status='STORED' then 'READY' else credential_status end,last_authenticated_at=now(),updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
     await audit(db,p.tenantId,p.id,"bulk_basket.confirmed_by_worker","checkout_basket",id,{workerId:body.workerId,retailerOrderId,customerId:locked.rows[0].customer_id,retailerAccountId:locked.rows[0].retailer_account_id});
