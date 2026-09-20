@@ -73,16 +73,29 @@
         ?'Actual retailer balance · '+new Date(account.reward_balance_observed_at).toLocaleString('en-IN')
         :Number(account.pending_rewards||0)+' pending';
       const refundMeta=(Number(account.observed_refund_orders||0)?Number(account.observed_refund_orders)+' refund status observed · ':'')+moneyMinor(account.pending_refund_minor||0)+' pending';
+      const sessionStatus=String(account.session_status||'UNKNOWN');
+      const sessionUntil=account.session_target_expires_at?new Date(account.session_target_expires_at).toLocaleString('en-IN'):'—';
+      const sessionMeta=sessionStatus==='READY'
+        ?'SESSION READY · target until '+sessionUntil
+        :sessionStatus==='REAUTH_REQUIRED'
+          ?'REAUTH REQUIRED · open preserved session'
+          :sessionStatus==='VERIFYING'
+            ?'VERIFYING SESSION'
+            :'SESSION NOT VERIFIED';
+      const sessionAction=account.session_worker_id&&sessionStatus!=='READY'
+        ?'<button type="button" class="secondary" data-open-session>Open session</button>'
+        :'';
       return `
         <article class="retailer-account-row" data-account-id="${esc(account.id)}">
           <div class="account-main">
             <strong>${esc(account.label||account.account_reference)}</strong>
             <small>${esc(account.account_reference)} · ${esc(status)} · credentials ${esc(credential)}</small>
+            <small class="session-line ${sessionStatus==='READY'?'ready':sessionStatus==='REAUTH_REQUIRED'?'attention':''}">${esc(sessionMeta)}</small>
           </div>
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
           <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
-          <div class="account-actions"><button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
+          <div class="account-actions">${sessionAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' accounts yet</strong><span>Use Manage accounts to import the first account pool.</span></div>';
   }
@@ -109,7 +122,19 @@
   $('#retailerPoolSelector')?.addEventListener('change',event=>{
     retailer=event.target.value;load();
   });
-  $('#manageRetailerAccounts')?.addEventListener('click',openManager);
+  $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
+    const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Preparing…';
+    try{
+      const result=await request('/api/retailer-accounts/prepare',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({retailer,targetDays:20})
+      });
+      toast(result.count+' account session(s) queued for readiness check');
+      await load();
+    }catch(error){alert(error.message)}
+    finally{button.disabled=false;button.textContent=previous}
+  });
+    $('#manageRetailerAccounts')?.addEventListener('click',openManager);
   $('#refreshRetailerAccounts')?.addEventListener('click',load);
   $('#closeRetailerAccounts')?.addEventListener('click',()=>$('#retailerAccountsDialog').close());
   $('#cancelRetailerAccounts')?.addEventListener('click',()=>$('#retailerAccountsDialog').close());
@@ -171,9 +196,19 @@
   });
 
   $('#retailerAccountPool')?.addEventListener('click',async event=>{
+    const row=event.target.closest('[data-account-id]');if(!row)return;
+    const account=accounts.find(x=>x.id===row.dataset.accountId);if(!account)return;
+    const open=event.target.closest('[data-open-session]');
+    if(open){
+      open.disabled=true;const previous=open.textContent;open.textContent='Opening…';
+      try{
+        await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/focus-session',{method:'POST'});
+        toast('Opening the exact preserved retailer session');
+      }catch(error){alert(error.message)}
+      finally{open.textContent=previous;setTimeout(()=>{open.disabled=false},1200)}
+      return;
+    }
     const button=event.target.closest('[data-toggle-account]');if(!button)return;
-    const row=button.closest('[data-account-id]'),account=accounts.find(x=>x.id===row?.dataset.accountId);
-    if(!account)return;
     button.disabled=true;
     try{
       await request('/api/retailer-accounts/'+encodeURIComponent(account.id),{
