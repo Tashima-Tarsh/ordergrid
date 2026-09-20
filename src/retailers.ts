@@ -43,6 +43,15 @@ export function verifiedRetailerUrl(value:string){
   return url.toString();
 }
 
+export function flipkartProductCandidateUrl(value:string){
+  const retailer=retailerForProductUrl(value);
+  if(retailer.id!=="flipkart")throw new Error("Only Flipkart product URLs are supported for this product check");
+  const url=new URL(value);
+  if(!/\/p\/[A-Za-z0-9_-]+(?:[/?]|$)/i.test(url.pathname+"/"))throw new Error("Use a Flipkart product-detail URL");
+  url.hash="";
+  return url.toString();
+}
+
 export function validateRetailerOrderId(value:string){
   const orderId=value.trim();
   if(!/^[A-Za-z0-9][A-Za-z0-9._\/-]{2,79}$/.test(orderId))throw new Error("Invalid retailer order ID");
