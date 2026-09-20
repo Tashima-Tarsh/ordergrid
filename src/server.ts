@@ -1447,7 +1447,15 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
       [hasError?"ERROR":"OBSERVED",hasError?"1":"12",body.error??body.authChallenge??null,p.tenantId,workerId,retailerAccountId,body.basketIds]
     );
     if(body.authChallenge){
-      await client.query("update retailer_accounts set auth_status='CHALLENGE',updated_at=now() where id=$1 and tenant_id=$2",[retailerAccountId,p.tenantId]);
+      await client.query(
+        "update retailer_accounts set auth_status='CHALLENGE',session_status='REAUTH_REQUIRED',session_checked_at=now(),session_target_expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+        [retailerAccountId,p.tenantId]
+      );
+    }else if(!body.error){
+      await client.query(
+        "update retailer_accounts set auth_status='READY',session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$1,updated_at=now() where id=$2 and tenant_id=$3",
+        [workerId,retailerAccountId,p.tenantId]
+      );
     }
     await client.query("commit");
     return {ok:true,observations:body.observations.length,rewardObserved:body.reward?.balance??null};
