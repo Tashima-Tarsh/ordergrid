@@ -15,10 +15,11 @@
     "db:migrate": "node dist/migrate.js",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit && npm run check:js",
-    "check:js": "node --check public/app.js && node --check public/dashboard.js && node --check public/user-dashboard.js && node --check public/bulk.js && node --check public/human-actions.js && node --check public/notifications.js && node --check public/funding.js && node --check public/wizard.js && node --check public/navigation.js && node --check public/fulfilment.js && node --check public/control-center.js && node --check public/automation-center.js && node --check public/autopilot.js && node --check public/rewards.js && node --check public/sw.js && node --check public/gst.js && node --check agent/index.mjs && node --check agent/cdp.mjs && node --check agent/lib.mjs",
+    "check:js": "node --check public/app.js && node --check public/dashboard.js && node --check public/user-dashboard.js && node --check public/bulk.js && node --check public/human-actions.js && node --check public/notifications.js && node --check public/funding.js && node --check public/wizard.js && node --check public/navigation.js && node --check public/control-center.js && node --check public/automation-center.js && node --check public/autopilot.js && node --check public/rewards.js && node --check public/sw.js && node --check public/gst.js && node --check agent/index.mjs && node --check agent/cdp.mjs && node --check agent/lib.mjs",
     "agent": "node agent/index.mjs",
     "audit:ci": "node scripts/audit-ci.mjs",
-    "smoke:demo": "node scripts/smoke-demo.mjs"
+    "smoke:demo": "node scripts/smoke-demo.mjs",
+    "smoke:frontend": "node scripts/smoke-frontend-contract.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

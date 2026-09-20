@@ -16,6 +16,7 @@ const port=Number(process.env.PORT??3000);
 const email=(process.env.DEMO_EMAIL??"demo@ordergrid.in").toLowerCase();
 const password=process.env.DEMO_PASSWORD??"OrderGridDemo2026!";
 const secret=process.env.SESSION_SECRET??randomBytes(32).toString("hex");
+const showroomRedirect=(process.env.SHOWROOM_REDIRECT_URL??"").trim().replace(/\/$/,"");
 const session=randomBytes(32).toString("base64url");
 type Address={id:string;tenant_id:string;recipient:string;phone:string;line1:string;line2?:string;city:string;state:string;postal_code:string;country:string;reference?:string;amazon_account?:string;flipkart_account?:string};
 type Batch={id:string;tenant_id:string;name:string;status:string;currency:string;estimated_total_minor:number;created_at:string;item_count:number;recipient_count:number;payment_route:string};
@@ -95,6 +96,14 @@ function importedRetailer(value:string){
   try{return retailerForProductUrl(/^https:\/\//i.test(raw)?raw:`https://${raw.replace(/^www\./,"")}/`).id}catch{return null}
 }
 const app=Fastify({logger:true,trustProxy:true});
+if(showroomRedirect){
+  app.addHook("onRequest",async(req,reply)=>{
+    if(req.url==="/api/health")return;
+    let target:string;
+    try{target=new URL(req.url,showroomRedirect+"/").toString()}catch{target=showroomRedirect+"/"}
+    return reply.code(302).header("location",target).send();
+  });
+}
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"});
 await app.register(cookie,{secret});

@@ -14,7 +14,7 @@ function render(){const pending=state.tasks.filter(t=>t.status==='REQUIRES_ACTIO
   window.dispatchEvent(new CustomEvent('ordergrid:update',{detail:{tasks:state.tasks}}));
 }
 function openBatch(){recipientsFile=null;$('#batchForm').reset();$('#recipientPreview').textContent='';$('#formError').textContent='';$('#batchDialog').showModal()}
-$('#loginForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);$('#loginError').textContent='';try{await api('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});$('#login').classList.add('hidden');await refresh();toast('Signed in')}catch(err){$('#loginError').textContent=err.message}};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);$('#loginError').textContent='';try{await api('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});$('#login').classList.add('hidden');await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Signed in')}catch(err){$('#loginError').textContent=err.message}};
 $('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}$('#login').classList.remove('hidden')};
 $('#newBatch').onclick=openBatch;$('#emptyNew').onclick=openBatch;$('#close').onclick=()=>$('#batchDialog').close();$('#cancel').onclick=()=>$('#batchDialog').close();
 $('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};

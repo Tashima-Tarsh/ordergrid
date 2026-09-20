@@ -1,9 +1,9 @@
-const CACHE='ordergrid-product-v24';
+const CACHE='ordergrid-product-v25';
 const ASSETS=[
-  './','./index.html','./styles.css','./finance.css','./premium.css','./dashboard.css','./overview-premium.css',
-  './customer.css','./control-center.css','./automation-center.css','./fulfilment.css',
+  './','./index.html','./styles.css','./finance.css','./premium.css','./dashboard.css',
+  './customer.css','./control-center.css','./automation-center.css',
   './app.js','./dashboard.js','./funding.js','./rewards.js','./bulk.js','./notifications.js',
-  './control-center.js','./automation-center.js','./navigation.js','./fulfilment.js',
+  './control-center.js','./automation-center.js','./navigation.js',
   './wizard.js','./manifest.webmanifest','./app-icon.svg'
 ];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));

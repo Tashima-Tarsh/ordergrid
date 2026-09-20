@@ -102,21 +102,29 @@
   $('#cardIssuer')?.addEventListener('change',syncCardholderRequirements);
   $('#bankAuthMode')?.addEventListener('change',syncBankAuth);
 
-  $('#connectIssuer')?.addEventListener('click',()=>{
-    const dialog=$('#issuerDialog');
-    if(!dialog){toast('Bank connection window is unavailable. Refresh the page.');return}
-    $('#issuerError').textContent='';
-    try{syncBankConnector()}catch(error){console.error(error)}
-    try{
-      if(typeof dialog.showModal==='function')dialog.showModal();
-      else dialog.setAttribute('open','');
-    }catch(error){
-      console.error(error);
-      dialog.setAttribute('open','');
+  function closeIssuerConnector(){
+    const panel=$('#issuerDialog');if(!panel)return;
+    panel.hidden=true;document.body.classList.remove('issuer-connect-open');
+  }
+  async function openIssuerConnector(){
+    const panel=$('#issuerDialog');
+    if(!panel){toast('Bank connection window is unavailable. Refresh the page.');return}
+    const button=$('#connectIssuer'),previous=button?.textContent;
+    if(button){button.disabled=true;button.textContent='Opening…'}
+    try{await load()}catch(error){console.error(error)}
+    finally{
+      if(button){button.disabled=false;button.textContent=previous||'Connect bank programme'}
     }
-  });
-  $('#closeIssuer').onclick=()=>$('#issuerDialog').close();
-  $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
+    const error=$('#issuerError');if(error)error.textContent='';
+    try{syncBankConnector()}catch(error){console.error(error)}
+    panel.hidden=false;document.body.classList.add('issuer-connect-open');
+    setTimeout(()=>$('#issuerProvider')?.focus(),0);
+  }
+  $('#connectIssuer')?.addEventListener('click',openIssuerConnector);
+  $('#closeIssuer')?.addEventListener('click',closeIssuerConnector);
+  $('#cancelIssuer')?.addEventListener('click',closeIssuerConnector);
+  $('#issuerDialog')?.addEventListener('click',event=>{if(event.target===event.currentTarget)closeIssuerConnector()});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('#issuerDialog')?.hidden)closeIssuerConnector()});
   $('#issuerForm').onsubmit=async event=>{
     event.preventDefault();
     const button=$('#saveIssuer'),form=new FormData(event.currentTarget),providerCode=String(form.get('provider'));
@@ -156,7 +164,7 @@
         };
       }
       provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
-      event.currentTarget.reset();$('#issuerDialog').close();await load();toast('Bank card programme connected');
+      event.currentTarget.reset();closeIssuerConnector();await load();toast('Bank card programme connected');
     }catch(error){$('#issuerError').textContent=error.message}
     finally{button.disabled=false;button.textContent='Test & connect'}
   };
@@ -206,5 +214,7 @@
     catch(error){alert(error.message)}
     finally{button.disabled=false}
   };
+  window.addEventListener('ordergrid:auth-ready',load);
+  window.addEventListener('ordergrid:refresh',load);
   load();
 })();
