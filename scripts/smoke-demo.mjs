@@ -53,29 +53,24 @@ try{
   cookie=setCookie.split(";")[0]||"";
   assert(cookie.startsWith("demo_session="),"login did not set demo_session cookie");
 
-  const networkBefore=await json("/api/dealer-network");
-  assert(networkBefore.body.dealers?.length===1,"expected one main dealer before sub-dealer creation");
-  const mainDealerId=networkBefore.body.homeTenantId;
-  const createdDealer=await json("/api/dealers",{
+  const usersBefore=await json("/api/users");
+  assert(usersBefore.body.users?.length===1,"expected one workspace user initially");
+  assert(usersBefore.body.users?.some(u=>u.email===email&&u.current_user===true),"current workspace owner missing");
+
+  const createdUser=await json("/api/users",{
     method:"POST",
     headers:{"content-type":"application/json"},
-    body:JSON.stringify({name:"Smoke Sub Dealer",ownerEmail:"subdealer-smoke@example.com"})
+    body:JSON.stringify({
+      email:"buyer-smoke@example.com",
+      role:"BUYER",
+      password:"OrderGridBuyerSmoke2026!"
+    })
   });
-  const subDealerId=createdDealer.body.dealer?.id;
-  assert(subDealerId,"sub-dealer creation did not return id");
-  const networkAfter=await json("/api/dealer-network");
-  assert(networkAfter.body.dealers?.length===2,"dealer network did not show main + sub-dealer");
-  const mainUsers=await json("/api/dealer-users");
-  assert(mainUsers.body.users?.some(u=>u.email===email),"main dealer user missing before switch");
-  await json("/api/dealer-context",{
-    method:"POST",
-    headers:{"content-type":"application/json"},
-    body:JSON.stringify({tenantId:subDealerId})
-  });
-  const childBatchesBefore=await json("/api/batches");
-  assert(childBatchesBefore.body.batches?.length===0,"new sub-dealer was not isolated from main dealer batches");
-  const childUsers=await json("/api/dealer-users");
-  assert(childUsers.body.users?.some(u=>u.email==="subdealer-smoke@example.com"),"sub-dealer owner missing");
+  assert(createdUser.body.user?.id,"workspace user creation did not return id");
+
+  const usersAfter=await json("/api/users");
+  assert(usersAfter.body.users?.length===2,"workspace user list did not include the new user");
+  assert(usersAfter.body.users?.some(u=>u.email==="buyer-smoke@example.com"&&u.role==="BUYER"),"new buyer user missing");
 
   const form=new FormData();
   form.append("file",new Blob([
@@ -195,6 +190,7 @@ try{
   console.log("ORDERGRID_SMOKE_OK");
   console.log(JSON.stringify({
     login:200,
+    usersOnly:true,
     recipientImport:1,
     batchStatus:"APPROVED",
     basketsCreated:2,
