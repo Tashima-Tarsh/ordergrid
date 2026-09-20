@@ -102,5 +102,11 @@ must(server.includes('app.get("/api/retailer-users/template.xlsx"'),"retailer us
 must(server.includes("retailerAccountIds:[...new Set(retailerAccountIds)]"),"retailer user contract: bulk import must return bound account ids");
 must(files["public/rewards.js"].includes("Importing & preparing…"),"retailer user contract: bulk import must prepare sessions");
 must(files["public/rewards.js"].includes("accountIds:ids,retailer:'flipkart'"),"retailer user contract: imported Flipkart sessions must be queued");
+must(html.includes("ordergrid-flip-000001"),"retailer user contract: generated reference format missing from UI");
+must(!html.includes('name="reference" placeholder="USER-001"'),"retailer user contract: manual user reference field must not exist");
+must(server.includes("nextOrderGridFlipReference"),"retailer user contract: sequential reference generator missing");
+must(server.includes("ordergrid-flip-"),"retailer user contract: generated reference prefix missing");
+must(!server.includes('{header:"reference",key:"reference"'),"retailer user contract: Excel template must not ask for user reference");
+must(!files["public/rewards.js"].includes("form.get('reference')"),"retailer user contract: client must not submit manual user reference");
 
 console.log("Frontend/card connector contract OK");
