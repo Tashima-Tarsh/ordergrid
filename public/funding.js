@@ -2,11 +2,7 @@
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
   let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[],banks=[];
-  const issuerSetup=$('#issuerDialog'),fundingWorkspace=document.querySelector('.funding-workspace');
-  if(issuerSetup&&fundingWorkspace){
-    issuerSetup.classList.add('issuer-connect-inline');
-    fundingWorkspace.querySelector('.panel-head')?.after(issuerSetup);
-  }
+  const issuerSetup=$('#issuerDialog');
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -51,6 +47,20 @@
         :'Set up the existing funding card and bank virtual-card programme to continue.';
     $('#issuerStatus').textContent=connected.length?`${connected.length} CONNECTED`:'SETUP REQUIRED';
     $('#fundingLimit').textContent=connected.length?'Bank controlled':'—';
+    const current=connected[0]||null;
+    $('#fundingBank').textContent=current?(current.bank_name||current.provider||'Connected issuer'):'—';
+    $('#fundingProgramme').textContent=current?(current.programme_name||'Connected programme'):'—';
+    $('#fundingNetwork').textContent=current?(current.card_network||'—'):'—';
+    $('#fundingCardIdentity').textContent=current?.funding_card_last4
+      ?`Ending ${current.funding_card_last4}${current.funding_card_expiry_month&&current.funding_card_expiry_year?` · ${String(current.funding_card_expiry_month).padStart(2,'0')}/${current.funding_card_expiry_year}`:''}`
+      :'—';
+    $('#fundingConnectionMode').textContent=current
+      ?String(current.integration_mode||current.provider||'CONNECTED').replaceAll('_',' ')
+      :'—';
+    $('#fundingConnectionState').textContent=current?'CONNECTED':'SETUP REQUIRED';
+    $('#issuerModalStatus').textContent=current?'CONNECTED':'SETUP REQUIRED';
+    $('#issuerModalProgramme').textContent=current?(current.programme_name||current.bank_name||current.provider):'Not connected';
+    $('#issuerModalCard').textContent=current?.funding_card_last4?`Ending ${current.funding_card_last4}`:'Not connected';
     $('#connectIssuer').hidden=false;
     $('#connectIssuer').disabled=false;
     $('#connectIssuer').textContent=previewOnly?'Production setup only':connected.length?'Edit funding card / programme':'Set up funding card';
@@ -113,6 +123,7 @@
   function closeIssuerConnector(){
     const panel=$('#issuerDialog');if(!panel)return;
     panel.hidden=true;
+    document.body.classList.remove('issuer-connect-open');
   }
   function prefillFundingCardIdentity(){
     const form=$('#issuerForm'),current=issuers.find(x=>x.status==='CONNECTED');
@@ -134,16 +145,21 @@
     const button=$('#connectIssuer'),previous=button?.textContent;
     if(button){button.disabled=true;button.textContent='Opening setup…'}
     try{await load()}catch(error){console.error(error)}
-    finally{if(button){button.disabled=false;button.textContent=previous||'Set up funding card'}}
+    finally{if(button){button.disabled=false;button.textContent=previous||'Set up / manage card'}}
     const error=$('#issuerError');if(error)error.textContent='';
     try{prefillFundingCardIdentity()}catch(error){console.error(error)}
     panel.hidden=false;
-    panel.scrollIntoView({behavior:'smooth',block:'start'});
+    document.body.classList.add('issuer-connect-open');
     setTimeout(()=>$('#issuerProvider')?.focus(),0);
   }
   $('#connectIssuer')?.addEventListener('click',openIssuerConnector);
+  $('#fundingSourceCard')?.addEventListener('click',openIssuerConnector);
+  $('#fundingSourceCard')?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openIssuerConnector()}});
   $('#closeIssuer')?.addEventListener('click',closeIssuerConnector);
   $('#cancelIssuer')?.addEventListener('click',closeIssuerConnector);
+  issuerSetup?.addEventListener('click',event=>{if(event.target===issuerSetup)closeIssuerConnector()});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!issuerSetup?.hidden)closeIssuerConnector()});
+  window.addEventListener('ordergrid:cards-open',openIssuerConnector);
   $('#issuerForm').onsubmit=async event=>{
     event.preventDefault();
     const button=$('#saveIssuer'),form=new FormData(event.currentTarget),providerCode=String(form.get('provider'));
@@ -192,6 +208,7 @@
     }catch(error){
       $('#issuerError').textContent=error.message;
       $('#issuerDialog').hidden=false;
+      document.body.classList.add('issuer-connect-open');
       $('#issuerError').scrollIntoView({behavior:'smooth',block:'center'});
     }
     finally{button.disabled=false;button.textContent='Test & connect'}
