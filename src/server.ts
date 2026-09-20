@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
 import { audit, createDb } from "./db.js";
-import { hashPassword, tokenHash, verifyPassword } from "./security.js";
+import { decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } from "./security.js";
 import { createOrderQueue } from "./queue.js";
 import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
@@ -34,17 +34,41 @@ app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)a
 app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await Promise.all([db.query("select status,count(*)::int count,coalesce(sum(estimated_total_minor),0)::bigint total from order_batches where tenant_id=$1 group by status",[p.tenantId]),db.query("select status,count(*)::int count from purchase_orders where tenant_id=$1 group by status",[p.tenantId])]);return {batches:b.rows,orders:o.rows};});
 app.get("/api/batches",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select b.id,b.name,b.status,b.currency,b.payment_route,b.estimated_total_minor,b.created_at,count(i.id)::int item_count,count(distinct i.address_id)::int recipient_count from order_batches b left join batch_items i on i.batch_id=b.id where b.tenant_id=$1 group by b.id order by b.created_at desc limit 100`,[p.tenantId]);return {batches:rows};});
 const retailerAccountColumns:Record<string,string>={
-  amazon_account:"amazon-in",
-  amazon_in_account:"amazon-in",
-  flipkart_account:"flipkart",
-  myntra_account:"myntra",
-  ajio_account:"ajio",
-  tata_cliq_account:"tatacliq",
-  tatacliq_account:"tatacliq",
-  meesho_account:"meesho",
-  nykaa_account:"nykaa",
-  jiomart_account:"jiomart"
+  amazon_account:"amazon-in",amazon_in_account:"amazon-in",amazon_user_id:"amazon-in",amazon_username:"amazon-in",amazon_login:"amazon-in",
+  flipkart_account:"flipkart",flipkart_user_id:"flipkart",flipkart_username:"flipkart",flipkart_login:"flipkart",
+  myntra_account:"myntra",myntra_user_id:"myntra",myntra_login:"myntra",
+  ajio_account:"ajio",ajio_user_id:"ajio",ajio_login:"ajio",
+  tata_cliq_account:"tatacliq",tatacliq_account:"tatacliq",tatacliq_user_id:"tatacliq",tatacliq_login:"tatacliq",
+  meesho_account:"meesho",meesho_user_id:"meesho",meesho_login:"meesho",
+  nykaa_account:"nykaa",nykaa_user_id:"nykaa",nykaa_login:"nykaa",
+  jiomart_account:"jiomart",jiomart_user_id:"jiomart",jiomart_login:"jiomart"
 };
+const retailerPasswordColumns:Record<string,string[]>={
+  "amazon-in":["amazon_password","amazon_in_password"],
+  flipkart:["flipkart_password"],
+  myntra:["myntra_password"],
+  ajio:["ajio_password"],
+  tatacliq:["tatacliq_password","tata_cliq_password"],
+  meesho:["meesho_password"],
+  nykaa:["nykaa_password"],
+  jiomart:["jiomart_password"]
+};
+const retailerAliases:Record<string,string>={
+  amazon:"amazon-in","amazon.in":"amazon-in","amazon-in":"amazon-in",
+  flipkart:"flipkart","flipkart.com":"flipkart",myntra:"myntra","myntra.com":"myntra",
+  ajio:"ajio","ajio.com":"ajio",tatacliq:"tatacliq","tatacliq.com":"tatacliq",
+  meesho:"meesho","meesho.com":"meesho",nykaa:"nykaa","nykaa.com":"nykaa",
+  jiomart:"jiomart","jiomart.com":"jiomart"
+};
+function retailerFromImport(value:string){
+  const raw=value.trim().toLowerCase();
+  if(!raw)return null;
+  if(retailerAliases[raw])return retailerAliases[raw]!;
+  try{
+    const url=/^https:\/\//i.test(raw)?raw:`https://${raw.replace(/^www\./,"")}/`;
+    return retailerForProductUrl(url).id;
+  }catch{return null}
+}
 
 app.post("/api/address-books/import",async(req,reply)=>{
   const p=req.principal!;
@@ -71,7 +95,7 @@ app.post("/api/address-books/import",async(req,reply)=>{
     await client.query("begin");
     const book=await client.query("insert into address_books(tenant_id,name,created_by) values($1,$2,$3) returning id,name",[p.tenantId,file.filename.replace(/\.[^.]+$/,"").slice(0,120),p.id]);
     const ids:string[]=[];
-    let retailerAccountsBound=0;
+    let retailerAccountsBound=0,credentialsStored=0;
     for(const row of rows.slice(1)){
       if(!row.some(Boolean))continue;
       const phone=value(row,"phone").replace(/\D/g,"");
@@ -93,23 +117,48 @@ app.post("/api/address-books/import",async(req,reply)=>{
         [book.rows[0].id,customerId,value(row,"recipient"),phone,value(row,"line1"),value(row,"line2")||null,value(row,"city"),value(row,"state"),postal,(value(row,"country")||"IN").toUpperCase(),externalReference]
       );
       ids.push(inserted.rows[0].id);
+      const importedAccounts=new Map<string,{accountReference:string;password:string}>();
       for(const [column,retailer] of Object.entries(retailerAccountColumns)){
         const accountReference=value(row,column).trim();
-        if(!accountReference)continue;
-        await client.query(
-          `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status)
-           values($1,$2,$3,$4,'AUTH_REQUIRED')
+        if(!accountReference||importedAccounts.has(retailer))continue;
+        const password=(retailerPasswordColumns[retailer]||[]).map(name=>value(row,name).trim()).find(Boolean)||"";
+        importedAccounts.set(retailer,{accountReference,password});
+      }
+      const genericRetailer=retailerFromImport(value(row,"retailer"));
+      const genericLogin=(value(row,"retailer_login")||value(row,"retailer_user_id")||value(row,"retailer_username")).trim();
+      if(genericRetailer&&genericLogin&&!importedAccounts.has(genericRetailer)){
+        importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:value(row,"retailer_password").trim()});
+      }
+      for(const [retailer,credential] of importedAccounts){
+        const account=await client.query(
+          `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,credential_status)
+           values($1,$2,$3,$4,'AUTH_REQUIRED',$5)
            on conflict(tenant_id,customer_id,retailer) do update
-           set account_reference=excluded.account_reference,updated_at=now()`,
-          [p.tenantId,customerId,retailer,accountReference.slice(0,240)]
+           set account_reference=excluded.account_reference,
+               credential_status=case when excluded.credential_status='STORED' then 'STORED' else retailer_accounts.credential_status end,
+               updated_at=now()
+           returning id`,
+          [p.tenantId,customerId,retailer,credential.accountReference.slice(0,240),credential.password?"STORED":"MISSING"]
         );
         retailerAccountsBound++;
+        if(credential.password){
+          const encrypted=encryptJson({password:credential.password},config.DATA_ENCRYPTION_KEY_BASE64);
+          await client.query(
+            `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
+             values($1,$2,$3,$4,$5,$6,now())
+             on conflict(tenant_id,retailer_account_id) do update
+             set ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,created_by=excluded.created_by,updated_at=now()`,
+            [p.tenantId,account.rows[0].id,encrypted.ciphertext,encrypted.iv,encrypted.authTag,p.id]
+          );
+          await client.query("update retailer_accounts set credential_status='STORED',last_credential_update_at=now(),updated_at=now() where id=$1",[account.rows[0].id]);
+          credentialsStored++;
+        }
       }
     }
     if(!ids.length)throw new Error("No valid address rows");
     await client.query("commit");
-    await audit(db,p.tenantId,p.id,"address_book.imported","address_book",book.rows[0].id,{count:ids.length,retailerAccountsBound});
-    return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,count:ids.length,retailerAccountsBound});
+    await audit(db,p.tenantId,p.id,"address_book.imported","address_book",book.rows[0].id,{count:ids.length,retailerAccountsBound,credentialsStored});
+    return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,count:ids.length,retailerAccountsBound,credentialsStored});
   }catch(e){
     await client.query("rollback");
     throw e;
@@ -139,7 +188,7 @@ app.get("/api/retailer-accounts",async(req)=>{
   const p=req.principal!;
   const {rows}=await db.query(`
     select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
-      ra.retailer,ra.account_reference,ra.profile_key,ra.auth_status,ra.last_authenticated_at,ra.updated_at
+      ra.retailer,ra.account_reference,ra.profile_key,ra.auth_status,ra.credential_status,ra.last_authenticated_at,ra.last_credential_update_at,ra.updated_at
     from retailer_accounts ra
     join customers c on c.id=ra.customer_id
     where ra.tenant_id=$1
