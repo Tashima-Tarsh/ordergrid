@@ -775,20 +775,16 @@ app.get("/api/bulk-baskets",async(req)=>{
   return {baskets:rows};
 });
 
-app.post("/api/bulk-queue/claim",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});const policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled)return reply.code(409).send({error:"autopilot_paused"});const effectiveLimit=Math.min(limit,Number(policy.max_active_orders||8));const client=await db.connect();try{await client.query("begin");await client.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='READY' order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);const ids:string[]=[];for(const row of picked.rows){await client.query("update checkout_baskets set status='CLAIMED',claimed_by=$1,execution_worker_id=null,expires_at=now()+interval '20 minutes',updated_at=now() where id=$2",[p.id,row.id]);ids.push(row.id);}await client.query("commit");for(const basketId of ids){
-  await assignFundingRoute(db,p.tenantId,basketId);
-  let cardId=await assignAvailableVirtualCard(db,p.tenantId,basketId);
-  if(!cardId&&policy.auto_assign_virtual_card){
-    const card=await ensureBasketVirtualCard(db,config,p.tenantId,basketId,p.id);
-    cardId=card.cardId;
-    if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
-      await db.query(
-        "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
-        [basketId,p.tenantId]
-      );
-    }
-  }
-}await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:ids.length});return {claimed:ids.length,ids};}catch(e){await client.query("rollback");throw e}finally{client.release()}});
+app.post("/api/bulk-queue/claim",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const {limit}=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
+  const policy=await getAutomationPolicy(p.tenantId);
+  const result=await claimReadyBaskets(p.tenantId,p.id,limit,policy);
+  if("error" in result)return reply.code(409).send({error:result.error});
+  await audit(db,p.tenantId,p.id,"bulk_queue.claimed","checkout_basket",null,{count:result.ids.length});
+  return result;
+});
 
 app.get("/api/bulk-queue",async(req,reply)=>{
   const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);
