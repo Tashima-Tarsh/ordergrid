@@ -194,6 +194,8 @@ function pageStateScript(address,paymentRoute,commercialApprovedAmountMinor){
       }
     }
 
+    const cvvInput=document.querySelector('input[autocomplete="cc-csc"],input[name*="cvv" i],input[id*="cvv" i],input[name*="cvc" i],input[id*="cvc" i],input[name*="securityCode" i],input[id*="securityCode" i]');
+    if(cvvInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'CARD_CVV_REQUIRED',message:'Card security code is required on the retailer payment page. Enter it directly in the live retailer session; OrderGrid does not store CVV.',href:location.href};
     const cardInput=document.querySelector('input[autocomplete="cc-number"],input[name*="cardNumber" i],input[id*="cardNumber" i]');
     if(cardInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'No tokenized/saved retailer payment method is available. Add the approved payment method in the retailer session; OrderGrid does not collect raw card PAN/CVV.',href:location.href};
 
