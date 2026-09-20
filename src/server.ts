@@ -814,6 +814,19 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
     if(/PAYMENT|3DS|CARD/i.test(body.code??""))await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    const policy=await getAutomationPolicy(p.tenantId);
+    const batch=await db.query("select batch_id from checkout_baskets where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    if(batch.rows[0]&&Number(policy.failure_pause_percent)<100){
+      const counts=await db.query("select count(*)::int total,count(*) filter(where status='FAILED')::int failed from checkout_baskets where tenant_id=$1 and batch_id=$2",[p.tenantId,batch.rows[0].batch_id]);
+      const total=Number(counts.rows[0]?.total||0),failed=Number(counts.rows[0]?.failed||0);
+      const failurePercent=total?failed/total*100:0;
+      if(failurePercent>=Number(policy.failure_pause_percent)){
+        await db.query(
+          "update checkout_baskets set status='REQUIRES_ACTION',failure_code='POLICY_REVIEW_REQUIRED',failure_message='Batch paused by automation policy after failure threshold was reached',execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and batch_id=$2 and status in ('READY','CLAIMED','OPENED')",
+          [p.tenantId,batch.rows[0].batch_id]
+        );
+      }
+    }
   }
   await audit(db,p.tenantId,p.id,"bulk_basket.progress","checkout_basket",id,{workerId:body.workerId,state:body.state,code:body.code??null,retailerAccountId:rows[0].retailer_account_id});
   return {id:rows[0].id,status:rows[0].status};
