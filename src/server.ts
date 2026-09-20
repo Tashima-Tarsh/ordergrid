@@ -94,14 +94,45 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
     await client.query("rollback");throw error;
   }finally{client.release()}
   for(const basketId of ids){
+    const commercial=await db.query(
+      `select b.payment_route,coalesce(sum(po.amount_minor),0)::bigint expected_minor
+       from checkout_baskets cb
+       join order_batches b on b.id=cb.batch_id
+       left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
+       where cb.id=$1 and cb.tenant_id=$2
+       group by b.payment_route`,
+      [basketId,tenantId]
+    );
+    const expectedMinor=Number(commercial.rows[0]?.expected_minor||0);
+    const paymentRoute=String(commercial.rows[0]?.payment_route||"");
+    if(Number(policy.max_order_value_minor)>0&&expectedMinor>Number(policy.max_order_value_minor)){
+      await db.query(
+        "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='ORDER_VALUE_POLICY_REQUIRED',failure_message='Expected order value exceeds the Autopilot order-value policy',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+        [basketId,tenantId]
+      );
+      continue;
+    }
+
     await assignFundingRoute(db,tenantId,basketId);
-    let cardId=await assignAvailableVirtualCard(db,tenantId,basketId);
-    if(!cardId&&policy.auto_assign_virtual_card){
-      const card=await ensureBasketVirtualCard(db,config,tenantId,basketId,userId);
-      cardId=card.cardId;
-      if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
+    if(policy.auto_assign_virtual_card){
+      let cardId=await assignAvailableVirtualCard(db,tenantId,basketId);
+      if(!cardId){
+        let fundingCeiling=Math.ceil(expectedMinor*(1+Number(policy.max_price_increase_percent)/100));
+        if(Number(policy.max_order_value_minor)>0)fundingCeiling=Math.min(fundingCeiling,Number(policy.max_order_value_minor));
+        const card=await ensureBasketVirtualCard(db,config,tenantId,basketId,userId,fundingCeiling);
+        cardId=card.cardId;
+        if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
+          await db.query(
+            "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+            [basketId,tenantId]
+          );
+        }
+      }
+    }else if(paymentRoute==="Corporate virtual card"){
+      const assigned=await db.query("select virtual_card_id from checkout_baskets where id=$1 and tenant_id=$2",[basketId,tenantId]);
+      if(!assigned.rows[0]?.virtual_card_id){
         await db.query(
-          "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+          "update checkout_baskets set status='REQUIRES_ACTION',failure_code='CARD_ASSIGNMENT_REQUIRED',failure_message='Order is waiting for manual virtual-card assignment',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
           [basketId,tenantId]
         );
       }
