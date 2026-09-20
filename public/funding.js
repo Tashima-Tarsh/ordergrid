@@ -2,6 +2,11 @@
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
   let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[],banks=[];
+  const issuerSetup=$('#issuerDialog'),fundingWorkspace=document.querySelector('.funding-workspace');
+  if(issuerSetup&&fundingWorkspace){
+    issuerSetup.classList.add('issuer-connect-inline');
+    fundingWorkspace.querySelector('.panel-head')?.after(issuerSetup);
+  }
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -36,16 +41,19 @@
     const connected=issuers.filter(x=>x.status==='CONNECTED');
     const name=connected.length===1?(connected[0].programme_name||connected[0].bank_name||connected[0].provider):`${connected.length} bank programmes`;
     $('#fundingName').textContent=connected.length?`${name} connected`:'No card programme connected';
+    const cardIdentity=connected.find(x=>x.funding_card_last4);
     $('#fundingMeta').textContent=previewOnly
-      ?'Connect an approved card programme to begin.'
+      ?'Set up an approved funding card and virtual-card programme to begin.'
       :connected.length
-        ?'Choose any connected bank programme below. Parent-card programmes create child virtual cards against the approved bank limit.'
-        :'Connect a bank/card programme to continue.';
+        ?(cardIdentity
+          ?`${cardIdentity.bank_name||cardIdentity.provider} funding card ending ${cardIdentity.funding_card_last4} · choose the programme below to create virtual cards.`
+          :'Choose any connected bank programme below. Parent-card programmes create child virtual cards against the approved bank limit.')
+        :'Set up the existing funding card and bank virtual-card programme to continue.';
     $('#issuerStatus').textContent=connected.length?`${connected.length} CONNECTED`:'SETUP REQUIRED';
     $('#fundingLimit').textContent=connected.length?'Bank controlled':'—';
     $('#connectIssuer').hidden=false;
     $('#connectIssuer').disabled=false;
-    $('#connectIssuer').textContent=previewOnly?'Production setup only':connected.length?'Add / replace bank programme':'Connect bank programme';
+    $('#connectIssuer').textContent=previewOnly?'Production setup only':connected.length?'Edit funding card / programme':'Set up funding card';
     $('#disconnectIssuer').hidden=!connected.length||previewOnly;
     const issuerSelect=$('#cardIssuer');
     if(issuerSelect){
@@ -104,38 +112,48 @@
 
   function closeIssuerConnector(){
     const panel=$('#issuerDialog');if(!panel)return;
-    panel.hidden=true;document.body.classList.remove('issuer-connect-open');
+    panel.hidden=true;
+  }
+  function prefillFundingCardIdentity(){
+    const form=$('#issuerForm'),current=issuers.find(x=>x.status==='CONNECTED');
+    if(!form||!current)return;
+    if(form.elements.fundingCardholderName&&!form.elements.fundingCardholderName.value)form.elements.fundingCardholderName.value=current.funding_cardholder_name||'';
+    if(form.elements.fundingCardLast4&&!form.elements.fundingCardLast4.value)form.elements.fundingCardLast4.value=current.funding_card_last4||'';
+    if(form.elements.fundingCardExpiryMonth&&!form.elements.fundingCardExpiryMonth.value)form.elements.fundingCardExpiryMonth.value=current.funding_card_expiry_month||'';
+    if(form.elements.fundingCardExpiryYear&&!form.elements.fundingCardExpiryYear.value)form.elements.fundingCardExpiryYear.value=current.funding_card_expiry_year||'';
   }
   async function openIssuerConnector(){
     const panel=$('#issuerDialog');
-    if(!panel){toast('Bank connection window is unavailable. Refresh the page.');return}
+    if(!panel){toast('Funding card setup is unavailable. Refresh the page.');return}
     const button=$('#connectIssuer'),previous=button?.textContent;
-    if(button){button.disabled=true;button.textContent='Opening…'}
+    if(button){button.disabled=true;button.textContent='Opening setup…'}
     try{await load()}catch(error){console.error(error)}
-    finally{
-      if(button){button.disabled=false;button.textContent=previous||'Connect bank programme'}
-    }
+    finally{if(button){button.disabled=false;button.textContent=previous||'Set up funding card'}}
     const error=$('#issuerError');if(error)error.textContent='';
-    try{syncBankConnector()}catch(error){console.error(error)}
-    panel.hidden=false;document.body.classList.add('issuer-connect-open');
+    try{syncBankConnector();prefillFundingCardIdentity()}catch(error){console.error(error)}
+    panel.hidden=false;
+    panel.scrollIntoView({behavior:'smooth',block:'start'});
     setTimeout(()=>$('#issuerProvider')?.focus(),0);
   }
   $('#connectIssuer')?.addEventListener('click',openIssuerConnector);
   $('#closeIssuer')?.addEventListener('click',closeIssuerConnector);
   $('#cancelIssuer')?.addEventListener('click',closeIssuerConnector);
-  $('#issuerDialog')?.addEventListener('click',event=>{if(event.target===event.currentTarget)closeIssuerConnector()});
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('#issuerDialog')?.hidden)closeIssuerConnector()});
   $('#issuerForm').onsubmit=async event=>{
     event.preventDefault();
     const button=$('#saveIssuer'),form=new FormData(event.currentTarget),providerCode=String(form.get('provider'));
     const optional=name=>{const value=String(form.get(name)||'').trim();return value||undefined};
     button.disabled=true;button.textContent='Saving…';$('#issuerError').textContent='';
     try{
+      const month=String(form.get('fundingCardExpiryMonth')||'').trim(),year=String(form.get('fundingCardExpiryYear')||'').trim();
       const common={
         provider:providerCode,
         bankName:String(form.get('bankName')),
         programmeName:String(form.get('programmeName')),
-        cardNetwork:String(form.get('cardNetwork'))
+        cardNetwork:String(form.get('cardNetwork')),
+        fundingCardholderName:optional('fundingCardholderName'),
+        fundingCardLast4:optional('fundingCardLast4'),
+        fundingCardExpiryMonth:month?Number(month):undefined,
+        fundingCardExpiryYear:year?Number(year):undefined
       };
       let payload;
       if(providerCode==='enkash'){
@@ -165,7 +183,11 @@
       }
       provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
       event.currentTarget.reset();closeIssuerConnector();await load();toast('Bank card programme connected');
-    }catch(error){$('#issuerError').textContent=error.message}
+    }catch(error){
+      $('#issuerError').textContent=error.message;
+      $('#issuerDialog').hidden=false;
+      $('#issuerError').scrollIntoView({behavior:'smooth',block:'center'});
+    }
     finally{button.disabled=false;button.textContent='Test & connect'}
   };
   $('#disconnectIssuer').onclick=async()=>{
