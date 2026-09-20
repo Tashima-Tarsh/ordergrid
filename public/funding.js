@@ -1,7 +1,7 @@
 (()=>{
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
-  let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[];
+  let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[],banks=[];
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -16,20 +16,20 @@
     const qty=Math.max(1,Math.min(100,Number($('#cardQuantity')?.value||1)));
     const amount=Math.max(1,Number($('#cardAmount')?.value||1));
     $('#fundingTotal').textContent=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(qty*amount);
-    $('#createCards').textContent=`Create & load ${qty} virtual ${qty===1?'card':'cards'}`;
+    $('#createCards').textContent=`Create ${qty} virtual ${qty===1?'card':'cards'}`;
     const approved=$('#fundingApproval').checked;
     const previewOnly=provider.source==='showroom';
-    const programmeReady=Boolean($('#cardIssuer')?.value);
-    $('#createCards').disabled=!provider.configured||!approved||previewOnly||!programmeReady;
+    const programmeReady=Boolean($('#cardIssuer')?.value),anyConnected=issuers.some(x=>x.status==='CONNECTED');
+    $('#createCards').disabled=!anyConnected||!approved||previewOnly||!programmeReady;
     $('#fundingMessage').textContent=previewOnly
       ?'Card programme setup is required before creating virtual cards.'
-      :!provider.configured
-        ?'Connect an approved card programme to create virtual cards.'
+      :!anyConnected
+        ?'Connect your bank/card programme to create virtual cards.'
         :!programmeReady
           ?'Choose the connected bank/card programme.'
         :!approved
           ?'Confirm that this card programme and funding allocation are authorized.'
-          :'Issuer creates the virtual card, OrderGrid applies online-only controls, then the approved amount is loaded.';
+          :'The selected bank creates a child virtual card against the approved programme limit; OrderGrid applies available controls and assigns it to the selected merchant scope.';
   }
   function render(){
     const previewOnly=provider.source==='showroom';
