@@ -132,6 +132,52 @@ app.get("/api/cards",async()=>({cards:[],provider:"disabled",configured:false,so
 app.post("/api/cards/provider/connect",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only",message:"Issuer connection is available on the production OrderGrid API."}));
 app.delete("/api/cards/provider",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only"}));
 app.get("/api/runtime",async()=>({api:"OrderGrid API",mode:"showroom-real-browser-test",checkoutEngine:{id:"ordergrid-checkout-engine",status:"API_ONLINE",capacity:8,sessionModel:"isolated-local-browser-profiles"},database:"in-memory-showroom"}));
+app.get("/api/automation",async()=>{
+  const policy=activeAutomationPolicy(),basketsNow=activeBaskets(),addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id));
+  const accounts=[...accountRefs.entries()].filter(([addressId])=>addressIds.has(addressId)).flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
+  const ready=basketsNow.filter(b=>["READY","CLAIMED"].includes(b.status)).length;
+  const inProgress=basketsNow.filter(b=>b.status==="OPENED").length;
+  const needsAttention=basketsNow.filter(b=>["REQUIRES_ACTION","FAILED"].includes(b.status)).length;
+  const confirmed=basketsNow.filter(b=>b.status==="CONFIRMED").length;
+  return {
+    policy,
+    summary:{ready,inProgress,needsAttention,confirmed},
+    workflows:[
+      {id:"accounts",name:"Account authentication",status:needsAttention?"NEEDS_ATTENTION":accounts.length?"ACTIVE":"READY",detail:accounts.length+" retailer accounts in scope"},
+      {id:"cards",name:"Virtual-card assignment",status:basketsNow.length?"READY":"READY",detail:"One card per corporate-card order"},
+      {id:"checkout",name:"Checkout continuation",status:needsAttention?"NEEDS_ATTENTION":inProgress?"ACTIVE":ready?"READY":"IDLE",detail:inProgress+" in progress · "+ready+" ready"},
+      {id:"confirmation",name:"Retailer confirmation",status:confirmed?"ACTIVE":"READY",detail:confirmed+" retailer-confirmed orders"},
+      {id:"batch",name:"Batch protection",status:basketsNow.length?"ACTIVE":"READY",detail:"Pause threshold "+policy.failure_pause_percent+"%"},
+      {id:"reconciliation",name:"Order reconciliation",status:confirmed?"ACTIVE":"READY",detail:confirmed+" confirmed orders ready for reconciliation"}
+    ],
+    mandatoryRules:[
+      {name:"One order, one virtual card",status:"ENFORCED"},
+      {name:"Retailer-confirmed completion evidence",status:"ENFORCED"},
+      {name:"Protected verification is never bypassed",status:"ENFORCED"}
+    ],
+    canEdit:true
+  };
+});
+app.put("/api/automation/policy",async(req)=>{
+  const body=z.object({
+    automationEnabled:z.boolean(),
+    autoAssignVirtualCard:z.boolean(),
+    autoContinueCheckout:z.boolean(),
+    maxActiveOrders:z.number().int().min(1).max(50),
+    failurePausePercent:z.number().min(0).max(100)
+  }).parse(req.body);
+  const policy={
+    automation_enabled:body.automationEnabled,
+    auto_assign_virtual_card:body.autoAssignVirtualCard,
+    auto_continue_checkout:body.autoContinueCheckout,
+    max_active_orders:body.maxActiveOrders,
+    failure_pause_percent:body.failurePausePercent,
+    updated_at:new Date().toISOString()
+  };
+  automationPolicies.set(activeDealerId,policy);
+  return {policy};
+});
+
 app.get("/api/control-center",async()=>{
   const addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id)),basketsNow=activeBaskets();
   const accountEntries=[...accountRefs.entries()].filter(([addressId])=>addressIds.has(addressId)).flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
