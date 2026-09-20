@@ -72,6 +72,7 @@ app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
   }
   if(!parts.length)return reply.code(422).send({error:"amazon_asin_not_found",message:"Could not derive an Amazon ASIN from this product URL."});
   const checkoutUrl="https://www.amazon.in/gp/aws/cart/add.html?"+parts.join("&");
+  if(String((req.query as any)?.redirect||"")==="1")return reply.redirect(checkoutUrl);
   return {checkoutUrl,basketId:basket.id,customerReference:basket.customer_reference,accountReference:basket.account_reference,items:n-1,note:"This opens Amazon in the current browser profile. Amazon controls login, address, payment, OTP/CAPTCHA/3DS and final order submission."};
 });
 app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id);if(!basket)return reply.code(404).send({error:"basket_not_found"});basket.status="READY";basket.execution_worker_id=undefined;basket.expires_at=undefined;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;return {id,status:basket.status};});
