@@ -21,6 +21,7 @@ import { ensureBasketVirtualCard } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
 import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
+import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } from "./user-dashboard-reporting.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 type AutomationPolicy={
@@ -1922,6 +1923,44 @@ app.get("/api/reports/gst.xlsx",async(req,reply)=>{
     if(String(error.message)==="gst_profile_required")return reply.code(409).send({error:"gst_profile_required"});
     throw error;
   }
+});
+
+app.get("/api/dashboard/users",async(req)=>{
+  const p=req.principal!;
+  const query=z.object({
+    from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    userId:z.string().uuid().optional()
+  }).parse(req.query??{});
+  return getUserDashboard(db,p.tenantId,query);
+});
+
+app.get("/api/reports/user-dashboard.xlsx",async(req,reply)=>{
+  const p=req.principal!;
+  const query=z.object({
+    from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    userId:z.string().uuid().optional()
+  }).parse(req.query??{});
+  const buffer=await buildUserDashboardWorkbook(db,p.tenantId,query);
+  reply.header("content-type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  reply.header("content-disposition",'attachment; filename="ordergrid-user-dashboard.xlsx"');
+  reply.header("cache-control","no-store");
+  return reply.send(buffer);
+});
+
+app.get("/api/reports/user-dashboard.csv",async(req,reply)=>{
+  const p=req.principal!;
+  const query=z.object({
+    from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    userId:z.string().uuid().optional()
+  }).parse(req.query??{});
+  const csv=await buildUserDashboardCsv(db,p.tenantId,query);
+  reply.header("content-type","text/csv; charset=utf-8");
+  reply.header("content-disposition",'attachment; filename="ordergrid-user-dashboard.csv"');
+  reply.header("cache-control","no-store");
+  return csv;
 });
 
 app.get("/api/reports/orders.csv",async(req,reply)=>{
