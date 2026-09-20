@@ -62,39 +62,38 @@
         <div id="effectivePolicyBanner" class="effective-policy-banner"></div>
         <form id="automationPolicyForm">
           <div class="policy-grid policy-grid-primary">
-            <label><span>Run mode</span><select name="runMode"><option value="MANUAL">Manual start</option><option value="CONTINUOUS">Continuous</option></select><small>Continuous mode starts eligible approved orders automatically.</small></label>
-            <label><span>Maximum active orders</span><input type="number" name="maxActiveOrders" min="1" max="50" required><small>Maximum orders Autopilot may advance at once.</small></label>
+            <label><span>Run mode</span><select name="runMode"><option value="MANUAL">Manual start</option><option value="CONTINUOUS">Continuous</option></select><small>Start approved eligible orders manually or continuously.</small></label>
+            <label><span>Maximum active orders</span><input type="number" name="maxActiveOrders" min="1" max="50" required><small>Parallel orders Autopilot may advance at once.</small></label>
+            <label><span>Failure pause threshold (%)</span><input type="number" name="failurePausePercent" min="0" max="100" step="0.5" required><small>Pause the remaining queue when failures reach this percentage.</small></label>
           </div>
 
           <div class="commercial-policy-block">
-            <div class="policy-section-title"><span>COMMERCIAL GUARDRAILS</span><strong>Final payable value</strong></div>
+            <div class="policy-section-title"><span>COMMERCIAL GUARDRAILS</span><strong>Final payable value controls</strong></div>
             <div class="policy-grid commercial-grid">
-              <label><span>Maximum price increase (%)</span><input type="number" name="maxPriceIncreasePercent" min="0" max="100" step="0.1" required><small>Example: 5% allows ₹10,000 → ₹10,500.</small></label>
+              <label><span>Maximum price increase (%)</span><input type="number" name="maxPriceIncreasePercent" min="0" max="100" step="0.1" required><small>Example: 5% permits ₹10,000 → ₹10,500.</small></label>
               <label><span>Maximum order value (₹)</span><input type="number" name="maxOrderValueRupees" min="0" step="1" required><small>0 means no additional absolute order cap.</small></label>
-              <label><span>Maximum batch variance (%)</span><input type="number" name="maxBatchVariancePercent" min="0" max="100" step="0.1" required><small>Projected final batch value versus approved estimate.</small></label>
-              <label><span>If a price rule is breached</span><select name="priceBreachAction"><option value="PAUSE_ORDER">Pause affected order</option><option value="PAUSE_BATCH">Pause entire batch</option></select><small>Human approval is required before the affected scope continues.</small></label>
+              <label><span>Maximum batch variance (%)</span><input type="number" name="maxBatchVariancePercent" min="0" max="100" step="0.1" required><small>Final projected batch value versus the approved estimate.</small></label>
+              <label><span>If a price rule is breached</span><select name="priceBreachAction"><option value="PAUSE_ORDER">Pause affected order</option><option value="PAUSE_BATCH">Pause entire batch</option></select><small>Human approval is required before that scope continues.</small></label>
             </div>
           </div>
 
-          <label class="policy-toggle">
-            <span><b>Automatic virtual-card assignment</b><small>Assign or provision one order-specific virtual card automatically.</small></span>
-            <input type="checkbox" name="autoAssignVirtualCard">
-          </label>
-          <label class="policy-toggle">
-            <span><b>Automatic checkout continuation</b><small>Advance ordinary retailer checkout until protected verification or a policy gate is reached.</small></span>
-            <input type="checkbox" name="autoContinueCheckout">
-          </label>
-          <label class="policy-toggle">
-            <span><b>Inherit Main Dealer policy</b><small>Apply Main Dealer ceilings to this sub-dealer. Child settings can still be stricter.</small></span>
-            <input type="checkbox" name="inheritParentPolicy">
-          </label>
-          <label class="policy-toggle" id="childRelaxationRow">
-            <span><b>Allow sub-dealers to relax policy</b><small>When enabled, child dealers may set limits above Main Dealer ceilings.</small></span>
-            <input type="checkbox" name="allowChildPolicyRelaxation">
-          </label>
-
-          <div class="policy-grid">
-            <label><span>Failure pause threshold (%)</span><input type="number" name="failurePausePercent" min="0" max="100" step="0.5" required><small>Pause remaining orders when operational failures reach this percentage.</small></label>
+          <div class="policy-toggle-grid">
+            <label class="policy-toggle">
+              <span><b>Automatic virtual-card assignment</b><small>Provision one order-specific virtual card when required.</small></span>
+              <input type="checkbox" name="autoAssignVirtualCard">
+            </label>
+            <label class="policy-toggle">
+              <span><b>Automatic checkout continuation</b><small>Continue ordinary retailer checkout until a protected verification or policy gate.</small></span>
+              <input type="checkbox" name="autoContinueCheckout">
+            </label>
+            <label class="policy-toggle">
+              <span><b>Inherit Main Dealer policy</b><small>Apply Main Dealer ceilings while allowing stricter child settings.</small></span>
+              <input type="checkbox" name="inheritParentPolicy">
+            </label>
+            <label class="policy-toggle" id="childRelaxationRow">
+              <span><b>Allow sub-dealers to relax policy</b><small>Permit child dealers to set limits above Main Dealer ceilings.</small></span>
+              <input type="checkbox" name="allowChildPolicyRelaxation">
+            </label>
           </div>
 
           <div class="policy-save-row">
