@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -13,6 +13,7 @@ const html=files["public/index.html"];
 const app=files["public/app.js"];
 const wizard=files["public/wizard.js"];
 const funding=files["public/funding.js"];
+const workerInstaller=files["public/ordergrid-worker.ps1"];
 const userDashboard=files["public/user-dashboard.js"];
 const dashboard=files["public/dashboard.js"];
 const dashboardCss=files["public/dashboard.css"];
@@ -246,5 +247,14 @@ must(!server.includes('{header:"reference",key:"reference"'),"retailer user cont
 must(!files["public/rewards.js"].includes("form.get('reference')"),"retailer user contract: client must not submit manual user reference");
 must(!files["public/rewards.js"].includes("event.currentTarget.reset()"),"retailer form contract: async submit handlers must not dereference currentTarget after await");
 must(count(files["public/rewards.js"],"formElement.reset()")===3,"retailer form contract: all three async retailer forms must retain and reset their form element safely");
+must(server.includes('app.get("/api/worker-bootstrap"'),"worker bootstrap contract: authenticated bootstrap endpoint missing");
+must(server.includes("workerToken:config.WORKER_API_TOKEN"),"worker bootstrap contract: machine token handoff missing");
+must(workerInstaller.includes('/api/worker-bootstrap'),"worker installer contract: installer must bootstrap machine token after login");
+must(workerInstaller.includes("ConvertFrom-SecureString"),"worker installer contract: local credentials must be protected with Windows user encryption");
+must(workerInstaller.includes('GetFolderPath("Startup")'),"worker installer contract: startup registration missing");
+must(workerInstaller.includes("start-worker.ps1"),"worker installer contract: persistent launcher missing");
+must(!files["public/rewards.js"].includes("throw new Error('Start the OrderGrid secure browser worker first"),"retailer session contract: login preparation must queue while worker is offline");
+must(files["public/rewards.js"].includes("Start the secure browser worker; it will pick them up automatically."),"retailer session contract: offline preparation guidance missing");
+must(html.includes(">Install / start worker</a>"),"retailer session contract: worker installation action missing");
 
 console.log("Frontend/card connector contract OK");
