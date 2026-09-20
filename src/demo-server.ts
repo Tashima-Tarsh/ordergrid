@@ -159,7 +159,7 @@ app.post("/api/cards/provider/connect",async(_,reply)=>reply.code(409).send({err
 app.delete("/api/cards/provider",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only"}));
 app.get("/api/runtime",async()=>({api:"OrderGrid API",mode:"showroom-real-browser-test",checkoutEngine:{id:"ordergrid-checkout-engine",status:"API_ONLINE",capacity:8,sessionModel:"isolated-local-browser-profiles"},database:"in-memory-showroom"}));
 app.get("/api/automation",async()=>{
-  const policy=activeAutomationPolicy(),basketsNow=activeBaskets(),addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id));
+  const effective=activeAutomationPolicy(),localPolicy=localAutomationPolicy(activeDealerId),dealer=dealers.get(activeDealerId),policy={...effective,inherited_from_tenant_id:dealer?.parent_id||null,effective_source:dealer?.parent_id&&localPolicy.inherit_parent_policy?"INHERITED_GUARDRAILS":"LOCAL"},basketsNow=activeBaskets(),addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id));
   const accounts=[...accountRefs.entries()].filter(([addressId])=>addressIds.has(addressId)).flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
   const ready=basketsNow.filter(b=>["READY","CLAIMED"].includes(b.status)).length;
   const inProgress=basketsNow.filter(b=>b.status==="OPENED").length;
@@ -169,7 +169,7 @@ app.get("/api/automation",async()=>{
   const priceReview=basketsNow.filter(b=>(b as any).commercial_status==="REVIEW_REQUIRED").length;
   return {
     policy,
-    localPolicy:policy,
+    localPolicy,
     summary:{ready,inProgress,needsAttention,confirmed,priceApproved,priceReview},
     workflows:[
       {id:"accounts",name:"Account authentication",status:needsAttention?"NEEDS_ATTENTION":accounts.length?"ACTIVE":"READY",detail:accounts.length+" retailer accounts in scope"},
@@ -187,7 +187,7 @@ app.get("/api/automation",async()=>{
       {name:"Retailer-confirmed completion evidence",status:"ENFORCED"},
       {name:"Protected verification is never bypassed",status:"ENFORCED"}
     ],
-    canEdit:true,canRelaxChildren:true
+    canEdit:true,canRelaxChildren:activeDealerId===mainDealerId
   };
 });
 app.get("/api/automation/preflight",async()=>{
