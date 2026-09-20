@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -22,6 +22,9 @@ const gst=files["public/gst.js"];
 const gstCss=files["public/gst-premium.css"];
 const fulfilment=files["public/fulfilment.js"];
 const fulfilmentCss=files["public/fulfilment.css"];
+const bulk=files["public/bulk.js"];
+const humanActions=files["public/human-actions.js"];
+const bulkCss=files["public/bulk-premium.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
@@ -109,6 +112,17 @@ must(!html.includes('src="autopilot.js"'),"frontend contract: legacy Autopilot s
 must(!html.includes('src="automation-center.js"'),"frontend contract: live Autopilot console must stay unloaded");
 must(!html.includes('href="automation-center.css"'),"frontend contract: Autopilot-only stylesheet must stay unloaded");
 must(!sw.includes("'./automation-center.js'")&&!sw.includes("'./automation-center.css'"),"frontend contract: Autopilot assets must stay out of service-worker cache");
+must(html.includes('href="bulk-premium.css"'),"bulk contract: premium bulk stylesheet must be loaded");
+must(sw.includes("'./bulk-premium.css'"),"bulk contract: premium bulk stylesheet must be cached");
+must(!bulk.includes("document.querySelector('.autopilot-suite').before(host)"),"bulk contract: removed Autopilot DOM must not be a mount dependency");
+must(bulk.includes("document.querySelector('.human-action-centre')||document.querySelector('.funding-workspace')"),"bulk contract: stable workspace mount fallback missing");
+must(humanActions.includes("document.querySelector('.funding-workspace')||document.querySelector('.rewards-centre')"),"bulk contract: human-action queue must mount independently of Autopilot");
+must(!humanActions.includes("const anchor=document.querySelector('.autopilot-suite')"),"bulk contract: human-action queue must not depend on removed Autopilot DOM");
+must(bulk.includes('class="bulk-hero"'),"bulk premium contract: command header missing");
+must(bulk.includes('class="bulk-kpi-strip"'),"bulk premium contract: KPI strip missing");
+must(bulk.includes('class="bulk-order-card"'),"bulk premium contract: compact order cards missing");
+must(bulkCss.includes(".bulk-order-card"),"bulk premium contract: compact queue styling missing");
+must(bulkCss.includes(".human-action-centre"),"bulk premium contract: intervention panel density styling missing");
 must(navigation.includes("body.product-shell{padding-left:216px}"),"navigation contract: compact premium sidebar width missing");
 must(server.includes('policy.run_mode==="CONTINUOUS"'),"autopilot trigger contract: active continuous policy must trigger on save");
 must(server.includes("status in ('CLAIMED','OPENED') and expires_at>now()"),"autopilot concurrency contract: active orders must count toward max-active limit");
