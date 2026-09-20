@@ -69,8 +69,8 @@ async function getAutomationPolicy(tenantId:string){
     max_price_increase_percent:Math.min(Number(parent.max_price_increase_percent),Number(local.max_price_increase_percent)),
     max_order_value_minor:minCap(Number(parent.max_order_value_minor),Number(local.max_order_value_minor)),
     max_batch_variance_percent:Math.min(Number(parent.max_batch_variance_percent),Number(local.max_batch_variance_percent)),
-    price_breach_action:parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER",
-    run_mode:parent.run_mode==="MANUAL"?"MANUAL":local.run_mode,
+    price_breach_action:(parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER") as "PAUSE_ORDER"|"PAUSE_BATCH",
+    run_mode:(parent.run_mode==="MANUAL"?"MANUAL":local.run_mode) as "MANUAL"|"CONTINUOUS",
     allow_child_policy_relaxation:false,
     inherited_from_tenant_id:parentTenantId,
     effective_source:"INHERITED_GUARDRAILS" as const
