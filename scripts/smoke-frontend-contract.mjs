@@ -105,7 +105,7 @@ must(cdp.includes("flipkartCartProbeScript"),"flipkart mobile contract: account 
 must(!wizard.includes('max="2"'),"flipkart mobile contract: quantity limit must not be hard-coded to two");
 must(wizard.includes("Allocate across ready accounts"),"flipkart allocation contract: multi-account allocation control missing");
 must(wizard.includes("/api/products/flipkart/mobile/allocation/plan"),"flipkart allocation contract: allocation planner API missing from wizard");
-must(wizard.includes("checkRequired").toString()&&wizard.includes("slice(0,10)"),"flipkart allocation contract: account checks must run in bounded waves");
+must(wizard.includes("checkRequired")&&wizard.includes("slice(0,10)"),"flipkart allocation contract: account checks must run in bounded waves");
 must(app.includes("allocationPlan.allocations.map"),"flipkart allocation contract: batch submit must expand verified account allocations");
 must(app.includes("retailerAccountId:String(allocation.retailerAccountId)"),"flipkart allocation contract: exact verified account must be submitted");
 must(server.includes('app.post("/api/products/flipkart/mobile/allocation/plan"'),"flipkart allocation contract: allocation planner route missing");
