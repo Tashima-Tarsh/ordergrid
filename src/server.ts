@@ -675,7 +675,7 @@ app.get("/api/recipients",async(req)=>{
     left join retailer_accounts ra on ra.customer_id=c.id and ra.tenant_id=ab.tenant_id
     where ab.tenant_id=$1
     group by a.id,c.external_reference
-    order by a.created_at desc
+    order by c.created_at desc,a.id
     limit 5000
   `,[p.tenantId]);
   return {recipients:rows};
@@ -1032,7 +1032,7 @@ app.get("/api/bulk-baskets",async(req)=>{
     join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join purchase_orders po on po.checkout_basket_id=cb.id
     where cb.tenant_id=$1
-    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
+    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,ra.credential_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
     order by cb.created_at desc limit 500
   `,[p.tenantId]);
   return {baskets:rows};
