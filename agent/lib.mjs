@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -15,13 +16,24 @@ const RETAILER_HOSTS = [
   "jiomart.com"
 ];
 
+const hostMatches=(host,root)=>host===root||host.endsWith(`.${root}`);
+
+function publicStoreHost(host){
+  if(!host||host==="localhost"||host.endsWith(".localhost")||host.endsWith(".local"))return false;
+  if(isIP(host))return false;
+  return host.includes(".");
+}
+
 export function allowedRetailerUrl(value) {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:" || url.username || url.password) return false;
-    const host = url.hostname.toLowerCase();
-    return RETAILER_HOSTS.some((base) => host === base || host.endsWith(`.${base}`))
-      || url.pathname.toLowerCase().startsWith("/products/");
+    if (url.protocol !== "https:" || url.username || url.password || value.length>2048) return false;
+    const rawHost=url.hostname.toLowerCase();
+    const host=rawHost.endsWith(".")?rawHost.slice(0,-1):rawHost;
+    if(RETAILER_HOSTS.some(root=>hostMatches(host,root)))return true;
+    const brandLookalike=RETAILER_HOSTS.some(root=>host.includes(root)&&!hostMatches(host,root));
+    if(brandLookalike)return false;
+    return publicStoreHost(host);
   } catch {
     return false;
   }
