@@ -72,3 +72,192 @@ linear-gradient(145deg,var(--ap-ink),var(--ap-ink-2));box-shadow:0 24px 62px rgb
 .health-row.action>span{box-shadow:0 0 0 4px rgba(239,68,68,.08)}
 .health-row.review>span,.health-row.paused>span{box-shadow:0 0 0 4px rgba(245,158,11,.08)}
 @media(max-width:720px){.automation-hero{min-height:0;padding:22px}.automation-hero h2{font-size:27px}.automation-machine{width:100%;justify-content:flex-start}.automation-machine>button{flex:1}}
+
+
+/* Premium Autopilot Console v2 — balanced workspace, no stretched whitespace */
+.automation-layout{
+  grid-template-columns:minmax(350px,.78fr) minmax(540px,1.22fr);
+  grid-template-areas:
+    "live policy"
+    "guardrails health";
+  gap:16px;
+  align-items:start;
+}
+.automation-layout>.automation-card{align-self:start;min-height:0}
+.automation-live{grid-area:live;padding:22px}
+.automation-policy{grid-area:policy;padding:22px 24px}
+.automation-guardrails{grid-area:guardrails}
+.automation-health{grid-area:health}
+
+.automation-live .automation-card-head{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #edf2f6}
+.automation-live .automation-workflow-list{display:grid;gap:7px}
+.automation-live .automation-workflow{
+  min-height:56px;
+  padding:10px 11px;
+  border:1px solid #e7edf2;
+  border-radius:12px;
+  background:linear-gradient(145deg,#fff,#fbfcfd);
+  box-shadow:0 2px 8px rgba(15,23,42,.025);
+}
+.automation-live .automation-workflow:last-child{border-bottom:1px solid #e7edf2}
+.automation-live .automation-workflow:hover{
+  border-color:#cfe7dc;
+  background:linear-gradient(90deg,rgba(52,211,153,.055),#fff);
+}
+.automation-live .automation-flow-index{
+  width:30px;height:30px;border-radius:10px;
+  background:#f7fafc;border-color:#dce5ec;color:#526577
+}
+.automation-live .automation-flow-copy strong{font-size:13px;line-height:1.25}
+.automation-live .automation-flow-copy small{font-size:10px;line-height:1.35}
+.automation-live .workflow-status{padding:5px 8px;min-width:44px;justify-content:center;text-align:center}
+
+.automation-policy{
+  border-color:#dbe5ec;
+  background:
+    radial-gradient(circle at 100% 0,rgba(52,211,153,.075),transparent 27%),
+    linear-gradient(145deg,#fff,#fbfdff);
+  box-shadow:0 16px 42px rgba(15,23,42,.065);
+}
+.automation-policy:before{left:24px;right:24px;background:linear-gradient(90deg,#34d399,#8bd9ff,transparent);opacity:.8}
+.automation-policy .automation-card-head{
+  align-items:center;
+  margin-bottom:14px;
+  padding-bottom:13px;
+  border-bottom:1px solid #e9eef2;
+}
+.automation-policy .automation-card-head h3{font-size:20px}
+.automation-policy .policy-scope{padding:6px 10px;background:#f7fafc;border-color:#dbe4eb;color:#334155}
+
+.automation-policy #automationPolicyForm{display:grid;gap:14px}
+.automation-policy .effective-policy-banner{
+  margin:0;
+  padding:12px 13px;
+  gap:8px;
+  min-height:46px;
+  border:1px solid #d8e6ee;
+  background:linear-gradient(135deg,#f7fbfd,#fff);
+}
+.automation-policy .effective-policy-banner strong{
+  padding-right:8px;
+  font-size:10px;
+  letter-spacing:.02em;
+}
+.automation-policy .effective-policy-banner span{
+  padding:6px 9px;
+  border-radius:999px;
+  background:#fff;
+  box-shadow:0 1px 2px rgba(15,23,42,.025);
+}
+.automation-policy .effective-policy-banner small{margin:0}
+
+.automation-policy .policy-grid{gap:12px;margin:0}
+.automation-policy .policy-grid-primary{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+.automation-policy .policy-grid label{
+  min-width:0;
+  padding:13px;
+  border:1px solid #e3eaf0;
+  border-radius:13px;
+  background:#fff;
+}
+.automation-policy .policy-grid label>span{
+  min-height:28px;
+  display:flex;
+  align-items:flex-end;
+  font-size:11px;
+  line-height:1.25;
+  color:#172333;
+  font-weight:800;
+}
+.automation-policy .policy-grid input,
+.automation-policy .policy-grid select{
+  min-height:42px;
+  padding:10px 11px;
+  font-size:12px;
+  font-weight:700;
+  background:#fbfdff;
+}
+.automation-policy .policy-grid small{
+  min-height:30px;
+  font-size:9px;
+  line-height:1.45;
+  color:#708090;
+}
+
+.automation-policy .commercial-policy-block{
+  margin:0;
+  padding:15px;
+  border-radius:15px;
+  background:
+    radial-gradient(circle at 100% 0,rgba(52,211,153,.05),transparent 32%),
+    #f8fbfd;
+}
+.automation-policy .policy-section-title{margin-bottom:12px}
+.automation-policy .policy-section-title strong{font-size:13px;color:#172333}
+.automation-policy .commercial-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+
+.policy-toggle-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+.policy-toggle-grid .policy-toggle{
+  min-height:82px;
+  padding:13px 14px!important;
+  border:1px solid #e3eaf0!important;
+  border-radius:13px;
+  background:#fff;
+}
+.policy-toggle-grid .policy-toggle span{padding-right:10px}
+.policy-toggle-grid .policy-toggle span b{font-size:12px;line-height:1.3}
+.policy-toggle-grid .policy-toggle span small{font-size:9px;line-height:1.45}
+.policy-toggle-grid .policy-toggle input{
+  width:20px!important;height:20px;
+  flex:none;
+}
+.policy-toggle-grid #childRelaxationRow[hidden]{display:none!important}
+
+.automation-policy .policy-save-row{
+  margin:0;
+  padding:14px 0 0;
+  border-top:1px solid #e9eef2;
+}
+.automation-policy .policy-save-row button{
+  min-width:128px;
+  min-height:40px;
+  padding:.7rem 1rem;
+}
+.automation-policy .form-error{margin:0}
+
+.automation-guardrails,.automation-health{padding:20px}
+.automation-guardrails .automation-card-head,
+.automation-health .automation-card-head{
+  padding-bottom:10px;
+  border-bottom:1px solid #edf1f4;
+}
+.automation-rule-list>div,.health-row{padding:12px 0}
+
+@media(max-width:1180px){
+  .automation-layout{
+    grid-template-columns:minmax(320px,.82fr) minmax(470px,1.18fr);
+  }
+  .automation-policy .policy-grid-primary{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .automation-policy .policy-grid-primary label:last-child{grid-column:1/-1}
+}
+@media(max-width:1020px){
+  .automation-layout{
+    grid-template-columns:1fr;
+    grid-template-areas:"live" "policy" "guardrails" "health";
+  }
+  .automation-policy .policy-grid-primary{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .automation-policy .policy-grid-primary label:last-child{grid-column:auto}
+}
+@media(max-width:760px){
+  .automation-policy{padding:18px}
+  .automation-policy .policy-grid-primary,
+  .automation-policy .commercial-grid,
+  .policy-toggle-grid{grid-template-columns:1fr!important}
+  .automation-policy .policy-grid-primary label:last-child{grid-column:auto}
+  .automation-policy .policy-grid label>span,
+  .automation-policy .policy-grid small{min-height:0}
+}
