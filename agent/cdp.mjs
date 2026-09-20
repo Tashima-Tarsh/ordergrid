@@ -83,6 +83,31 @@ function addToCartScript(quantity){
     el.click();return {ok:true};
   })()`;
 }
+function retailerAuthScript(credentials){
+  return `(()=>{const credentials=${JSON.stringify(credentials||null)};
+    if(!credentials?.login||!credentials?.password)return {acted:false};
+    const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,50000);
+    const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+    const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const inputs=[...document.querySelectorAll('input')].filter(visible);
+    const password=inputs.find(x=>x.type==='password');
+    const user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs.find(x=>x.type==='tel');
+    const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
+    const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
+    if(password){
+      if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
+      if(!String(password.value||''))setValue(password,credentials.password);
+      const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
+      if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
+    }
+    if(user&&!String(user.value||'').trim()&&/(sign in|signin|log in|login|email|mobile|account)/i.test(text)){
+      setValue(user,credentials.login);
+      const next=controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)));
+      if(next){next.click();return {acted:true,action:'ACCOUNT_IDENTIFIER_SUBMITTED'};}
+    }
+    return {acted:false};
+  })()`;
+}
 function pageStateScript(postalCode,paymentRoute){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,120000);
     const lower=text.toLowerCase();
@@ -139,7 +164,7 @@ export function cartUrlFor(retailer,productUrl){
   if(known[retailer])return known[retailer];
   const url=new URL(productUrl);return `${url.origin}/cart`;
 }
-async function driveCheckout(port,{postalCode,paymentRoute}){
+async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials}){
   for(let round=0;round<12;round++){
     const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&/^https?:/.test(t.url||""));
     const target=targets.find(t=>/(checkout|cart|order|payment|pay|secure|buy)/i.test(t.url||""))||targets[0];
@@ -147,6 +172,8 @@ async function driveCheckout(port,{postalCode,paymentRoute}){
     const connection=new CdpConnection(target.webSocketDebuggerUrl);
     try{
       await waitReady(connection);
+      const auth=await evaluate(connection,retailerAuthScript(accountCredentials));
+      if(auth?.acted){await sleep(1400);continue;}
       const state=await evaluate(connection,pageStateScript(postalCode,paymentRoute));
       if(!state)return {state:"FAILED",code:"NO_PAGE_STATE",message:"Retailer page did not return an execution state"};
       if(state.state==="CONFIRMED"||state.state==="CHALLENGE")return state;
@@ -157,7 +184,7 @@ async function driveCheckout(port,{postalCode,paymentRoute}){
   return {state:"CHALLENGE",code:"CHECKOUT_TIMEOUT",message:"Retailer checkout needs review before OrderGrid can continue"};
 }
 
-export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,resume=false}){
+export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,resume=false}){
   const port=await ensureChrome(chrome,directory);
   const results=[];
   if(!resume){
@@ -177,6 +204,6 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     const cartUrl=cartUrlFor(retailer,items[0]?.executionUrl);
     if(cartUrl)await createTarget(port,cartUrl);
   }
-  const state=await driveCheckout(port,{postalCode:address?.postalCode,paymentRoute});
+  const state=await driveCheckout(port,{postalCode:address?.postalCode,paymentRoute,accountCredentials});
   return {...state,results};
 }
