@@ -1423,6 +1423,7 @@ app.post("/api/cards/provider/connect",async(req,reply)=>{
     responseBalancePath:z.string().max(300).optional(),
     responseBalanceUnit:z.enum(["MINOR","RUPEES"]).default("MINOR")
   }).superRefine((value,ctx)=>{
+    if(value.integrationMode==="PARENT_CARD_API"&&(!value.fundingCardholderName||!value.fundingCardLast4||!value.fundingCardExpiryMonth||!value.fundingCardExpiryYear))ctx.addIssue({code:"custom",message:"Cardholder name, last 4 digits and expiry are required for an existing funding-card programme"});
     if(value.authMode==="OAUTH2_CLIENT_CREDENTIALS"&&(!value.tokenUrl||!value.clientId||!value.clientSecret))ctx.addIssue({code:"custom",message:"OAuth token URL, client ID and client secret are required"});
     if(value.authMode==="BEARER"&&!value.bearerToken)ctx.addIssue({code:"custom",message:"Bearer token is required"});
     if(value.authMode==="BASIC"&&(!value.username||!value.password))ctx.addIssue({code:"custom",message:"Basic auth username and password are required"});
