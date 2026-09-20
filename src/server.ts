@@ -54,6 +54,27 @@ function minCap(a:number,b:number){
   if(b<=0)return a;
   return Math.min(a,b);
 }
+async function createNotification(input:{
+  tenantId:string;userId?:string|null;basketId?:string|null;type:
+    "STOCK_WATCH_STARTED"|"BACK_IN_STOCK"|"ORDER_CONFIRMED"|"HUMAN_ACTION_REQUIRED"|
+    "SESSION_READY"|"SESSION_REAUTH_REQUIRED"|"STOCK_WATCH_EXPIRED";
+  title:string;message:string;idempotencyKey:string;payload?:Record<string,unknown>;
+}){
+  await db.query(
+    `insert into notifications(tenant_id,user_id,checkout_basket_id,type,title,message,idempotency_key,payload)
+     values($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict(tenant_id,idempotency_key) do nothing`,
+    [input.tenantId,input.userId??null,input.basketId??null,input.type,input.title,input.message,input.idempotencyKey,input.payload??{}]
+  );
+}
+async function basketNotificationUser(tenantId:string,basketId:string){
+  const {rows}=await db.query(
+    `select b.created_by from checkout_baskets cb join order_batches b on b.id=cb.batch_id
+     where cb.id=$1 and cb.tenant_id=$2 limit 1`,
+    [basketId,tenantId]
+  );
+  return rows[0]?.created_by?String(rows[0].created_by):null;
+}
 async function getAutomationPolicy(tenantId:string){
   const local=await readAutomationPolicy(tenantId);
   const relation=await db.query("select parent_tenant_id from dealer_relationships where child_tenant_id=$1 and status='ACTIVE' limit 1",[tenantId]);
