@@ -139,27 +139,47 @@
     if(form.elements.fundingCardExpiryYear)form.elements.fundingCardExpiryYear.value=current.funding_card_expiry_year||'';
     if(form.elements.integrationMode&&current.integration_mode)form.elements.integrationMode.value=current.integration_mode;
   }
-  async function openIssuerConnector(){
+  async function openIssuerConnector(providerCode){
     const panel=$('#issuerDialog');
     if(!panel){toast('Funding card setup is unavailable. Refresh the page.');return}
     const button=$('#connectIssuer'),previous=button?.textContent;
-    if(button){button.disabled=true;button.textContent='Opening setup…'}
-    try{await load()}catch(error){console.error(error)}
-    finally{if(button){button.disabled=false;button.textContent=previous||'Set up / manage card'}}
     const error=$('#issuerError');if(error)error.textContent='';
-    try{prefillFundingCardIdentity()}catch(error){console.error(error)}
     panel.hidden=false;
     document.body.classList.add('issuer-connect-open');
+    if(button){button.disabled=true;button.textContent='Loading details…'}
+    if(providerCode&&providerCode!=='other'&&$('#issuerProvider')){
+      $('#issuerProvider').value=providerCode;
+      syncBankConnector();
+    }
     setTimeout(()=>$('#issuerProvider')?.focus(),0);
+    try{
+      await load();
+      if(providerCode&&providerCode!=='other'&&$('#issuerProvider')){
+        $('#issuerProvider').value=providerCode;
+        syncBankConnector();
+      }else{
+        prefillFundingCardIdentity();
+      }
+    }catch(error){console.error(error)}
+    finally{if(button){button.disabled=false;button.textContent=previous||'Set up / manage card'}}
   }
-  $('#connectIssuer')?.addEventListener('click',openIssuerConnector);
-  $('#fundingSourceCard')?.addEventListener('click',openIssuerConnector);
+  $('#connectIssuer')?.addEventListener('click',()=>openIssuerConnector());
+  $('#openFundingSetupFromCard')?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openIssuerConnector()});
+  $('#fundingSourceCard')?.addEventListener('click',event=>{if(event.target.closest('#openFundingSetupFromCard'))return;openIssuerConnector()});
   $('#fundingSourceCard')?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openIssuerConnector()}});
+  document.querySelectorAll('[data-bank-shortcut]').forEach(button=>button.addEventListener('click',event=>{
+    event.preventDefault();
+    const code=button.dataset.bankShortcut;
+    if(code==='other'){$('#issuerProvider')?.focus();return}
+    $('#issuerProvider').value=code;
+    syncBankConnector();
+    $('#issuerBankName')?.focus();
+  }));
   $('#closeIssuer')?.addEventListener('click',closeIssuerConnector);
   $('#cancelIssuer')?.addEventListener('click',closeIssuerConnector);
   issuerSetup?.addEventListener('click',event=>{if(event.target===issuerSetup)closeIssuerConnector()});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!issuerSetup?.hidden)closeIssuerConnector()});
-  window.addEventListener('ordergrid:cards-open',openIssuerConnector);
+  window.addEventListener('ordergrid:cards-open',()=>openIssuerConnector());
   $('#issuerForm').onsubmit=async event=>{
     event.preventDefault();
     const button=$('#saveIssuer'),form=new FormData(event.currentTarget),providerCode=String(form.get('provider'));
