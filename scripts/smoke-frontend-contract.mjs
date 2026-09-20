@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -51,6 +51,9 @@ must(html.includes('id="fundingProgramme"'),"frontend contract: funding programm
 must(html.includes('id="fundingCardIdentity"'),"frontend contract: safe funding card identity detail missing");
 must(html.includes('id="issuerModalStatus"'),"frontend contract: setup modal status summary missing");
 must(files["public/finance.css"].includes("#issuerDialog.issuer-connect-overlay"),"frontend contract: real card setup overlay styling missing");
+must(!files["public/customer.css"].includes("#issuerDialog{display:none!important}"),"frontend contract: customer stylesheet must not permanently hide card setup modal");
+must(files["public/finance.css"].includes("#issuerDialog.issuer-connect-overlay:not([hidden]){display:grid!important}"),"frontend contract: visible card setup modal state must override stale hide rules");
+must(html.indexOf('href="finance.css"')<html.indexOf('href="customer.css"'),"frontend contract: expected stylesheet order changed; re-audit card modal cascade");
 must(funding.includes("timedRequest('/api/cards/provider')"),"frontend contract: Cards refresh must have a timeout");
 must(funding.includes("timedRequest('/api/cards/banks')"),"frontend contract: bank catalog refresh must have a timeout");
 must(funding.includes("fallbackBanks"),"frontend contract: HDFC/Axis setup must work without waiting for bank catalog API");
