@@ -2058,6 +2058,46 @@ app.post("/api/bulk-queue/:id/stock-available",async(req,reply)=>{
   return {id,status:"OPENED"};
 });
 
+app.patch("/api/bulk-queue/:id/stock-watch",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    enabled:z.boolean().optional(),
+    autoOrder:z.boolean().optional(),
+    intervalMinutes:z.number().int().min(1).max(1440).optional(),
+    maxAmountMinor:z.number().int().positive().optional(),
+    extendDays:z.number().int().min(1).max(90).optional()
+  }).refine(v=>Object.keys(v).length>0).parse(req.body);
+  const existing=await db.query(
+    "select id,status,stock_watch_started_at from checkout_baskets where id=$1 and tenant_id=$2 limit 1",
+    [id,p.tenantId]
+  );
+  if(!existing.rows[0])return reply.code(404).send({error:"basket_not_found"});
+  if(!existing.rows[0].stock_watch_started_at)return reply.code(409).send({error:"stock_watch_not_started"});
+  const enabled=body.enabled??true;
+  const {rows}=await db.query(
+    `update checkout_baskets set
+       stock_watch_enabled=$1,
+       stock_watch_auto_order=coalesce($2,stock_watch_auto_order),
+       stock_watch_interval_minutes=coalesce($3,stock_watch_interval_minutes),
+       stock_watch_max_amount_minor=coalesce($4,stock_watch_max_amount_minor),
+       stock_watch_expires_at=case when $5::int is not null then now()+($5::text||' days')::interval else stock_watch_expires_at end,
+       stock_next_check_at=case when $1 then now() else stock_next_check_at end,
+       status=case when $1 and status='REQUIRES_ACTION' and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'WAITING_STOCK'
+                   when not $1 and status='WAITING_STOCK' then 'REQUIRES_ACTION' else status end,
+       failure_code=case when not $1 then 'STOCK_WATCH_PAUSED'
+                         when $1 and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'OUT_OF_STOCK' else failure_code end,
+       failure_message=case when not $1 then 'Stock watch paused by operator'
+                            when $1 and failure_code in ('STOCK_WATCH_PAUSED','STOCK_WATCH_EXPIRED') then 'Waiting for stock' else failure_message end,
+       updated_at=now()
+     where id=$6 and tenant_id=$7
+     returning id,status,stock_watch_enabled,stock_watch_auto_order,stock_watch_interval_minutes,stock_watch_max_amount_minor,stock_next_check_at,stock_watch_expires_at`,
+    [enabled,body.autoOrder??null,body.intervalMinutes??null,body.maxAmountMinor??null,body.extendDays??null,id,p.tenantId]
+  );
+  await audit(db,p.tenantId,p.id,"stock_watch.updated","checkout_basket",id,body);
+  return rows[0];
+});
+
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
   const body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);
