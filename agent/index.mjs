@@ -59,6 +59,39 @@ function groupByProfile(queue){
   return [...groups.values()];
 }
 
+function productCheckFriction(result,error){
+  const text=`${result?.state||""} ${result?.code||""} ${result?.message||""} ${error?.message||error||""}`;
+  return /CAPTCHA|RATE|THROTTL|TOO MANY|429|SECURITY|ACCESS DENIED|TEMPORARILY BLOCKED/i.test(text);
+}
+async function runAdaptiveProductCheckPool(commands,state,handler){
+  let index=0;
+  while(index<commands.length){
+    const width=Math.max(1,Math.min(state.current,state.max,commands.length-index));
+    const wave=commands.slice(index,index+width);
+    const outcomes=await Promise.all(wave.map(handler));
+    index+=wave.length;
+    const friction=outcomes.some(outcome=>outcome.friction);
+    const failures=outcomes.filter(outcome=>!outcome.ok).length;
+    if(friction||failures>=Math.max(2,Math.ceil(wave.length/2))){
+      const previous=state.current;
+      state.current=Math.max(1,Math.floor(state.current/2));
+      state.cleanWaves=0;
+      state.cooldownMs=Math.min(8000,Math.max(1200,state.cooldownMs*2||1200));
+      if(state.current!==previous)output.write(`Product-check throttle · reducing parallelism ${previous} → ${state.current}\n`);
+      await sleep(state.cooldownMs);
+    }else{
+      state.cooldownMs=Math.max(0,Math.floor(state.cooldownMs/2));
+      state.cleanWaves++;
+      if(state.cleanWaves>=2&&state.current<state.max){
+        const previous=state.current;
+        state.current++;
+        state.cleanWaves=0;
+        output.write(`Product-check throttle · clean waves, increasing parallelism ${previous} → ${state.current}\n`);
+      }
+    }
+  }
+}
+
 async function main(){
   output.write("\nOrderGrid Native Bulk Ordering Worker\n");
   output.write("Approved baskets are executed from OrderGrid. The worker drives retailer checkout and reports only genuine authentication/payment challenges.\n");
@@ -69,6 +102,9 @@ async function main(){
 
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");
   const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=8?parallelRequested:4;
+  const productCheckRequested=Number(process.env.ORDERGRID_PRODUCT_CHECK_PARALLEL||"4");
+  const productCheckMax=Number.isInteger(productCheckRequested)&&productCheckRequested>=1&&productCheckRequested<=8?productCheckRequested:4;
+  const productCheckState={current:Math.min(4,productCheckMax),max:productCheckMax,cleanWaves:0,cooldownMs:0};
   const claimRequested=Number(process.env.ORDERGRID_BASKETS||"25");
   const claimLimit=Number.isInteger(claimRequested)&&claimRequested>=1&&claimRequested<=25?claimRequested:25;
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
@@ -78,14 +114,18 @@ async function main(){
   let lastSessionCheckAt=0;
 
   await heartbeat(workerId);
-  output.write(`Worker online · ${workerId} · ${parallel} parallel customer profiles\n`);
+  output.write(`Worker online · ${workerId} · ${parallel} parallel checkout profiles · ${productCheckState.current} parallel Flipkart product checks (adaptive, max ${productCheckState.max})\n`);
 
   while(true){
     try{
       await heartbeat(workerId);
 
       const commandResult=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/claim`,{method:"POST",body:JSON.stringify({limit:10})})).body;
-      for(const command of commandResult.commands||[]){
+      const commands=commandResult.commands||[];
+      const productCommands=commands.filter(command=>command.command==="PRODUCT_CHECK");
+      const foregroundCommands=commands.filter(command=>command.command!=="PRODUCT_CHECK");
+
+      for(const command of foregroundCommands){
         try{
           if(command.command==="FOCUS_SESSION"){
             const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
@@ -94,18 +134,29 @@ async function main(){
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
             continue;
           }
-          if(command.command==="PRODUCT_CHECK"){
-            if(command.retailer!=="flipkart")throw new Error("PRODUCT_CHECK currently supports Flipkart only");
-            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
-            const result=await inspectFlipkartMobile({chrome,directory,productUrl:String(command.payload?.productUrl||"")});
-            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
-            output.write(`Product check ${command.payload?.accountReference||command.retailerAccountId} · ${result.state} · ${result.title||command.payload?.productUrl||""}\n`);
-            continue;
-          }
           throw new Error("Unsupported worker command");
         }catch(error){
           await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(error.message).slice(0,300)})}).catch(()=>{});
         }
+      }
+
+      if(productCommands.length){
+        await runAdaptiveProductCheckPool(productCommands,productCheckState,async command=>{
+          let result=null,error=null;
+          try{
+            if(command.retailer!=="flipkart")throw new Error("PRODUCT_CHECK currently supports Flipkart only");
+            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
+            result=await inspectFlipkartMobile({chrome,directory,productUrl:String(command.payload?.productUrl||"")});
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
+            output.write(`Product check ${command.payload?.accountReference||command.retailerAccountId} · ${result.state} · ${result.title||command.payload?.productUrl||""}\n`);
+            return {ok:true,friction:productCheckFriction(result,null)};
+          }catch(caught){
+            error=caught;
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(caught.message).slice(0,300)})}).catch(()=>{});
+            output.write(`Product check failed ${command.payload?.accountReference||command.retailerAccountId} · ${String(caught.message).slice(0,180)}\n`);
+            return {ok:false,friction:productCheckFriction(result,error)};
+          }
+        });
       }
 
       if(Date.now()-lastSessionCheckAt>=30_000){

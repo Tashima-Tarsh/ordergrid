@@ -100,6 +100,12 @@ must(server.includes('app.get("/api/products/flipkart/mobile/check/:commandId"')
 must(server.includes("flipkart_product_check_stale"),"flipkart mobile contract: stale price protection missing");
 must(server.includes("flipkart_quantity_exceeds_verified_limit"),"flipkart mobile contract: quantity ceiling enforcement missing");
 must(agent.includes('command.command==="PRODUCT_CHECK"'),"flipkart mobile contract: native worker command missing");
+must(agent.includes('ORDERGRID_PRODUCT_CHECK_PARALLEL||"4"'),"flipkart product-check throttle: default parallelism must be four");
+must(agent.includes("runAdaptiveProductCheckPool"),"flipkart product-check throttle: adaptive pool missing");
+must(agent.includes("Math.max(1,Math.floor(state.current/2))"),"flipkart product-check throttle: friction must reduce concurrency");
+must(agent.includes("state.current++"),"flipkart product-check throttle: clean waves must recover concurrency");
+must(agent.includes("/CAPTCHA|RATE|THROTTL|TOO MANY|429|SECURITY|ACCESS DENIED|TEMPORARILY BLOCKED/i"),"flipkart product-check throttle: retailer friction detection missing");
+must(agent.includes("productCommands=commands.filter"),"flipkart product-check throttle: product commands must be separated for parallel execution");
 must(cdp.includes("inspectFlipkartMobile"),"flipkart mobile contract: browser product inspector missing");
 must(cdp.includes("flipkartCartProbeScript"),"flipkart mobile contract: account quantity probe missing");
 must(!wizard.includes('max="2"'),"flipkart mobile contract: quantity limit must not be hard-coded to two");
