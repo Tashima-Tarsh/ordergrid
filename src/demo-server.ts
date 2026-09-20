@@ -25,8 +25,8 @@ type Basket={id:string;tenant_id:string;batch_id:string;status:string;retailer:s
 type Worker={id:string;hostname:string;mode:"BULK";last_seen:number};
 type DemoDealer={id:string;name:string;dealer_type:"MAIN"|"SUB";parent_id?:string};
 type DemoDealerUser={id:string;tenant_id:string;email:string;role:"OWNER"|"APPROVER"|"BUYER"|"AUDITOR";home_user:boolean};
-const mainDealerId=randomUUID();
-let activeDealerId=mainDealerId;
+const mainDealerId:string=randomUUID();
+let activeDealerId:string=mainDealerId;
 const dealers=new Map<string,DemoDealer>([[mainDealerId,{id:mainDealerId,name:"OrderGrid Main Dealer",dealer_type:"MAIN"}]]);
 const dealerUsers=new Map<string,DemoDealerUser>();
 dealerUsers.set("demo-owner",{id:"demo-owner",tenant_id:mainDealerId,email,role:"OWNER",home_user:true});
