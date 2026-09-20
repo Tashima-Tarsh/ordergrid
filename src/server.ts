@@ -699,7 +699,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
     targetDays:z.number().int().min(1).max(90).default(20)
   }).parse(req.body??{});
   const params:any[]=[p.tenantId,body.targetDays];
-  const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')","credential_status<>'MISSING'"];
+  const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
   if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
   const {rows}=await db.query(
@@ -823,7 +823,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       `select id,retailer,account_reference,profile_key
        from retailer_accounts
        where tenant_id=$1 and active and retailer in ('amazon-in','flipkart')
-         and credential_status<>'MISSING' and session_check_requested_at is not null
+         and session_check_requested_at is not null
          and session_check_claimed_at is null
        order by session_check_requested_at,id
        for update skip locked
@@ -873,7 +873,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     `update retailer_accounts set
        session_status=$1,session_checked_at=now(),
        session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
-       session_check_requested_at=null,session_check_claimed_at=null,
+       session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end,session_check_claimed_at=null,
        auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
        credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
                               when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
