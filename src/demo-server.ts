@@ -92,7 +92,7 @@ app.post("/api/dealer-context",async(req,reply)=>{
 });
 app.post("/api/dealers",async(req,reply)=>{
   if(activeDealerId!==mainDealerId)return reply.code(403).send({error:"main_dealer_owner_required"});
-  const body=z.object({name:z.string().min(2).max(120),ownerEmail:z.string().email(),ownerPassword:z.string().min(14).max(200)}).parse(req.body);
+  const body=z.object({name:z.string().min(2).max(120),ownerEmail:z.string().email(),ownerPassword:z.string().min(14).max(200).optional()}).parse(req.body);
   if([...dealerUsers.values()].some(u=>u.email.toLowerCase()===body.ownerEmail.toLowerCase()))return reply.code(409).send({error:"email_already_in_use"});
   const id=randomUUID(),userId=randomUUID();
   dealers.set(id,{id,name:body.name.trim(),dealer_type:"SUB",parent_id:mainDealerId});
