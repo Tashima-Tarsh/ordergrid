@@ -79,7 +79,7 @@ const main=document.querySelector('main');
 const title=document.createElement('section');
 title.className='workspace-title';
 main.prepend(title);
-const sections=[...main.children].filter(x=>x!==title);
+const sections=[...main.children].filter(x=>x!==title&&x.tagName!=='DIALOG');
 sections.forEach(s=>{
   let view='hidden';
   if(s.classList.contains('control-center'))view='control';
