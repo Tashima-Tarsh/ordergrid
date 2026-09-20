@@ -26,11 +26,41 @@ await app.register(rateLimit,{max:120,timeWindow:"1 minute"}); await app.registe
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
 
-declare module "fastify" { interface FastifyRequest { principal?:{id:string;tenantId:string;role:string} } }
-app.addHook("preHandler",async(req,reply)=>{ if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return; const raw=req.cookies.session; if(!raw)return reply.code(401).send({error:"unauthorized"}); const {rows}=await db.query(`select u.id,u.tenant_id,u.role from sessions s join users u on u.id=s.user_id where s.id_hash=$1 and s.expires_at>now() and u.active`,[tokenHash(raw)]); if(!rows[0])return reply.code(401).send({error:"unauthorized"}); req.principal={id:rows[0].id,tenantId:rows[0].tenant_id,role:rows[0].role}; });
+declare module "fastify" { interface FastifyRequest { principal?:{id:string;homeTenantId:string;tenantId:string;role:string} } }
+app.addHook("preHandler",async(req,reply)=>{
+  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;
+  const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
+  const {rows}=await db.query(`
+    select u.id,u.tenant_id home_tenant_id,
+      coalesce(s.active_tenant_id,u.tenant_id) tenant_id,
+      case
+        when coalesce(s.active_tenant_id,u.tenant_id)=u.tenant_id then u.role::text
+        else da.role::text
+      end role
+    from sessions s
+    join users u on u.id=s.user_id
+    left join dealer_access da
+      on da.user_id=u.id
+     and da.tenant_id=coalesce(s.active_tenant_id,u.tenant_id)
+    where s.id_hash=$1 and s.expires_at>now() and u.active
+      and (coalesce(s.active_tenant_id,u.tenant_id)=u.tenant_id or da.id is not null)
+  `,[tokenHash(raw)]);
+  if(!rows[0])return reply.code(401).send({error:"unauthorized"});
+  req.principal={id:rows[0].id,homeTenantId:rows[0].home_tenant_id,tenantId:rows[0].tenant_id,role:rows[0].role};
+});
 
 app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok"}});
-app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body); const {rows}=await db.query("select id,tenant_id,role,password_hash from users where email=$1 and active",[input.email.toLowerCase()]); const u=rows[0]; if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"}); const token=randomBytes(32).toString("base64url"); await db.query("insert into sessions(id_hash,user_id,expires_at) values($1,$2,now()+interval '12 hours')",[tokenHash(token),u.id]); reply.setCookie("session",token,{httpOnly:true,secure:config.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200}); return {user:{id:u.id,role:u.role}};});
+app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
+  const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);
+  const u=rows[0];
+  if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"});
+  const token=randomBytes(32).toString("base64url");
+  await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
+  reply.setCookie("session",token,{httpOnly:true,secure:config.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});
+  const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
+  return {user:{id:u.id,role:u.role},dealer:tenant.rows[0]};
+});
 app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)await db.query("delete from sessions where id_hash=$1",[tokenHash(raw)]);reply.clearCookie("session",{path:"/"});return {ok:true}});
 app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await Promise.all([db.query("select status,count(*)::int count,coalesce(sum(estimated_total_minor),0)::bigint total from order_batches where tenant_id=$1 group by status",[p.tenantId]),db.query("select status,count(*)::int count from purchase_orders where tenant_id=$1 group by status",[p.tenantId])]);return {batches:b.rows,orders:o.rows};});
 app.get("/api/control-center",async(req)=>{
