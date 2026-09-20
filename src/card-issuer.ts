@@ -1,13 +1,13 @@
 import type { Config } from "./config.js";
 
 export type CardholderInput={
-  email:string;
-  mobile:string;
-  firstName:string;
-  lastName:string;
-  gender:"M"|"F"|"O";
-  pan:string;
-  specialDate:string;
+  email?:string;
+  mobile?:string;
+  firstName?:string;
+  lastName?:string;
+  gender?:"M"|"F"|"O";
+  pan?:string;
+  specialDate?:string;
 };
 
 export type IssuedCard={
@@ -85,6 +85,7 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
   }
   async createCard(input:{cardholder:CardholderInput;label?:string;amountMinor?:number}):Promise<IssuedCard>{
     const c=input.cardholder;
+    if(!c.email||!c.mobile||!c.firstName||!c.lastName||!c.gender||!c.pan||!c.specialDate)throw new Error("cardholder_profile_required");
     const payload:any=await this.request("/api/v0/partner/enKashCard",{
       companyId:this.config.ENKASH_COMPANY_ID,
       cardAccountId:this.config.ENKASH_CARD_ACCOUNT_ID,
