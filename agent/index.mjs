@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { executeBasket } from "./cdp.mjs";
+import { executeBasket, focusRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -74,6 +74,7 @@ async function main(){
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
   const started=new Set();
+  let lastReconcileAt=0;
 
   await heartbeat(workerId);
   output.write(`Worker online · ${workerId} · ${parallel} parallel customer profiles\n`);
@@ -81,6 +82,21 @@ async function main(){
   while(true){
     try{
       await heartbeat(workerId);
+
+      const commandResult=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/claim`,{method:"POST",body:JSON.stringify({limit:10})})).body;
+      for(const command of commandResult.commands||[]){
+        try{
+          if(command.command==="FOCUS_SESSION"){
+            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
+            const focused=await focusRetailerSession({chrome,directory,retailer:command.retailer});
+            if(!focused.ok)throw new Error(focused.reason||"Could not focus retailer session");
+          }
+          await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
+        }catch(error){
+          await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(error.message).slice(0,300)})}).catch(()=>{});
+        }
+      }
+
       await api(`/api/execution-worker/${encodeURIComponent(workerId)}/claim`,{method:"POST",body:JSON.stringify({limit:claimLimit})});
       const queue=(await api(`/api/bulk-queue?workerId=${encodeURIComponent(workerId)}`)).body.baskets||[];
       const currentIds=new Set(queue.map(x=>x.id));
@@ -131,6 +147,35 @@ async function main(){
             }
           }
         });
+      }
+
+      if(Date.now()-lastReconcileAt>=60_000){
+        lastReconcileAt=Date.now();
+        try{
+          const claim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/claim`,{method:"POST",body:JSON.stringify({limit:25})})).body;
+          for(const account of claim.accounts||[]){
+            const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
+            try{
+              const observed=await reconcileRetailerAccount({chrome,directory,retailer:account.retailer,orders:account.orders||[]});
+              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/${encodeURIComponent(account.retailerAccountId)}`,{
+                method:"POST",
+                body:JSON.stringify({
+                  basketIds:account.basketIds||[],
+                  reward:observed.reward||null,
+                  observations:observed.observations||[],
+                  authChallenge:observed.authChallenge?.code||null,
+                  unsupported:Boolean(observed.unsupported),
+                  error:[observed.rewardError,observed.orderError].filter(Boolean).join("; ")||null
+                })
+              });
+            }catch(error){
+              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/${encodeURIComponent(account.retailerAccountId)}`,{
+                method:"POST",
+                body:JSON.stringify({basketIds:account.basketIds||[],reward:null,observations:[],error:String(error.message).slice(0,300)})
+              }).catch(()=>{});
+            }
+          }
+        }catch(error){output.write(`Reconciliation cycle error: ${error.message}\n`)}
       }
     }catch(error){output.write(`Worker cycle error: ${error.message}\n`)}
     if(!daemon)break;

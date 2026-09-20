@@ -69,6 +69,10 @@
       const status=account.active?(account.auth_status||'AUTH_REQUIRED'):'PAUSED';
       const credential=account.credential_status||'MISSING';
       const available=Number(account.available_rewards??account.reward_balance??0);
+      const rewardMeta=account.reward_balance_observed_at
+        ?'Actual retailer balance · '+new Date(account.reward_balance_observed_at).toLocaleString('en-IN')
+        :Number(account.pending_rewards||0)+' pending';
+      const refundMeta=(Number(account.observed_refund_orders||0)?Number(account.observed_refund_orders)+' refund status observed · ':'')+moneyMinor(account.pending_refund_minor||0)+' pending';
       return `
         <article class="retailer-account-row" data-account-id="${esc(account.id)}">
           <div class="account-main">
@@ -76,8 +80,8 @@
             <small>${esc(account.account_reference)} · ${esc(status)} · credentials ${esc(credential)}</small>
           </div>
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
-          <div><span>REWARDS</span><strong>${available}</strong><small>${Number(account.pending_rewards||0)} pending</small></div>
-          <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${moneyMinor(account.pending_refund_minor||0)} pending</small></div>
+          <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
+          <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
           <div class="account-actions"><button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' accounts yet</strong><span>Use Manage accounts to import the first account pool.</span></div>';

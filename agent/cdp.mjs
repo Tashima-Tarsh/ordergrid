@@ -194,6 +194,8 @@ function pageStateScript(address,paymentRoute,commercialApprovedAmountMinor){
       }
     }
 
+    const cvvInput=document.querySelector('input[autocomplete="cc-csc"],input[name*="cvv" i],input[id*="cvv" i],input[name*="cvc" i],input[id*="cvc" i],input[name*="securityCode" i],input[id*="securityCode" i]');
+    if(cvvInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'CARD_CVV_REQUIRED',message:'Card security code is required on the retailer payment page. Enter it directly in the live retailer session; OrderGrid does not store CVV.',href:location.href};
     const cardInput=document.querySelector('input[autocomplete="cc-number"],input[name*="cardNumber" i],input[id*="cardNumber" i]');
     if(cardInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'No tokenized/saved retailer payment method is available. Add the approved payment method in the retailer session; OrderGrid does not collect raw card PAN/CVV.',href:location.href};
 
@@ -270,4 +272,117 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
   }
   const state=await driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
   return {...state,results};
+}
+
+
+async function closeTarget(port,target){
+  if(!target?.id)return;
+  await fetch(`http://127.0.0.1:${port}/json/close/${encodeURIComponent(target.id)}`,{method:"PUT"}).catch(()=>null);
+}
+function retailerHost(retailer){
+  return retailer==="flipkart"?"flipkart.com":retailer==="amazon-in"?"amazon.in":null;
+}
+function authChallengeScript(){
+  return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,80000).toLowerCase();
+    const otp=Boolean(document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i]'))||/(enter|request|verify|send).{0,24}(otp|one time password|verification code)/i.test(text);
+    const captcha=Boolean(document.querySelector('iframe[src*="captcha" i],[class*="captcha" i],[id*="captcha" i],input[name*="captcha" i]'))||/captcha|i am not a robot/i.test(text);
+    const password=Boolean(document.querySelector('input[type="password"]'));
+    const login=/log in|login|sign in|enter email|enter mobile|request otp/i.test(text)&&(password||Boolean(document.querySelector('input[type="email"],input[type="tel"]')));
+    if(captcha)return {code:'CAPTCHA_REQUIRED'};
+    if(otp)return {code:'OTP_REQUIRED'};
+    if(password||login)return {code:'LOGIN_REQUIRED'};
+    return null;
+  })()`;
+}
+function rewardSnapshotScript(){
+  return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,140000);
+    const patterns=[
+      /(?:available|total|balance)[^0-9]{0,30}([0-9]{1,7})\\s*SuperCoins?/i,
+      /SuperCoins?\\s*(?:balance|available|total)?[^0-9]{0,30}([0-9]{1,7})/i,
+      /([0-9]{1,7})\\s*SuperCoins?\\s*(?:available|balance)/i
+    ];
+    let balance=null;
+    for(const re of patterns){const m=text.match(re);if(m){const n=Number(m[1]);if(Number.isInteger(n)&&n>=0){balance=n;break}}}
+    const tierMatch=text.match(/(?:Flipkart\\s+)?Plus\\s+(Gold|Silver)/i);
+    return {balance,tier:tierMatch?tierMatch[1].toUpperCase():null,url:location.href,excerpt:text.slice(0,1800)};
+  })()`;
+}
+function orderObservationScript(orders){
+  return `(()=>{const orders=${JSON.stringify(orders||[])};const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,350000);
+    const money=s=>{const m=String(s||'').replace(/,/g,'').match(/(?:₹|Rs\\.?|INR)\\s*([0-9]+(?:\\.[0-9]{1,2})?)/i);return m?Math.round(Number(m[1])*100):null};
+    const result=[];
+    for(const order of orders){
+      const id=String(order.retailerOrderId||'');if(!id)continue;
+      const idx=text.toLowerCase().indexOf(id.toLowerCase());if(idx<0)continue;
+      const excerpt=text.slice(Math.max(0,idx-450),Math.min(text.length,idx+1400));
+      const low=excerpt.toLowerCase();
+      let orderStatus=null;
+      if(/cancelled|canceled/.test(low))orderStatus='CANCELLED';
+      else if(/returned|return complete/.test(low))orderStatus='RETURNED';
+      else if(/delivered/.test(low))orderStatus='DELIVERED';
+      else if(/out for delivery/.test(low))orderStatus='OUT_FOR_DELIVERY';
+      else if(/shipped|dispatched/.test(low))orderStatus='SHIPPED';
+      else if(/ordered|confirmed/.test(low))orderStatus='CONFIRMED';
+      let refundStatus=null;
+      if(/refund(?:ed| complete| completed| successful)|refund.{0,80}(?:credited|processed successfully)|credited.{0,80}refund/.test(low))refundStatus='SETTLED';
+      else if(/refund.{0,80}(?:processing|being processed|in process)/.test(low))refundStatus='PROCESSING';
+      else if(/refund.{0,80}(?:initiated|issued)/.test(low))refundStatus='INITIATED';
+      else if(/refund.{0,80}(?:requested|request received)/.test(low))refundStatus='REQUESTED';
+      let refundAmountMinor=null;
+      const refundWindow=excerpt.match(/(?:refund(?: amount)?[^₹0-9]{0,50}(?:₹|Rs\\.?|INR)\\s*[0-9][0-9,.]*|(?:₹|Rs\\.?|INR)\\s*[0-9][0-9,.]*[^.]{0,50}refund)/i);
+      if(refundWindow)refundAmountMinor=money(refundWindow[0]);
+      let rewardUnits=null;
+      const reward=excerpt.match(/(?:earned|credited|received)?[^0-9]{0,20}([0-9]{1,5})\\s*SuperCoins?/i);
+      if(reward)rewardUnits=Number(reward[1]);
+      result.push({retailerOrderId:id,orderStatus,refundStatus,refundAmountMinor,rewardUnits,sourceUrl:location.href,excerpt:excerpt.slice(0,1800)});
+    }
+    return result;
+  })()`;
+}
+
+export async function focusRetailerSession({chrome,directory,retailer}){
+  const port=await ensureChrome(chrome,directory),host=retailerHost(retailer);
+  const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
+  const target=targets.find(t=>/(checkout|payment|pay|secure|order|cart|login|verify|otp)/i.test(t.url||""))||targets[0];
+  if(!target)return {ok:false,reason:"SESSION_TAB_NOT_FOUND"};
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Page.enable");
+    await connection.send("Page.bringToFront");
+    await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
+    return {ok:true,url:target.url||null};
+  }finally{connection.close()}
+}
+
+export async function reconcileRetailerAccount({chrome,directory,retailer,orders}){
+  const port=await ensureChrome(chrome,directory),result={reward:null,observations:[],authChallenge:null};
+  if(retailer!=="flipkart"&&retailer!=="amazon-in")return {...result,unsupported:true};
+
+  if(retailer==="flipkart"){
+    const rewardsTarget=await createTarget(port,"https://www.flipkart.com/supercoin");
+    const connection=new CdpConnection(rewardsTarget.webSocketDebuggerUrl);
+    try{
+      await waitReady(connection);await sleep(1800);
+      const challenge=await evaluate(connection,authChallengeScript());
+      if(challenge)result.authChallenge=challenge;
+      else result.reward=await evaluate(connection,rewardSnapshotScript());
+    }catch(error){
+      result.rewardError=String(error.message).slice(0,240);
+    }finally{connection.close();await closeTarget(port,rewardsTarget)}
+  }
+
+  const ordersUrl=retailer==="flipkart"
+    ?"https://www.flipkart.com/account/orders"
+    :"https://www.amazon.in/gp/your-account/order-history";
+  const ordersTarget=await createTarget(port,ordersUrl);
+  const connection=new CdpConnection(ordersTarget.webSocketDebuggerUrl);
+  try{
+    await waitReady(connection);await sleep(2200);
+    const challenge=await evaluate(connection,authChallengeScript());
+    if(challenge)result.authChallenge=result.authChallenge||challenge;
+    else result.observations=await evaluate(connection,orderObservationScript(orders));
+  }catch(error){
+    result.orderError=String(error.message).slice(0,240);
+  }finally{connection.close();await closeTarget(port,ordersTarget)}
+  return result;
 }

@@ -846,13 +846,16 @@ app.get("/api/retailer-finance",async(req)=>{
   }).parse(req.query??{});
   const {rows}=await db.query(`
     select ra.id retailer_account_id,ra.account_reference,ra.label,ra.active,ra.auth_status,
+      ra.reward_balance_observed,ra.reward_balance_observed_at,ra.reward_tier,
       coalesce(sum(case when re.event_type='PENDING' then re.units else 0 end),0)::int pending_rewards,
-      coalesce(sum(case
+      coalesce(ra.reward_balance_observed,sum(case
         when re.event_type in ('CREDITED','ADJUSTED') then re.units
         when re.event_type in ('REDEEMED','REVERSED') then -re.units
         else 0 end),0)::int available_rewards,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status='SETTLED'),0)::bigint settled_refund_minor,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor,
+      coalesce((select count(*) from retailer_order_observations roo where roo.retailer_account_id=ra.id and roo.refund_status is not null),0)::int observed_refund_orders,
+      coalesce((select max(roo.observed_at) from retailer_order_observations roo where roo.retailer_account_id=ra.id),ra.reward_balance_observed_at)::timestamptz last_reconciled_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id),0)::int order_count
     from retailer_accounts ra
     left join retailer_reward_events re on re.retailer_account_id=ra.id
@@ -864,13 +867,15 @@ app.get("/api/retailer-finance",async(req)=>{
   const totals=await db.query(`
     select
       count(*)::int account_count,
-      coalesce((select sum(case
-        when re.event_type in ('CREDITED','ADJUSTED') then re.units
-        when re.event_type in ('REDEEMED','REVERSED') then -re.units
-        else 0 end)
-        from retailer_reward_events re
-        join retailer_accounts ra2 on ra2.id=re.retailer_account_id
-        where re.tenant_id=$1 and ra2.retailer=$2),0)::int available_rewards,
+      coalesce((select sum(coalesce(ra2.reward_balance_observed,(
+          select sum(case
+            when re.event_type in ('CREDITED','ADJUSTED') then re.units
+            when re.event_type in ('REDEEMED','REVERSED') then -re.units
+            else 0 end)
+          from retailer_reward_events re where re.retailer_account_id=ra2.id
+        ),0))
+        from retailer_accounts ra2
+        where ra2.tenant_id=$1 and ra2.retailer=$2),0)::int available_rewards,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf
         join retailer_accounts ra3 on ra3.id=rf.retailer_account_id
         where rf.tenant_id=$1 and ra3.retailer=$2 and rf.status='SETTLED'),0)::bigint settled_refund_minor,
@@ -965,6 +970,288 @@ app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=a
 app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
 app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,last_seen from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId]);return {workers:rows};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
+
+
+app.get("/api/human-actions",async(req)=>{
+  const p=req.principal!;
+  const {rows}=await db.query(`
+    select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.failure_code,cb.failure_message,
+      cb.execution_worker_id,cb.payment_status,cb.virtual_card_id,cb.updated_at,
+      c.external_reference customer_reference,a.recipient,a.city,a.postal_code,
+      ra.label account_label,ra.profile_key,
+      coalesce(sum(po.amount_minor),0)::bigint amount_minor,
+      ew.last_seen worker_last_seen,
+      (ew.last_seen>now()-interval '30 seconds') worker_online,
+      case
+        when cb.failure_code='CARD_CVV_REQUIRED' then 'CARD_CVV'
+        when cb.failure_code='PAYMENT_AUTH_REQUIRED' or cb.failure_code ~* '3DS' then 'BANK_AUTH'
+        when cb.failure_code ~* 'OTP' then 'RETAILER_OTP'
+        when cb.failure_code ~* 'CAPTCHA' then 'CAPTCHA'
+        when cb.failure_code ~* 'LOGIN|PASSWORD|AUTH' then 'RETAILER_LOGIN'
+        when cb.failure_code ~* 'PAYMENT_METHOD|CARD_ASSIGNMENT|PAYMENT_SETUP' then 'PAYMENT_METHOD'
+        else 'REVIEW'
+      end action_type
+    from checkout_baskets cb
+    join customers c on c.id=cb.customer_id
+    join addresses a on a.id=cb.address_id
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join purchase_orders po on po.checkout_basket_id=cb.id
+    left join execution_workers ew on ew.tenant_id=cb.tenant_id and ew.id=cb.execution_worker_id
+    where cb.tenant_id=$1
+      and cb.status in ('REQUIRES_ACTION','FAILED')
+      and coalesce(cb.failure_code,'')<>''
+    group by cb.id,c.external_reference,a.recipient,a.city,a.postal_code,ra.label,ra.profile_key,ew.last_seen
+    order by case when ew.last_seen>now()-interval '30 seconds' then 0 else 1 end,cb.updated_at desc
+    limit 500
+  `,[p.tenantId]);
+  return {actions:rows};
+});
+
+app.post("/api/human-actions/:id/focus",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const basket=await db.query(`
+    select cb.id,cb.execution_worker_id,cb.retailer_account_id,cb.retailer,ra.profile_key,ew.last_seen
+    from checkout_baskets cb
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join execution_workers ew on ew.tenant_id=cb.tenant_id and ew.id=cb.execution_worker_id
+    where cb.id=$1 and cb.tenant_id=$2 and cb.status in ('REQUIRES_ACTION','FAILED','OPENED')
+    limit 1
+  `,[id,p.tenantId]);
+  const row=basket.rows[0];
+  if(!row)return reply.code(404).send({error:"action_not_found"});
+  if(!row.execution_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"execution_worker_offline"});
+  const existing=await db.query(
+    "select id,status from execution_worker_commands where tenant_id=$1 and worker_id=$2 and checkout_basket_id=$3 and command='FOCUS_SESSION' and status in ('PENDING','PROCESSING') order by requested_at desc limit 1",
+    [p.tenantId,row.execution_worker_id,id]
+  );
+  if(existing.rows[0])return {commandId:existing.rows[0].id,status:existing.rows[0].status};
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,$3,'FOCUS_SESSION',$4,$5) returning id,status`,
+    [p.tenantId,row.execution_worker_id,id,{retailer:row.retailer,retailerAccountId:row.retailer_account_id,profileKey:row.profile_key},p.id]
+  );
+  await audit(db,p.tenantId,p.id,"human_action.focus_requested","checkout_basket",id,{workerId:row.execution_worker_id});
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
+app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const live=await client.query(
+      "select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
+      [p.tenantId,workerId,p.id]
+    );
+    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    await client.query(
+      "update execution_worker_commands set status='PENDING',processing_at=null where tenant_id=$1 and worker_id=$2 and status='PROCESSING' and processing_at<now()-interval '2 minutes'",
+      [p.tenantId,workerId]
+    );
+    const picked=await client.query(
+      "select id from execution_worker_commands where tenant_id=$1 and worker_id=$2 and status='PENDING' order by requested_at for update skip locked limit $3",
+      [p.tenantId,workerId,body.limit]
+    );
+    if(!picked.rows.length){await client.query("commit");return {commands:[]}}
+    const ids=picked.rows.map(r=>r.id);
+    await client.query(
+      "update execution_worker_commands set status='PROCESSING',processing_at=now() where tenant_id=$1 and id=any($2::uuid[])",
+      [p.tenantId,ids]
+    );
+    const commands=await client.query(`
+      select wc.id,wc.command,wc.checkout_basket_id,wc.payload,
+        cb.retailer,cb.retailer_account_id,ra.profile_key
+      from execution_worker_commands wc
+      left join checkout_baskets cb on cb.id=wc.checkout_basket_id
+      left join retailer_accounts ra on ra.id=cb.retailer_account_id
+      where wc.tenant_id=$1 and wc.id=any($2::uuid[])
+      order by wc.requested_at
+    `,[p.tenantId,ids]);
+    await client.query("commit");
+    return {commands:commands.rows.map(r=>({
+      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,retailer:r.retailer,
+      retailerAccountId:r.retailer_account_id,profileKey:r.profile_key,payload:r.payload
+    }))};
+  }catch(error){await client.query("rollback");throw error}finally{client.release()}
+});
+
+app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const commandId=z.string().uuid().parse((req.params as any).commandId);
+  const body=z.object({ok:z.boolean(),error:z.string().max(300).optional()}).parse(req.body);
+  const worker=await db.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3",[p.tenantId,workerId,p.id]);
+  if(!worker.rows[0])return reply.code(403).send({error:"worker_access_denied"});
+  const {rows}=await db.query(
+    "update execution_worker_commands set status=$1,completed_at=now(),error=$2 where id=$3 and tenant_id=$4 and worker_id=$5 and status='PROCESSING' returning id,status",
+    [body.ok?"COMPLETED":"FAILED",body.error??null,commandId,p.tenantId,workerId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"worker_command_not_found"});
+  return rows[0];
+});
+
+app.post("/api/execution-worker/:workerId/reconciliation/claim",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const body=z.object({limit:z.number().int().min(1).max(50).default(25)}).parse(req.body??{});
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const live=await client.query(
+      "select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
+      [p.tenantId,workerId,p.id]
+    );
+    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    await client.query(
+      "update checkout_baskets set reconciliation_status='ERROR',reconciliation_error='reconciliation lease expired',reconciliation_next_at=now(),updated_at=now() where tenant_id=$1 and execution_worker_id=$2 and reconciliation_status='RUNNING' and reconciliation_last_at<now()-interval '30 minutes'",
+      [p.tenantId,workerId]
+    );
+    const picked=await client.query(`
+      select cb.id,cb.retailer_account_id,cb.retailer,cb.retailer_order_id,ra.profile_key,
+        coalesce((select sum(po.amount_minor) from purchase_orders po where po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id),0)::bigint amount_minor
+      from checkout_baskets cb
+      join retailer_accounts ra on ra.id=cb.retailer_account_id
+      where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status='CONFIRMED'
+        and cb.retailer in ('flipkart','amazon-in')
+        and cb.retailer_order_id is not null
+        and (cb.reconciliation_next_at is null or cb.reconciliation_next_at<=now())
+        and cb.confirmed_at>now()-interval '180 days'
+        and cb.reconciliation_status<>'RUNNING'
+      order by coalesce(cb.reconciliation_next_at,cb.confirmed_at),cb.confirmed_at
+      for update of cb skip locked
+      limit $3
+    `,[p.tenantId,workerId,body.limit]);
+    if(!picked.rows.length){await client.query("commit");return {accounts:[]}}
+    const ids=picked.rows.map(r=>r.id);
+    await client.query(
+      "update checkout_baskets set reconciliation_status='RUNNING',reconciliation_last_at=now(),reconciliation_error=null,updated_at=now() where tenant_id=$1 and id=any($2::uuid[])",
+      [p.tenantId,ids]
+    );
+    await client.query("commit");
+    const groups=new Map<string,any>();
+    for(const row of picked.rows){
+      const key=String(row.retailer_account_id);
+      if(!groups.has(key))groups.set(key,{retailerAccountId:key,retailer:row.retailer,profileKey:row.profile_key,basketIds:[],orders:[]});
+      const group=groups.get(key)!;
+      group.basketIds.push(String(row.id));
+      group.orders.push({basketId:String(row.id),retailerOrderId:String(row.retailer_order_id),amountMinor:Number(row.amount_minor||0)});
+    }
+    return {accounts:[...groups.values()]};
+  }catch(error){await client.query("rollback");throw error}finally{client.release()}
+});
+
+app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const retailerAccountId=z.string().uuid().parse((req.params as any).retailerAccountId);
+  const body=z.object({
+    basketIds:z.array(z.string().uuid()).min(1).max(50),
+    reward:z.object({
+      balance:z.number().int().nonnegative().nullable().optional(),
+      tier:z.string().max(80).nullable().optional(),
+      url:z.string().url().optional(),
+      excerpt:z.string().max(2000).optional()
+    }).nullable().optional(),
+    observations:z.array(z.object({
+      retailerOrderId:z.string().min(3).max(100),
+      orderStatus:z.string().max(80).nullable().optional(),
+      refundStatus:z.enum(["REQUESTED","INITIATED","PROCESSING","SETTLED"]).nullable().optional(),
+      refundAmountMinor:z.number().int().positive().nullable().optional(),
+      rewardUnits:z.number().int().positive().max(1000000).nullable().optional(),
+      sourceUrl:z.string().url().optional(),
+      excerpt:z.string().max(2000).optional()
+    })).max(100).default([]),
+    authChallenge:z.enum(["LOGIN_REQUIRED","OTP_REQUIRED","CAPTCHA_REQUIRED"]).nullable().optional(),
+    unsupported:z.boolean().default(false),
+    error:z.string().max(500).nullable().optional()
+  }).parse(req.body);
+  const worker=await db.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3",[p.tenantId,workerId,p.id]);
+  if(!worker.rows[0])return reply.code(403).send({error:"worker_access_denied"});
+  const owned=await db.query(
+    "select count(*)::int count from checkout_baskets where tenant_id=$1 and execution_worker_id=$2 and retailer_account_id=$3 and id=any($4::uuid[])",
+    [p.tenantId,workerId,retailerAccountId,body.basketIds]
+  );
+  if(Number(owned.rows[0]?.count||0)!==body.basketIds.length)return reply.code(409).send({error:"reconciliation_basket_mismatch"});
+  const account=await db.query("select retailer from retailer_accounts where id=$1 and tenant_id=$2",[retailerAccountId,p.tenantId]);
+  if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  const retailer=String(account.rows[0].retailer);
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    if(body.reward&&body.reward.balance!==null&&body.reward.balance!==undefined){
+      await client.query(
+        "update retailer_accounts set reward_balance_observed=$1,reward_balance_observed_at=now(),reward_tier=coalesce($2,reward_tier),updated_at=now() where id=$3 and tenant_id=$4",
+        [body.reward.balance,body.reward.tier??null,retailerAccountId,p.tenantId]
+      );
+    }
+    for(const observation of body.observations){
+      const basket=await client.query(
+        "select id,virtual_card_id from checkout_baskets where tenant_id=$1 and retailer_account_id=$2 and retailer_order_id=$3 limit 1",
+        [p.tenantId,retailerAccountId,observation.retailerOrderId]
+      );
+      const basketId=basket.rows[0]?.id??null;
+      await client.query(`
+        insert into retailer_order_observations(
+          tenant_id,retailer_account_id,checkout_basket_id,retailer,retailer_order_id,
+          order_status,refund_status,refund_amount_minor,reward_units,source_url,excerpt,observed_at,updated_at
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),now())
+        on conflict(tenant_id,retailer_account_id,retailer_order_id) do update set
+          checkout_basket_id=coalesce(excluded.checkout_basket_id,retailer_order_observations.checkout_basket_id),
+          order_status=coalesce(excluded.order_status,retailer_order_observations.order_status),
+          refund_status=coalesce(excluded.refund_status,retailer_order_observations.refund_status),
+          refund_amount_minor=coalesce(excluded.refund_amount_minor,retailer_order_observations.refund_amount_minor),
+          reward_units=coalesce(excluded.reward_units,retailer_order_observations.reward_units),
+          source_url=coalesce(excluded.source_url,retailer_order_observations.source_url),
+          excerpt=coalesce(excluded.excerpt,retailer_order_observations.excerpt),
+          observed_at=now(),updated_at=now()
+      `,[p.tenantId,retailerAccountId,basketId,retailer,observation.retailerOrderId,observation.orderStatus??null,observation.refundStatus??null,observation.refundAmountMinor??null,observation.rewardUnits??null,observation.sourceUrl??null,observation.excerpt??null]);
+      if(basketId&&observation.rewardUnits){
+        const rewardKey=`auto:${retailer}:${observation.retailerOrderId}:reward`;
+        await client.query(`
+          insert into retailer_reward_events(
+            tenant_id,retailer_account_id,checkout_basket_id,retailer,event_type,units,idempotency_key,retailer_reference,occurred_at,created_by
+          ) values($1,$2,$3,$4,'CREDITED',$5,$6,$7,now(),$8)
+          on conflict(tenant_id,idempotency_key) do update set
+            units=excluded.units,event_type='CREDITED',retailer_reference=excluded.retailer_reference,occurred_at=now()
+        `,[p.tenantId,retailerAccountId,basketId,retailer,observation.rewardUnits,rewardKey,observation.retailerOrderId,p.id]);
+      }
+      if(basketId&&observation.refundStatus&&observation.refundAmountMinor){
+        const refundKey=`auto:${retailer}:${observation.retailerOrderId}:refund`;
+        const isSettled=observation.refundStatus==="SETTLED";
+        await client.query(`
+          insert into retailer_refunds(
+            tenant_id,retailer_account_id,checkout_basket_id,virtual_card_id,retailer,amount_minor,status,
+            idempotency_key,retailer_refund_reference,initiated_at,settled_at,created_by,updated_at
+          ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,
+            case when $7 in ('INITIATED','PROCESSING','SETTLED') then now() else null end,
+            case when $7='SETTLED' then now() else null end,$10,now())
+          on conflict(tenant_id,idempotency_key) do update set
+            amount_minor=excluded.amount_minor,status=excluded.status,
+            retailer_refund_reference=coalesce(excluded.retailer_refund_reference,retailer_refunds.retailer_refund_reference),
+            initiated_at=case when excluded.status in ('INITIATED','PROCESSING','SETTLED') then coalesce(retailer_refunds.initiated_at,now()) else retailer_refunds.initiated_at end,
+            settled_at=case when excluded.status='SETTLED' then coalesce(retailer_refunds.settled_at,now()) else retailer_refunds.settled_at end,
+            updated_at=now()
+        `,[p.tenantId,retailerAccountId,basketId,basket.rows[0]?.virtual_card_id??null,retailer,observation.refundAmountMinor,observation.refundStatus,refundKey,observation.retailerOrderId,p.id]);
+      }
+    }
+    const hasError=Boolean(body.error||body.authChallenge);
+    await client.query(
+      `update checkout_baskets set
+        reconciliation_status=$1,
+        reconciliation_last_at=now(),
+        reconciliation_next_at=now()+($2::text||' hours')::interval,
+        reconciliation_error=$3,
+        updated_at=now()
+       where tenant_id=$4 and execution_worker_id=$5 and retailer_account_id=$6 and id=any($7::uuid[])`,
+      [hasError?"ERROR":"OBSERVED",hasError?"1":"12",body.error??body.authChallenge??null,p.tenantId,workerId,retailerAccountId,body.basketIds]
+    );
+    if(body.authChallenge){
+      await client.query("update retailer_accounts set auth_status='CHALLENGE',updated_at=now() where id=$1 and tenant_id=$2",[retailerAccountId,p.tenantId]);
+    }
+    await client.query("commit");
+    return {ok:true,observations:body.observations.length,rewardObserved:body.reward?.balance??null};
+  }catch(error){await client.query("rollback");throw error}finally{client.release()}
+});
 
 
 app.get("/api/issuers",async(req)=>{
@@ -1531,7 +1818,7 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     );
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
-    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),updated_at=now() where id=$2",[retailerOrderId,id]);
+    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,updated_at=now() where id=$2",[retailerOrderId,id]);
     await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status='STORED' then 'READY' else credential_status end,last_authenticated_at=now(),updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
