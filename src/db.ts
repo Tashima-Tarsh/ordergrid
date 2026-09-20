@@ -1,13 +1,23 @@
 import pg from "pg";
 import type { Config } from "./config.js";
 
-export const createDb = (config: Config) => new pg.Pool({
-  connectionString: config.DATABASE_URL,
-  max: 20,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-  ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined
-});
+export const createDb = (config: Config) => {
+  const base={
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined
+  };
+  if(config.DATABASE_URL)return new pg.Pool({...base,connectionString:config.DATABASE_URL});
+  return new pg.Pool({
+    ...base,
+    host:config.DB_HOST,
+    port:config.DB_PORT,
+    database:config.DB_NAME,
+    user:config.DB_USER,
+    password:config.DB_PASSWORD
+  });
+};
 
 export type Db = ReturnType<typeof createDb>;
 
