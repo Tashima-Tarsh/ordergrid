@@ -24,7 +24,7 @@ function configuredCardholder(config:Config):CardholderInput|null{
   };
 }
 
-export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:string,basketId:string,userId:string){
+export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:string,basketId:string,userId:string,fundingAmountMinor?:number){
   const basket=await db.query(`
     select cb.id,cb.customer_id,cb.virtual_card_id,cb.issuer_connection_id,cb.retailer,
            b.payment_route,coalesce(sum(po.amount_minor),0)::bigint amount_minor
@@ -50,7 +50,8 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     return {status:"CARDHOLDER_PROFILE_REQUIRED" as const,cardId:null};
   }
 
-  const amountMinor=Math.max(100,Number(row.amount_minor||0));
+  const expectedMinor=Math.max(100,Number(row.amount_minor||0));
+  const amountMinor=Math.max(expectedMinor,Math.floor(Number(fundingAmountMinor||expectedMinor)));
   const issued=await state.issuer.createCard({cardholder,label:`OrderGrid ${row.retailer} ${basketId.slice(0,8)}`});
   let cardId:string;
   try{
