@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_production_hardening.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -31,7 +31,7 @@ const server=files["src/server.ts"];
 const worker=files["src/worker.ts"];
 const configSource=files["src/config.ts"];
 const dbSource=files["src/db.ts"];
-const hardeningMigration=files["src/migrations/024_production_hardening.sql"];
+const hardeningMigration=files["ops/supabase-production-hardening.sql"];
 const baskets=files["src/baskets.ts"];
 const allocation=files["src/flipkart-allocation.ts"];
 const allocationMigration=files["src/migrations/023_flipkart_account_pinned_batch_items.sql"];
@@ -139,6 +139,8 @@ must(configSource.includes('value.NODE_ENV==="production"&&!value.WORKER_API_TOK
 must(configSource.includes("DB_SSL_REJECT_UNAUTHORIZED"),"security contract: database TLS verification control missing");
 must(dbSource.includes("rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED"),"security contract: production DB TLS must not be hard-coded insecure");
 must(server.includes("x-ordergrid-worker-token"),"security contract: worker routes must verify machine token");
+must(server.includes("req.headers.x-ordergrid-worker-token"),"security contract: worker token must be redacted from request logs");
+must(server.includes('workerAuth:Boolean(config.WORKER_API_TOKEN)'),"health contract: worker auth readiness must be visible");
 must(server.includes("timingSafeEqual"),"security contract: machine token comparison must be timing-safe");
 must(server.includes("worker_role_required"),"security contract: machine routes must require an execution-capable role");
 must(agent.includes("ORDERGRID_WORKER_TOKEN"),"security contract: native worker must send machine token");
