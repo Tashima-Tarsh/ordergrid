@@ -71,7 +71,7 @@
             <button type="button" data-focus-session ${action.worker_online?'':'disabled'}>Resume exact session</button>
           </div>
         </article>`;
-    }).join(''):'<div class="human-action-empty"><strong>No human action required</strong><span>Autopilot will surface OTP, CAPTCHA, CVV and bank authentication here.</span></div>';
+    }).join(''):'<div class="human-action-empty"><strong>No human action required</strong><span>OrderGrid surfaces OTP, CAPTCHA, CVV and bank authentication here only when human action is required.</span></div>';
   }
   async function load(){
     try{
