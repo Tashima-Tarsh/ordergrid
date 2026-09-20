@@ -1,7 +1,7 @@
 (()=>{
   const $=s=>document.querySelector(s);
   const inrMinor=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
-  let provider={provider:'disabled',configured:false,source:'none'},cards=[];
+  let provider={provider:'disabled',configured:false,source:'none'},cards=[],issuers=[];
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -19,18 +19,21 @@
     $('#createCards').textContent=`Create & load ${qty} virtual ${qty===1?'card':'cards'}`;
     const approved=$('#fundingApproval').checked;
     const previewOnly=provider.source==='showroom';
-    $('#createCards').disabled=!provider.configured||!approved||previewOnly;
+    const programmeReady=Boolean($('#cardIssuer')?.value);
+    $('#createCards').disabled=!provider.configured||!approved||previewOnly||!programmeReady;
     $('#fundingMessage').textContent=previewOnly
       ?'Card programme setup is required before creating virtual cards.'
       :!provider.configured
         ?'Connect an approved card programme to create virtual cards.'
+        :!programmeReady
+          ?'Choose the connected bank/card programme.'
         :!approved
           ?'Confirm that this card programme and funding allocation are authorized.'
-          :`Issuer will create ${qty} real virtual card(s) and load the requested amount to each card.`;
+          :'Issuer creates the virtual card, OrderGrid applies online-only controls, then the approved amount is loaded.';
   }
   function render(){
     const previewOnly=provider.source==='showroom';
-    const name=provider.provider==='enkash'?'EnKash':'No issuer';
+    const name=provider.programmeName||provider.bankName||(provider.provider==='enkash'?'EnKash':'No issuer');
     $('#fundingName').textContent=provider.configured?`${name} card programme connected`:'No card programme connected';
     $('#fundingMeta').textContent=previewOnly
       ?'Connect an approved card programme to begin.'
@@ -43,11 +46,16 @@
     $('#connectIssuer').disabled=previewOnly;
     $('#connectIssuer').textContent=provider.configured?'Connected':previewOnly?'Production setup only':'Connect card programme';
     $('#disconnectIssuer').hidden=!provider.configured||previewOnly;
+    const issuerSelect=$('#cardIssuer');
+    if(issuerSelect){
+      const connected=issuers.filter(x=>x.status==='CONNECTED'&&x.provider==='enkash');
+      issuerSelect.innerHTML=connected.length?connected.map(x=>`<option value="${x.id}">${x.programme_name||x.bank_name||'EnKash'} · ${x.card_network||'card programme'}</option>`).join(''):'<option value="">Connect a programme first</option>';
+    }
     $('#virtualCardInventory').innerHTML=cards.length?cards.map((card,i)=>`
       <div class="virtual-card-row" data-card="${card.id}">
         <strong>${card.label||'Virtual card '+String(i+1).padStart(2,'0')} · ${card.masked_number||card.provider_card_id}</strong>
         <span>${inrMinor(card.balance_minor)} loaded</span>
-        <span>${card.merchant_control||'Issuer controls'}</span>
+        <span>${card.merchant_control||'Issuer controls'} · ${card.channel_control_status==='APPLIED'?'online-only control applied':'control '+String(card.channel_control_status||'pending').toLowerCase()}</span>
         <span class="card-active">${card.status}</span>
         <button type="button" class="secondary" data-load>Load funds</button>
       </div>`).join(''):'<p class="muted">Created virtual cards will appear here.</p>';
@@ -55,11 +63,11 @@
   }
   async function load(){
     try{
-      const [p,c]=await Promise.all([request('/api/cards/provider'),request('/api/cards')]);
-      provider=p;cards=c.cards||[];render();
+      const [p,c,i]=await Promise.all([request('/api/cards/provider'),request('/api/cards'),request('/api/issuers')]);
+      provider=p;cards=c.cards||[];issuers=i.issuers||[];render();
     }catch(error){
       provider={provider:'disabled',configured:false,source:'showroom'};
-      cards=[];render();console.error(error);
+      cards=[];issuers=[];render();console.error(error);
     }
   }
 
@@ -77,6 +85,9 @@
     try{
       provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
         provider:'enkash',
+        bankName:String(form.get('bankName')),
+        programmeName:String(form.get('programmeName')),
+        cardNetwork:String(form.get('cardNetwork')),
         baseUrl:String(form.get('baseUrl')),
         tokenUrl:String(form.get('tokenUrl')),
         partnerId:String(form.get('partnerId')),
@@ -96,19 +107,20 @@
     try{await request('/api/cards/provider',{method:'DELETE'});await load();toast('Card programme removed')}catch(error){alert(error.message)}
   };
 
-  ['cardQuantity','cardAmount','merchantControl','fundingApproval'].forEach(id=>$('#'+id)?.addEventListener('input',calculate));
+  ['cardQuantity','cardAmount','merchantControl','cardIssuer','fundingApproval'].forEach(id=>$('#'+id)?.addEventListener('input',calculate));
 
   $('#cardProgramForm').onsubmit=async event=>{
     event.preventDefault();
     if(!provider.configured){alert('Connect an approved card programme first.');return}
     const button=$('#createCards'),form=new FormData(event.currentTarget);
-    const quantity=Number(form.get('quantity')),amountMinor=Math.round(Number(form.get('amount'))*100);
+    const quantity=Number(form.get('quantity')),amountMinor=Math.round(Number(form.get('amount'))*100),merchant=String(form.get('merchantControl')||'all');
     button.disabled=true;button.textContent='Creating cards…';
     try{
       const result=await request('/api/cards',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
         quantity,
         amountMinor,
-        merchantControl:String(form.get('merchantControl')),
+        issuerConnectionId:String(form.get('issuerConnectionId')),
+        merchantScope:merchant==='all'?{type:'ALL'}:{type:'RETAILER',value:merchant},
         label:String(form.get('label')||'OrderGrid procurement card'),
         cardholder:{
           email:String(form.get('email')),

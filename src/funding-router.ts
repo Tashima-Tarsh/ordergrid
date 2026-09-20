@@ -50,7 +50,7 @@ export async function assignAvailableVirtualCard(db:Db,tenantId:string,basketId:
   try{
     await client.query("begin");
     const basket=await client.query(`
-      select cb.id,cb.customer_id,cb.issuer_connection_id,cb.virtual_card_id,ic.provider
+      select cb.id,cb.customer_id,cb.issuer_connection_id,cb.virtual_card_id,cb.retailer,ic.provider
       from checkout_baskets cb
       left join issuer_connections ic on ic.id=cb.issuer_connection_id
       where cb.id=$1 and cb.tenant_id=$2
@@ -72,10 +72,14 @@ export async function assignAvailableVirtualCard(db:Db,tenantId:string,basketId:
         and balance_minor >= $3
         and checkout_basket_id is null
         and (customer_id is null or customer_id=$4)
+        and (
+          merchant_scope_type='ALL'
+          or (merchant_scope_type='RETAILER' and merchant_scope_value=$5)
+        )
       order by case when customer_id=$4 then 0 else 1 end,created_at
       for update skip locked
       limit 1
-    `,[tenantId,row.provider,Number(row.amount_minor||0),row.customer_id]);
+    `,[tenantId,row.provider,Number(row.amount_minor||0),row.customer_id,row.retailer]);
     if(!card.rows[0]){
       await client.query("commit");
       return null;

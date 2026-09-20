@@ -39,7 +39,7 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
   if(row.payment_route!=="Corporate virtual card")return {status:"NOT_REQUIRED" as const,cardId:null};
   if(row.virtual_card_id)return {status:"CARD_ASSIGNED" as const,cardId:String(row.virtual_card_id)};
 
-  const state=await loadTenantIssuer(db,config,tenantId);
+  const state=await loadTenantIssuer(db,config,tenantId,row.issuer_connection_id);
   if(!state.issuer.configured()){
     await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
     return {status:"PROGRAMME_REQUIRED" as const,cardId:null};
@@ -58,13 +58,14 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     const inserted=await db.query(
       `insert into virtual_cards(
         tenant_id,provider,provider_card_id,provider_account_id,label,masked_number,status,
-        balance_minor,merchant_control,created_by,customer_id,checkout_basket_id
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        balance_minor,merchant_control,created_by,customer_id,checkout_basket_id,
+        issuer_connection_id,merchant_scope_type,merchant_scope_value,channel_control_status
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'RETAILER',$14,'NOT_APPLIED')
       returning id`,
       [
         tenantId,issued.provider,issued.providerCardId,issued.providerAccountId,
         `Order ${basketId.slice(0,8)}`,issued.maskedNumber??null,issued.status,issued.balanceMinor,
-        row.retailer,userId,row.customer_id,basketId
+        `Retailer: ${row.retailer}`,userId,row.customer_id,basketId,state.connectionId,row.retailer
       ]
     );
     cardId=inserted.rows[0].id;
@@ -77,6 +78,19 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
   }
 
   try{
+    try{
+      await state.issuer.configureCard({
+        providerCardId:issued.providerCardId,
+        providerAccountId:issued.providerAccountId,
+        onlineAllowed:true,
+        posAllowed:false
+      });
+      await db.query("update virtual_cards set channel_control_status='APPLIED',updated_at=now() where id=$1",[cardId]);
+    }catch(error){
+      await db.query("update virtual_cards set channel_control_status='FAILED',status='CONTROL_FAILED',updated_at=now() where id=$1",[cardId]);
+      await db.query("update checkout_baskets set payment_status='FAILED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
+      throw error;
+    }
     await state.issuer.loadCard({
       providerCardId:issued.providerCardId,
       providerAccountId:issued.providerAccountId,

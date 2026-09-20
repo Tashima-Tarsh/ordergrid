@@ -30,7 +30,7 @@
   function productEntry(){
     const node=document.createElement('div');
     node.className='product-entry';
-    node.innerHTML='<div class="two"><label>Product URL<input name="url" type="url" required placeholder="https://www.amazon.in/dp/..."></label><label>Estimated unit price (₹)<input name="price" type="number" min="1" step="0.01" value="1299" required></label></div><div class="two"><label>Quantity per recipient<input name="quantity" type="number" min="1" max="100" value="1" required></label><button type="button" class="secondary remove-product" data-remove-product>Remove product</button></div>';
+    node.innerHTML='<div class="two"><label>Product URL<input name="url" type="url" required placeholder="https://www.amazon.in/dp/..."></label><label>Estimated unit price (₹)<input name="price" type="number" min="1" step="0.01" value="1299" required></label></div><div class="gst-product-grid"><label>Quantity per recipient<input name="quantity" type="number" min="1" max="100" value="1" required></label><label>HSN / SAC<input name="hsnSac" maxlength="16" placeholder="8471" required></label><label>GST rate<select name="gstRate" required><option value="0">0%</option><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="1.5">1.5%</option><option value="3">3%</option><option value="5">5%</option><option value="7.5">7.5%</option><option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option><option value="40">40%</option></select></label><label>Cess %<input name="cessRate" type="number" min="0" max="100" step="0.01" value="0"></label><label class="gst-inclusive"><input name="priceIncludesGst" type="checkbox" checked> Price includes GST</label><button type="button" class="secondary remove-product" data-remove-product>Remove product</button></div>';
     return node;
   }
   function normalizeRemoveButtons(){
@@ -47,7 +47,11 @@
       index:i+1,
       url:row.querySelector('[name="url"]').value,
       price:Number(row.querySelector('[name="price"]').value||0),
-      quantity:Number(row.querySelector('[name="quantity"]').value||0)
+      quantity:Number(row.querySelector('[name="quantity"]').value||0),
+      hsnSac:row.querySelector('[name="hsnSac"]').value,
+      gstRate:Number(row.querySelector('[name="gstRate"]').value||0),
+      cessRate:Number(row.querySelector('[name="cessRate"]').value||0),
+      priceIncludesGst:row.querySelector('[name="priceIncludesGst"]').checked
     }));
   }
   function summary(){
@@ -98,11 +102,11 @@
   style.textContent=`
     .steps>*{padding:8px 10px;border-radius:8px}.steps .active{background:#071522;color:#fff}.steps .complete{background:#ecfdf5;color:#047857}
     .product-entry{padding:14px;margin:10px 0;border:1px solid #dce2ea;border-radius:12px;background:#f8fafc}.product-entry+.product-entry{margin-top:12px}
-    .remove-product{align-self:end;margin-bottom:1px}.wizard-review{padding:18px;margin:16px 0;border:1px solid #dce2ea;border-radius:12px;background:#f8fafc}
+    .gst-product-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1.2fr auto;gap:10px;align-items:end}.gst-inclusive{display:flex!important;gap:8px;align-items:center;padding:11px 0}.gst-inclusive input{width:auto!important}.remove-product{align-self:end;margin-bottom:1px}.wizard-review{padding:18px;margin:16px 0;border:1px solid #dce2ea;border-radius:12px;background:#f8fafc}
     .wizard-review h3{margin:5px 0 12px}.wizard-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .wizard-summary-grid div{padding:11px;border-radius:9px;background:#fff;border:1px solid #e2e8f0}.wizard-summary-grid span{display:block;color:#64748b;font-size:12px}
     .wizard-summary-grid strong{display:block;margin-top:3px;overflow-wrap:anywhere}.wide-summary{grid-column:1/-1}.wizard-nav{display:flex;justify-content:space-between;margin-top:20px}
-    @media(max-width:600px){.wizard-summary-grid{grid-template-columns:1fr}.wide-summary{grid-column:auto}.steps{overflow:auto;justify-content:flex-start;gap:6px}.steps>*{white-space:nowrap}}
+    @media(max-width:900px){.gst-product-grid{grid-template-columns:1fr 1fr 1fr}.gst-inclusive{align-self:end}}@media(max-width:600px){.gst-product-grid{grid-template-columns:1fr 1fr}.wizard-summary-grid{grid-template-columns:1fr}.wide-summary{grid-column:auto}.steps{overflow:auto;justify-content:flex-start;gap:6px}.steps>*{white-space:nowrap}}
   `;
   document.head.appendChild(style);
   normalizeRemoveButtons();
