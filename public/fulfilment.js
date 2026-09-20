@@ -43,7 +43,7 @@
     const failed=tasks.filter(t=>t.status==='FAILED').length;
     const total=tasks.reduce((sum,t)=>sum+Number(t.amount_minor||0),0);
     const workerOnline=workers.length>0;
-    const engine=runtime?.checkoutEngine||workers[0]||null;
+    const engine=workers[0]||runtime?.checkoutEngine||null;
     const hasBatch=Boolean(batch);
     const approved=Boolean(batch&&['APPROVED','PARTIAL','COMPLETE'].includes(batch.status))||tasks.length>0;
     const allConfirmed=tasks.length>0&&confirmed===tasks.length;
@@ -69,7 +69,7 @@
     }
     if($('#engineName'))$('#engineName').textContent=engine?.hostname||engine?.id||'OrderGrid Checkout Engine';
     if($('#engineStatus'))$('#engineStatus').textContent=workerOnline?'ONLINE':'OFFLINE';
-    if($('#engineMeta'))$('#engineMeta').textContent=workerOnline?`${runtime?.api||'OrderGrid API'} connected · capacity ${engine?.capacity||workers[0]?.capacity||8} concurrent retailer profiles`:'Checkout engine is not connected.';
+    if($('#engineMeta'))$('#engineMeta').textContent=workerOnline?`${runtime?.api||'OrderGrid API'} connected · ${engine?.hostname||'Windows worker'} · capacity ${engine?.capacity||8}`:`${runtime?.api||'OrderGrid API'} online · start the Windows Checkout Worker for real Amazon execution`;
     $('#engineDot')?.classList.toggle('online',workerOnline);
 
     const cartBatch=$('#cartBatchName');
