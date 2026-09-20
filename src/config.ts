@@ -4,7 +4,12 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   APP_ORIGIN: z.string().url(),
-  DATABASE_URL: z.string().min(1),
+  DATABASE_URL: z.string().min(1).optional(),
+  DB_HOST: z.string().min(1).optional(),
+  DB_PORT: z.coerce.number().int().positive().default(5432),
+  DB_NAME: z.string().min(1).default("postgres"),
+  DB_USER: z.string().min(1).optional(),
+  DB_PASSWORD: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
@@ -30,6 +35,11 @@ const schema = z.object({
   CARDHOLDER_GENDER: z.enum(["M","F","O"]).optional(),
   CARDHOLDER_PAN: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
   CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional()
+}).superRefine((value,ctx)=>{
+  if(value.DATABASE_URL)return;
+  if(!value.DB_HOST)ctx.addIssue({code:"custom",path:["DB_HOST"],message:"DB_HOST is required when DATABASE_URL is not set"});
+  if(!value.DB_USER)ctx.addIssue({code:"custom",path:["DB_USER"],message:"DB_USER is required when DATABASE_URL is not set"});
+  if(!value.DB_PASSWORD)ctx.addIssue({code:"custom",path:["DB_PASSWORD"],message:"DB_PASSWORD is required when DATABASE_URL is not set"});
 });
 export type Config = z.infer<typeof schema>;
 export const loadConfig = (): Config => schema.parse(process.env);
