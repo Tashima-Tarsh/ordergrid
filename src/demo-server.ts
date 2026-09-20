@@ -36,11 +36,16 @@ const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===active
 const activeBatches=()=>batches.filter(b=>b.tenant_id===activeDealerId);
 const activeTasks=()=>tasks.filter(t=>t.tenant_id===activeDealerId);
 const activeBaskets=()=>baskets.filter(b=>b.tenant_id===activeDealerId);
-const automationPolicies=new Map<string,{automation_enabled:boolean;auto_assign_virtual_card:boolean;auto_continue_checkout:boolean;max_active_orders:number;failure_pause_percent:number;updated_at:string}>();
+type DemoAutomationPolicy={
+  automation_enabled:boolean;auto_assign_virtual_card:boolean;auto_continue_checkout:boolean;max_active_orders:number;failure_pause_percent:number;
+  max_price_increase_percent:number;max_order_value_minor:number;max_batch_variance_percent:number;price_breach_action:"PAUSE_ORDER"|"PAUSE_BATCH";
+  run_mode:"MANUAL"|"CONTINUOUS";inherit_parent_policy:boolean;allow_child_policy_relaxation:boolean;updated_at:string
+};
+const automationPolicies=new Map<string,DemoAutomationPolicy>();
 function activeAutomationPolicy(){
   let policy=automationPolicies.get(activeDealerId);
   if(!policy){
-    policy={automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,updated_at:new Date().toISOString()};
+    policy={automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,max_price_increase_percent:5,max_order_value_minor:0,max_batch_variance_percent:3,price_breach_action:"PAUSE_ORDER",run_mode:"MANUAL",inherit_parent_policy:true,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()};
     automationPolicies.set(activeDealerId,policy);
   }
   return policy;
