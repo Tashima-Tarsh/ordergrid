@@ -20,6 +20,24 @@ import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router
 import { ensureBasketVirtualCard } from "./card-provisioning.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+async function getAutomationPolicy(tenantId:string){
+  await db.query(
+    "insert into automation_policies(tenant_id) values($1) on conflict(tenant_id) do nothing",
+    [tenantId]
+  );
+  const {rows}=await db.query(
+    "select automation_enabled,auto_assign_virtual_card,auto_continue_checkout,max_active_orders,failure_pause_percent,updated_at from automation_policies where tenant_id=$1",
+    [tenantId]
+  );
+  return rows[0] as {
+    automation_enabled:boolean;
+    auto_assign_virtual_card:boolean;
+    auto_continue_checkout:boolean;
+    max_active_orders:number;
+    failure_pause_percent:number|string;
+    updated_at:string;
+  };
+}
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:120,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
