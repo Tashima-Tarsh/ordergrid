@@ -50,6 +50,7 @@
     const issuerSelect=$('#cardIssuer');
     if(issuerSelect){
       issuerSelect.innerHTML=connected.length?connected.map(x=>`<option value="${x.id}">${x.programme_name||x.bank_name||x.provider} · ${x.card_network||'card programme'}${x.integration_mode==='PARENT_CARD_API'?' · parent-card limit':''}</option>`).join(''):'<option value="">Connect a programme first</option>';
+      syncCardholderRequirements();
     }
     $('#virtualCardInventory').innerHTML=cards.length?cards.map((card,i)=>`
       <div class="virtual-card-row" data-card="${card.id}">
@@ -71,6 +72,10 @@
     }
   }
 
+  function syncCardholderRequirements(){
+    const selected=issuers.find(x=>x.id===$('#cardIssuer')?.value),needsKyc=selected?.provider==='enkash';
+    document.querySelectorAll('[data-cardholder-kyc] input,[data-cardholder-kyc] select').forEach(input=>{input.required=Boolean(needsKyc)});
+  }
   function syncBankConnector(){
     const form=$('#issuerForm'),code=String(form.elements.provider?.value||'hdfc'),profile=banks.find(x=>x.code===code);
     const isEnKash=code==='enkash';
@@ -92,6 +97,7 @@
     document.querySelectorAll('#bankApiFields [data-auth]').forEach(node=>{node.hidden=node.dataset.auth!==map[mode]});
   }
   $('#issuerProvider')?.addEventListener('change',syncBankConnector);
+  $('#cardIssuer')?.addEventListener('change',syncCardholderRequirements);
   $('#bankAuthMode')?.addEventListener('change',syncBankAuth);
 
   $('#connectIssuer').onclick=()=>{
