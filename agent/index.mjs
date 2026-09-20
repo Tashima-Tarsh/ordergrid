@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { executeBasket, focusRetailerSession, prepareRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
+import { executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -91,8 +91,18 @@ async function main(){
             const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
             const focused=await focusRetailerSession({chrome,directory,retailer:command.retailer});
             if(!focused.ok)throw new Error(focused.reason||"Could not focus retailer session");
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
+            continue;
           }
-          await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
+          if(command.command==="PRODUCT_CHECK"){
+            if(command.retailer!=="flipkart")throw new Error("PRODUCT_CHECK currently supports Flipkart only");
+            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
+            const result=await inspectFlipkartMobile({chrome,directory,productUrl:String(command.payload?.productUrl||"")});
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
+            output.write(`Product check ${command.payload?.accountReference||command.retailerAccountId} · ${result.state} · ${result.title||command.payload?.productUrl||""}\n`);
+            continue;
+          }
+          throw new Error("Unsupported worker command");
         }catch(error){
           await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(error.message).slice(0,300)})}).catch(()=>{});
         }
