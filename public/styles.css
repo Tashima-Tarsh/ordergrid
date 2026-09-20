@@ -44,3 +44,11 @@
   #retailerUserDialog .retailer-user-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
   #retailerUserDialog .retailer-user-fields .span-2{grid-column:span 2}
 }
+
+#retailerUserDialog .auto-reference-card{display:flex;flex-direction:column;justify-content:center;min-height:66px;border:1px solid #dbe6f2;border-radius:10px;background:#f7fbff;padding:8px 10px}
+#retailerUserDialog .auto-reference-card span{font-size:.67rem;font-weight:900;letter-spacing:.05em;color:#567089}
+#retailerUserDialog .auto-reference-card strong{font-size:.86rem;color:#174a8b;margin-top:2px}
+#retailerUserDialog .auto-reference-card small{font-size:.69rem;color:var(--muted);margin-top:2px}
+#retailerUserDialog .bulk-auto-reference{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 10px;border-radius:10px;background:#eef7f4;border:1px solid #d7ebe4;font-size:.74rem}
+#retailerUserDialog .bulk-auto-reference strong{color:#185c49;white-space:nowrap}
+#retailerUserDialog .bulk-auto-reference span{color:#4f6b62}

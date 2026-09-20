@@ -172,7 +172,6 @@
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({
           retailer:'flipkart',
-          reference:String(form.get('reference')||'').trim()||undefined,
           name:String(form.get('name')||'').trim(),
           phone:String(form.get('phone')||'').trim(),
           accountReference:String(form.get('accountReference')||'').trim(),
