@@ -97,7 +97,7 @@ async function main(){
               const directory=join(profileRoot(),profileKey(body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
-              const result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,resume});
+              const result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume});
               if(result.state==="CONFIRMED"&&result.orderId){
                 await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
                 started.delete(basket.id);
