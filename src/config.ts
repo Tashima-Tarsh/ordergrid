@@ -10,11 +10,13 @@ const schema = z.object({
   DB_NAME: z.string().min(1).default("postgres"),
   DB_USER: z.string().min(1).optional(),
   DB_PASSWORD: z.string().min(1).optional(),
+  ORDERGRID_DB_TOKEN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
-  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14),
+  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),
+  BOOTSTRAP_ADMIN_SECRET: z.string().min(14).optional(),
   SHOPIFY_STOREFRONT_TOKEN: z.string().optional(),
   CARD_PROVIDER: z.enum(["disabled", "m2p", "enkash", "custom"]).default("disabled"),
   CARD_PROVIDER_API_KEY: z.string().optional(),
@@ -39,7 +41,8 @@ const schema = z.object({
   if(value.DATABASE_URL)return;
   if(!value.DB_HOST)ctx.addIssue({code:"custom",path:["DB_HOST"],message:"DB_HOST is required when DATABASE_URL is not set"});
   if(!value.DB_USER)ctx.addIssue({code:"custom",path:["DB_USER"],message:"DB_USER is required when DATABASE_URL is not set"});
-  if(!value.DB_PASSWORD)ctx.addIssue({code:"custom",path:["DB_PASSWORD"],message:"DB_PASSWORD is required when DATABASE_URL is not set"});
+  if(!value.DB_PASSWORD&&!value.ORDERGRID_DB_TOKEN)ctx.addIssue({code:"custom",path:["ORDERGRID_DB_TOKEN"],message:"A database credential is required when DATABASE_URL is not set"});
+  if(!value.BOOTSTRAP_ADMIN_PASSWORD&&!value.BOOTSTRAP_ADMIN_SECRET)ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_SECRET"],message:"A bootstrap administrator secret is required"});
 });
 export type Config = z.infer<typeof schema>;
 export const loadConfig = (): Config => schema.parse(process.env);
