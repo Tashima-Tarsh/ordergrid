@@ -700,16 +700,121 @@ app.get("/api/customers",async(req)=>{
 
 app.get("/api/retailer-accounts",async(req)=>{
   const p=req.principal!;
+  const query=z.object({
+    retailer:z.string().max(120).optional(),
+    poolOnly:z.enum(["true","false"]).optional(),
+    limit:z.coerce.number().int().min(1).max(1000).default(500),
+    offset:z.coerce.number().int().min(0).default(0)
+  }).parse(req.query??{});
+  const params:any[]=[p.tenantId],where=["ra.tenant_id=$1"];
+  if(query.retailer){params.push(query.retailer);where.push(`ra.retailer=$${params.length}`)}
+  if(query.poolOnly==="true")where.push("ra.customer_id is null");
+  const limitParam=params.length+1,offsetParam=params.length+2;
   const {rows}=await db.query(`
     select ra.id,ra.customer_id,c.external_reference customer_reference,c.display_name,
-      ra.retailer,ra.account_reference,ra.profile_key,ra.auth_status,ra.credential_status,ra.last_authenticated_at,ra.last_credential_update_at,ra.updated_at
+      ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
+      ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,ra.updated_at,
+      coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
+      coalesce((select sum(case
+        when re.event_type in ('CREDITED','ADJUSTED') then re.units
+        when re.event_type in ('REDEEMED','REVERSED') then -re.units
+        else 0 end) from retailer_reward_events re where re.retailer_account_id=ra.id),0)::int reward_balance,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status='SETTLED'),0)::bigint settled_refund_minor,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor
     from retailer_accounts ra
-    join customers c on c.id=ra.customer_id
-    where ra.tenant_id=$1
-    order by c.external_reference,ra.retailer
-    limit 5000
-  `,[p.tenantId]);
-  return {accounts:rows};
+    left join customers c on c.id=ra.customer_id
+    where ${where.join(" and ")}
+    order by ra.retailer,coalesce(ra.label,ra.account_reference),ra.id
+    limit $${limitParam} offset $${offsetParam}
+  `,[...params,query.limit,query.offset]);
+  const totals=await db.query(`
+    select count(*)::int total,
+      count(*) filter(where customer_id is null)::int pooled,
+      count(*) filter(where active)::int active,
+      count(*) filter(where auth_status='READY')::int ready,
+      count(*) filter(where auth_status in ('LOCKED','DISABLED'))::int unavailable
+    from retailer_accounts where tenant_id=$1
+      and ($2::text is null or retailer=$2)
+  `,[p.tenantId,query.retailer??null]);
+  return {accounts:rows,summary:totals.rows[0],limit:query.limit,offset:query.offset};
+});
+
+app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const retailerSchema=z.string().regex(/^(amazon-in|flipkart|myntra|ajio|tatacliq|meesho|nykaa|jiomart|store:[a-z0-9.-]+)$/);
+  const body=z.object({
+    retailer:retailerSchema,
+    accounts:z.array(z.object({
+      accountReference:z.string().trim().min(1).max(240),
+      label:z.string().trim().max(160).optional(),
+      password:z.string().max(1000).optional(),
+      maxConcurrentOrders:z.number().int().min(1).max(100).default(1)
+    })).min(1).max(1000)
+  }).parse(req.body);
+  const client=await db.connect(),created:any[]=[];
+  try{
+    await client.query("begin");
+    for(const account of body.accounts){
+      const saved=await client.query(
+        `insert into retailer_accounts(
+           tenant_id,customer_id,retailer,account_reference,label,auth_status,active,max_concurrent_orders,created_by,updated_at
+         )
+         values($1,null,$2,$3,$4,'AUTH_REQUIRED',true,$5,$6,now())
+         on conflict(tenant_id,retailer,account_reference) do update set
+           label=coalesce(excluded.label,retailer_accounts.label),
+           active=true,max_concurrent_orders=excluded.max_concurrent_orders,updated_at=now()
+         returning id,retailer,account_reference,label,profile_key,auth_status,credential_status,active,max_concurrent_orders`,
+        [p.tenantId,body.retailer,account.accountReference,account.label??null,account.maxConcurrentOrders,p.id]
+      );
+      const row=saved.rows[0];
+      if(account.password){
+        const encrypted=encryptJson({password:account.password},config.DATA_ENCRYPTION_KEY_BASE64);
+        await client.query(
+          `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
+           values($1,$2,$3,$4,$5,$6,now())
+           on conflict(tenant_id,retailer_account_id) do update set
+             ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,created_by=excluded.created_by,updated_at=now()`,
+          [p.tenantId,row.id,encrypted.ciphertext,encrypted.iv,encrypted.authTag,p.id]
+        );
+        await client.query(
+          "update retailer_accounts set credential_status='STORED',last_credential_update_at=now(),updated_at=now() where id=$1 and tenant_id=$2",
+          [row.id,p.tenantId]
+        );
+        row.credential_status="STORED";
+      }
+      created.push(row);
+    }
+    await client.query("commit");
+    await audit(db,p.tenantId,p.id,"retailer_accounts.bulk_imported","retailer_account",null,{retailer:body.retailer,count:created.length});
+    return reply.code(201).send({count:created.length,accounts:created});
+  }catch(error){
+    await client.query("rollback");throw error;
+  }finally{client.release()}
+});
+
+app.patch("/api/retailer-accounts/:id",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    label:z.string().trim().max(160).nullable().optional(),
+    active:z.boolean().optional(),
+    maxConcurrentOrders:z.number().int().min(1).max(100).optional()
+  }).refine(v=>Object.keys(v).length>0).parse(req.body);
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       label=case when $1::boolean then $2 else label end,
+       active=coalesce($3,active),
+       max_concurrent_orders=coalesce($4,max_concurrent_orders),
+       updated_at=now()
+     where id=$5 and tenant_id=$6
+     returning id,retailer,account_reference,label,active,max_concurrent_orders,auth_status,credential_status`,
+    [Object.prototype.hasOwnProperty.call(body,"label"),body.label??null,body.active??null,body.maxConcurrentOrders??null,id,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  await audit(db,p.tenantId,p.id,"retailer_account.updated","retailer_account",id,{active:body.active,maxConcurrentOrders:body.maxConcurrentOrders});
+  return rows[0];
 });
 
 app.put("/api/customers/:customerId/retailer-accounts/:retailer",async(req,reply)=>{
@@ -721,14 +826,137 @@ app.put("/api/customers/:customerId/retailer-accounts/:retailer",async(req,reply
   const customer=await db.query("select 1 from customers where id=$1 and tenant_id=$2 and active",[customerId,p.tenantId]);
   if(!customer.rows[0])return reply.code(404).send({error:"customer_not_found"});
   const {rows}=await db.query(
-    `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status)
-     values($1,$2,$3,$4,'AUTH_REQUIRED')
-     on conflict(tenant_id,customer_id,retailer) do update
-     set account_reference=excluded.account_reference,auth_status='AUTH_REQUIRED',updated_at=now()
+    `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,active,max_concurrent_orders,created_by)
+     values($1,$2,$3,$4,'AUTH_REQUIRED',true,1,$5)
+     on conflict(tenant_id,customer_id,retailer) where customer_id is not null do update
+     set account_reference=excluded.account_reference,auth_status='AUTH_REQUIRED',active=true,updated_at=now()
      returning id,customer_id,retailer,account_reference,profile_key,auth_status`,
-    [p.tenantId,customerId,retailer,body.accountReference]
+    [p.tenantId,customerId,retailer,body.accountReference,p.id]
   );
   await audit(db,p.tenantId,p.id,"retailer_account.bound","retailer_account",rows[0].id,{customerId,retailer});
+  return rows[0];
+});
+
+app.get("/api/retailer-finance",async(req)=>{
+  const p=req.principal!;
+  const query=z.object({
+    retailer:z.string().max(120).default("flipkart"),
+    limit:z.coerce.number().int().min(1).max(1000).default(500),
+    offset:z.coerce.number().int().min(0).default(0)
+  }).parse(req.query??{});
+  const {rows}=await db.query(`
+    select ra.id retailer_account_id,ra.account_reference,ra.label,ra.active,ra.auth_status,
+      coalesce(sum(case when re.event_type='PENDING' then re.units else 0 end),0)::int pending_rewards,
+      coalesce(sum(case
+        when re.event_type in ('CREDITED','ADJUSTED') then re.units
+        when re.event_type in ('REDEEMED','REVERSED') then -re.units
+        else 0 end),0)::int available_rewards,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status='SETTLED'),0)::bigint settled_refund_minor,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor,
+      coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id),0)::int order_count
+    from retailer_accounts ra
+    left join retailer_reward_events re on re.retailer_account_id=ra.id
+    where ra.tenant_id=$1 and ra.retailer=$2
+    group by ra.id
+    order by coalesce(ra.label,ra.account_reference),ra.id
+    limit $3 offset $4
+  `,[p.tenantId,query.retailer,query.limit,query.offset]);
+  const totals=await db.query(`
+    select
+      count(*)::int account_count,
+      coalesce((select sum(case
+        when re.event_type in ('CREDITED','ADJUSTED') then re.units
+        when re.event_type in ('REDEEMED','REVERSED') then -re.units
+        else 0 end)
+        from retailer_reward_events re
+        join retailer_accounts ra2 on ra2.id=re.retailer_account_id
+        where re.tenant_id=$1 and ra2.retailer=$2),0)::int available_rewards,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf
+        join retailer_accounts ra3 on ra3.id=rf.retailer_account_id
+        where rf.tenant_id=$1 and ra3.retailer=$2 and rf.status='SETTLED'),0)::bigint settled_refund_minor,
+      coalesce((select sum(rf.amount_minor) from retailer_refunds rf
+        join retailer_accounts ra4 on ra4.id=rf.retailer_account_id
+        where rf.tenant_id=$1 and ra4.retailer=$2 and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor
+    from retailer_accounts
+    where tenant_id=$1 and retailer=$2
+  `,[p.tenantId,query.retailer]);
+  return {accounts:rows,summary:totals.rows[0],limit:query.limit,offset:query.offset};
+});
+
+app.post("/api/retailer-rewards/events",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    retailerAccountId:z.string().uuid(),
+    checkoutBasketId:z.string().uuid().optional(),
+    purchaseOrderId:z.string().uuid().optional(),
+    eventType:z.enum(["PENDING","CREDITED","REDEEMED","REVERSED","ADJUSTED"]),
+    units:z.number().int().positive().max(100000000),
+    idempotencyKey:z.string().min(4).max(240),
+    retailerReference:z.string().max(240).optional(),
+    occurredAt:z.string().datetime().optional()
+  }).parse(req.body);
+  const account=await db.query("select retailer from retailer_accounts where id=$1 and tenant_id=$2",[body.retailerAccountId,p.tenantId]);
+  if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  const {rows}=await db.query(
+    `insert into retailer_reward_events(
+       tenant_id,retailer_account_id,checkout_basket_id,purchase_order_id,retailer,event_type,units,idempotency_key,retailer_reference,occurred_at,created_by
+     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11)
+     on conflict(tenant_id,idempotency_key) do update set retailer_reference=coalesce(excluded.retailer_reference,retailer_reward_events.retailer_reference)
+     returning *`,
+    [p.tenantId,body.retailerAccountId,body.checkoutBasketId??null,body.purchaseOrderId??null,account.rows[0].retailer,body.eventType,body.units,body.idempotencyKey,body.retailerReference??null,body.occurredAt??null,p.id]
+  );
+  return reply.code(201).send(rows[0]);
+});
+
+app.post("/api/retailer-refunds",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    checkoutBasketId:z.string().uuid(),
+    purchaseOrderId:z.string().uuid().optional(),
+    amountMinor:z.number().int().positive(),
+    idempotencyKey:z.string().min(4).max(240),
+    retailerRefundReference:z.string().max(240).optional()
+  }).parse(req.body);
+  const basket=await db.query(
+    "select retailer,retailer_account_id,virtual_card_id from checkout_baskets where id=$1 and tenant_id=$2",
+    [body.checkoutBasketId,p.tenantId]
+  );
+  if(!basket.rows[0]?.retailer_account_id)return reply.code(404).send({error:"basket_or_retailer_account_not_found"});
+  const {rows}=await db.query(
+    `insert into retailer_refunds(
+       tenant_id,retailer_account_id,checkout_basket_id,purchase_order_id,virtual_card_id,retailer,amount_minor,status,idempotency_key,retailer_refund_reference,created_by
+     ) values($1,$2,$3,$4,$5,$6,$7,'REQUESTED',$8,$9,$10)
+     on conflict(tenant_id,idempotency_key) do update set retailer_refund_reference=coalesce(excluded.retailer_refund_reference,retailer_refunds.retailer_refund_reference),updated_at=now()
+     returning *`,
+    [p.tenantId,basket.rows[0].retailer_account_id,body.checkoutBasketId,body.purchaseOrderId??null,basket.rows[0].virtual_card_id,basket.rows[0].retailer,body.amountMinor,body.idempotencyKey,body.retailerRefundReference??null,p.id]
+  );
+  return reply.code(201).send(rows[0]);
+});
+
+app.patch("/api/retailer-refunds/:id/status",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    status:z.enum(["REQUESTED","INITIATED","PROCESSING","SETTLED","FAILED","CANCELLED"]),
+    bankReference:z.string().max(240).optional(),
+    failureReason:z.string().max(500).optional()
+  }).parse(req.body);
+  const {rows}=await db.query(
+    `update retailer_refunds set
+       status=$1,
+       bank_reference=coalesce($2,bank_reference),
+       failure_reason=case when $1='FAILED' then coalesce($3,failure_reason) else failure_reason end,
+       initiated_at=case when $1 in ('INITIATED','PROCESSING','SETTLED') then coalesce(initiated_at,now()) else initiated_at end,
+       settled_at=case when $1='SETTLED' then coalesce(settled_at,now()) else settled_at end,
+       updated_at=now()
+     where id=$4 and tenant_id=$5
+     returning *`,
+    [body.status,body.bankReference??null,body.failureReason??null,id,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"refund_not_found"});
   return rows[0];
 });
 
