@@ -140,8 +140,14 @@ must(gstCss.includes(".gst-billing-grid"),"GST premium contract: billing layout 
 for(const id of ["flowNewBatch","ffBatch","ffProducts","ffRecipients","ffReady","ffAttention","ffConfirmed","ffValue","checkoutAll"]){
   must(count(html,`id="${id}"`)===1,`fulfilment premium contract: #${id} must exist exactly once`);
 }
-must(fulfilment.includes("#flowAddProducts,#flowImportRecipients,#flowNewBatch"),"fulfilment premium contract: new procurement buttons must open the wizard");
+must(fulfilment.includes("event.target.closest('#flowNewBatch')"),"fulfilment premium contract: primary new procurement button must open the wizard");
 must(fulfilment.includes("$('#ffAttention')"),"fulfilment premium contract: live attention KPI missing");
+must(!html.includes("EXECUTION PIPELINE"),"fulfilment frontend contract: execution pipeline heading must stay off the frontend");
+must(!html.includes('data-flow-step='),"fulfilment frontend contract: execution pipeline stages must stay off the frontend");
+must(!html.includes('id="flowAddProducts"')&&!html.includes('id="flowImportRecipients"'),"fulfilment frontend contract: pipeline edit buttons must stay off the frontend");
+must(!fulfilment.includes("setStep("),"fulfilment frontend contract: pipeline renderer must stay out of browser code");
+must(!navigation.includes("titleNewBatch"),"fulfilment frontend contract: duplicate workspace-level new procurement button must stay removed");
+must(!fulfilmentCss.includes(".fulfilment-steps")&&!fulfilmentCss.includes(".flow-step"),"fulfilment frontend contract: pipeline CSS must stay removed");
 must(fulfilmentCss.includes(".ff-kpi-strip"),"fulfilment premium contract: KPI strip styling missing");
 must(fulfilmentCss.includes(".cart-accent"),"fulfilment premium contract: premium cart styling missing");
 must(wizard.includes("Check product"),"flipkart mobile contract: Check product control missing");
