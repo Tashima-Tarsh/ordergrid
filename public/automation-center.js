@@ -49,6 +49,7 @@
     </section>
 
     <div class="automation-layout">
+      <div class="automation-column automation-column-left">
       <section class="automation-card automation-live">
         <div class="automation-card-head">
           <div><span>LIVE AUTOMATION</span><h3>Workflow state</h3></div>
@@ -57,6 +58,16 @@
         <div id="automationWorkflowList" class="automation-workflow-list"></div>
       </section>
 
+      <section class="automation-card automation-guardrails">
+        <div class="automation-card-head">
+          <div><span>MANDATORY CONTROLS</span><h3>Non-editable safeguards</h3></div>
+          <span class="guardrail-state">ENFORCED</span>
+        </div>
+        <div id="automationMandatoryRules" class="automation-rule-list"></div>
+      </section>
+      </div>
+
+      <div class="automation-column automation-column-right">
       <section class="automation-card automation-policy">
         <div class="automation-card-head">
           <div><span>POLICY ENGINE</span><h3>Workspace automation policy</h3></div>
@@ -99,14 +110,6 @@
         </form>
       </section>
 
-      <section class="automation-card automation-guardrails">
-        <div class="automation-card-head">
-          <div><span>MANDATORY CONTROLS</span><h3>Non-editable safeguards</h3></div>
-          <span class="guardrail-state">ENFORCED</span>
-        </div>
-        <div id="automationMandatoryRules" class="automation-rule-list"></div>
-      </section>
-
       <section class="automation-card automation-health">
         <div class="automation-card-head">
           <div><span>POLICY HEALTH</span><h3>Configuration check</h3></div>
@@ -114,6 +117,7 @@
         </div>
         <div id="automationHealthList" class="automation-health-list"></div>
       </section>
+      </div>
     </div>
   `;
 

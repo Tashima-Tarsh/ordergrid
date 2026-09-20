@@ -109,7 +109,14 @@ function navigate(view){if(typeof window.ordergridNavigate==='function')window.o
 
 async function load(){
   const button=$('#syncNow');
-  if(button){button.disabled=true;button.textContent='Refreshing…'}
+  if(button){
+    button.disabled=true;
+    button.classList.add('is-refreshing');
+    button.setAttribute('aria-busy','true');
+    button.setAttribute('aria-label','Refreshing dashboard');
+    button.title='Refreshing dashboard';
+    button.textContent='↻';
+  }
   try{
     const paths=['/api/control-center','/api/automation','/api/automation/preflight','/api/users','/api/batches','/api/checkout-tasks'];
     const settled=await Promise.allSettled(paths.map(request));
@@ -211,7 +218,14 @@ async function load(){
     set('#brainAnswer','Live dashboard is reconnecting. '+error.message+'.');
     set('#networkStatus',navigator.onLine?'Reconnecting':'Offline');
   }finally{
-    if(button){button.disabled=false;button.textContent='Refresh dashboard'}
+    if(button){
+      button.disabled=false;
+      button.classList.remove('is-refreshing');
+      button.removeAttribute('aria-busy');
+      button.setAttribute('aria-label','Refresh dashboard');
+      button.title='Refresh dashboard';
+      button.textContent='↻';
+    }
   }
 }
 
