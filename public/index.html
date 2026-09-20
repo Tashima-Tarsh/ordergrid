@@ -94,7 +94,7 @@
         <div class="retailer-pane-title"><div><span>01</span><div><strong>Single Flipkart user</strong><small>Save the user, address and login together.</small></div></div></div>
         <form id="retailerUserForm">
           <div class="retailer-user-fields">
-            <label>Internal user reference<input name="reference" placeholder="USER-001"></label>
+            <div class="auto-reference-card"><span>ORDERGRID USER REFERENCE</span><strong>Auto-generated</strong><small>Saved as ordergrid-flip-000001, ordergrid-flip-000002, …</small></div>
             <label>Recipient / user name<input name="name" required placeholder="Amit Sharma"></label>
             <label>Phone<input name="phone" inputmode="tel" required placeholder="9876543210"></label>
             <label>Flipkart login / mobile / email<input name="accountReference" required placeholder="9876543210 or user@example.com"></label>
@@ -115,10 +115,10 @@
         <div class="retailer-pane-title"><div><span>02</span><div><strong>Bulk Excel / CSV</strong><small>Same fields, one row per user.</small></div></div><a class="secondary template-link" href="/api/retailer-users/template.xlsx">Download Excel template</a></div>
         <form id="retailerUsersBulkForm">
           <label class="bulk-dropzone">Upload user file<input id="retailerUsersBulkFile" name="file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><span>Choose CSV or XLSX</span><small id="retailerUsersBulkFileMeta">No file selected</small></label>
+          <div class="bulk-auto-reference"><strong>User reference is automatic.</strong><span>Do not add a reference column. OrderGrid assigns ordergrid-flip-000001, ordergrid-flip-000002, and continues the sequence.</span></div>
           <div class="bulk-field-box">
             <strong>Columns accepted</strong>
             <div class="bulk-field-grid">
-              <span><b>reference</b><small>Internal user ID</small></span>
               <span><b>recipient</b><small>User / recipient name</small></span>
               <span><b>phone</b><small>Delivery phone</small></span>
               <span><b>flipkart_user_id</b><small>Mobile / email login</small></span>
