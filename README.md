@@ -198,6 +198,7 @@ Start it from the repository:
 $env:ORDERGRID_URL = "https://your-ordergrid.example"
 $env:ORDERGRID_EMAIL = "worker@example.com"
 $env:ORDERGRID_PASSWORD = "<worker-password>"
+$env:ORDERGRID_WORKER_TOKEN = "<machine-token>"
 npm run agent
 ```
 
@@ -411,6 +412,7 @@ Implemented controls include:
 - global API rate limiting;
 - Helmet security headers and CSP;
 - request-ID logging;
+- dedicated machine-token requirement on native worker execution routes;
 - sensitive request-log redaction;
 - AES-256-GCM secret encryption;
 - HTTPS-only retailer URL validation;
