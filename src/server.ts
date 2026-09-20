@@ -1771,6 +1771,23 @@ app.get("/api/bulk-queue",async(req,reply)=>{
   const p=req.principal!,worker=z.string().min(8).max(128).safeParse((req.query as any)?.workerId);
   if(!worker.success)return reply.code(400).send({error:"worker_id_required"});
   await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
+  const expired=await db.query(
+    `update checkout_baskets set status='REQUIRES_ACTION',stock_watch_enabled=false,
+       failure_code='STOCK_WATCH_EXPIRED',failure_message='Stock watch expired before the item became available',
+       stock_last_message='Stock watch expired',updated_at=now()
+     where tenant_id=$1 and execution_worker_id=$2 and status='WAITING_STOCK'
+       and stock_watch_enabled and stock_watch_expires_at is not null and stock_watch_expires_at<=now()
+     returning id`,
+    [p.tenantId,worker.data]
+  );
+  for(const row of expired.rows){
+    const userId=await basketNotificationUser(p.tenantId,String(row.id));
+    await createNotification({
+      tenantId:p.tenantId,userId,basketId:String(row.id),type:"STOCK_WATCH_EXPIRED",
+      title:"Stock watch expired",message:"The item did not return to stock within the watch window. Review the order to extend or cancel it.",
+      idempotencyKey:`stock-watch-expired:${row.id}`
+    });
+  }
   const {rows}=await db.query(`
     select cb.id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.opened_at,cb.failure_code,cb.failure_message,
            cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,cb.stock_next_check_at,cb.stock_watch_expires_at,
@@ -2129,10 +2146,18 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     );
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
-    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,updated_at=now() where id=$2",[retailerOrderId,id]);
-    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status='STORED' then 'READY' else credential_status end,last_authenticated_at=now(),updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId]);
+    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,stock_watch_enabled=false,stock_next_check_at=null,stock_last_message=case when stock_watch_started_at is not null then 'Order placed after stock became available' else stock_last_message end,updated_at=now() where id=$2",[retailerOrderId,id]);
+    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY' else credential_status end,last_authenticated_at=now(),session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$3,updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId,body.workerId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
+    const notifyUser=await basketNotificationUser(p.tenantId,id);
+    await createNotification({
+      tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"ORDER_CONFIRMED",
+      title:"Order placed",
+      message:`OrderGrid confirmed the retailer order ${retailerOrderId}.`,
+      idempotencyKey:`order-confirmed:${id}:${retailerOrderId}`,
+      payload:{retailerOrderId}
+    });
     await audit(db,p.tenantId,p.id,"bulk_basket.confirmed_by_worker","checkout_basket",id,{workerId:body.workerId,retailerOrderId,customerId:locked.rows[0].customer_id,retailerAccountId:locked.rows[0].retailer_account_id});
     return {id,status:"CONFIRMED",retailerOrderId};
   }catch(e){await client.query("rollback");throw e}finally{client.release()}
