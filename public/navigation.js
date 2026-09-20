@@ -115,8 +115,7 @@ function show(view,{updateHash=true}={}){
   if(!copy[view])view='overview';
   sections.forEach(s=>s.classList.toggle('view-active',s.dataset.view===view));
   side.querySelectorAll('button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
-  title.innerHTML=`<div><p class="eyebrow">ORDERGRID</p><h1>${copy[view][0]}</h1><p>${copy[view][1]}</p></div>${view==='fulfilment'?'<button id="titleNewBatch">＋ New procurement</button>':''}`;
-  title.querySelector('#titleNewBatch')?.addEventListener('click',()=>document.querySelector('#newBatch')?.click());
+  title.innerHTML=`<div><p class="eyebrow">ORDERGRID</p><h1>${copy[view][0]}</h1><p>${copy[view][1]}</p></div>`;
   document.body.classList.remove('nav-open');
   document.documentElement.scrollTop=0;
   try{localStorage.setItem('ordergrid-view',view)}catch{}
