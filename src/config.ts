@@ -22,7 +22,14 @@ const schema = z.object({
   ENKASH_PASSWORD: z.string().optional(),
   ENKASH_CLIENT_ID: z.string().optional(),
   ENKASH_COMPANY_ID: z.string().optional(),
-  ENKASH_CARD_ACCOUNT_ID: z.string().optional()
+  ENKASH_CARD_ACCOUNT_ID: z.string().optional(),
+  CARDHOLDER_EMAIL: z.string().email().optional(),
+  CARDHOLDER_MOBILE: z.string().regex(/^\d{10,15}$/).optional(),
+  CARDHOLDER_FIRST_NAME: z.string().min(1).max(60).optional(),
+  CARDHOLDER_LAST_NAME: z.string().min(1).max(60).optional(),
+  CARDHOLDER_GENDER: z.enum(["M","F","O"]).optional(),
+  CARDHOLDER_PAN: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
+  CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional()
 });
 export type Config = z.infer<typeof schema>;
 export const loadConfig = (): Config => schema.parse(process.env);
