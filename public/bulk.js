@@ -1,39 +1,41 @@
 (()=>{
   const host=document.createElement('section');
-  host.className='panel bulk-checkout';
+  host.className='bulk-checkout bulk-premium-workspace';
   host.innerHTML=`
-    <div class="panel-head">
-      <div><p class="eyebrow">BULK ORDERS</p><h2>Checkout overview</h2></div>
+    <div class="bulk-hero">
+      <div class="bulk-hero-copy">
+        <span class="bulk-hero-mark">⇉</span>
+        <div><p class="eyebrow">BULK ORDERS</p><h2>Checkout queue</h2><p>Prepare customer orders, watch live retailer execution, and resume only the orders that need attention.</p></div>
+      </div>
       <div class="bulk-controls">
-        <select id="bulkClaimSize" aria-label="Orders to prepare"><option>5</option><option selected>10</option><option>20</option><option>25</option></select>
+        <label class="bulk-size-control"><span>PREPARE</span><select id="bulkClaimSize" aria-label="Orders to prepare"><option>5</option><option selected>10</option><option>20</option><option>25</option></select></label>
         <button id="bulkRun">Prepare orders</button>
-        <button id="bulkRefresh" class="secondary">Refresh</button>
-        <a class="report-link" href="/api/reports/orders.csv">Download report</a>
+        <button id="bulkRefresh" class="secondary premium-icon-button" title="Refresh bulk orders" aria-label="Refresh bulk orders">↻</button>
+        <a class="bulk-report-link" href="/api/reports/orders.csv">Export CSV</a>
       </div>
     </div>
-    <div class="bulk-truth">
-      <div><span>CUSTOMER ORDERS</span><strong id="bulkBasketCount">0</strong></div>
-      <div><span>PRODUCT LINES</span><strong id="bulkLineCount">0</strong></div>
-      <div><span>READY / WATCHING / RUNNING</span><strong id="bulkReadyCount">0</strong></div>
-      <div><span>CONFIRMED</span><strong id="bulkConfirmedCount">0</strong></div>
-    </div>
-    <div id="bulkQueue"><div class="bulk-empty"><strong>No orders yet</strong><span>Create and approve a fulfilment batch to see customer orders here.</span></div></div>
-  `;
-  document.querySelector('.autopilot-suite').before(host);
 
-  const style=document.createElement('style');
-  style.textContent=`
-    .bulk-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.bulk-controls select{padding:10px 12px;border:1px solid #d8e0e8;border-radius:10px;background:#fff}
-    .bulk-truth{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.bulk-truth div{padding:16px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}
-    .bulk-truth span{display:block;font-size:10px;letter-spacing:.08em;color:#64748b;font-weight:800}.bulk-truth strong{display:block;margin-top:5px;font-size:24px;letter-spacing:-.02em}
-    .bulk-row{display:grid;grid-template-columns:minmax(300px,1fr) 100px 140px minmax(190px,auto);gap:16px;align-items:center;padding:17px 0;border-top:1px solid #e8edf2}
-    .bulk-order-copy strong{font-size:14px}.bulk-row small{display:block;color:#64748b;margin-top:4px;font-size:12px}.bulk-status{display:block;margin-top:4px;font-weight:900;font-size:11px;letter-spacing:.06em}
-    .bulk-exception{margin-top:8px;padding:8px 10px;background:#fff7ed;border-radius:9px;color:#9a3412;font-size:12px}.stock-watch-note{margin-top:8px;padding:9px 10px;border:1px solid #ccebdc;border-radius:9px;background:#f0fdf7;color:#066a4b;font-size:11px;line-height:1.4}
-    .bulk-action{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;margin-top:8px}.bulk-action button,.bulk-action a{white-space:nowrap}.amazon-open-link{display:inline-block;text-decoration:none}
-    .bulk-empty{padding:42px 16px;text-align:center;color:#64748b}.bulk-empty strong,.bulk-empty span{display:block}.bulk-empty strong{color:#111827;font-size:16px}.bulk-empty span{margin-top:5px}
-    @media(max-width:900px){.bulk-truth{grid-template-columns:1fr 1fr}.bulk-row{grid-template-columns:1fr}.bulk-action{justify-content:flex-start}}@media(max-width:520px){.bulk-truth{grid-template-columns:1fr}}
+    <div class="bulk-kpi-strip" aria-label="Bulk order metrics">
+      <article class="bulk-kpi-primary"><span>CUSTOMER ORDERS</span><strong id="bulkBasketCount">0</strong><small>Checkout baskets</small></article>
+      <article><span>PRODUCT LINES</span><strong id="bulkLineCount">0</strong><small>Across all orders</small></article>
+      <article><span>READY / RUNNING</span><strong id="bulkReadyCount">0</strong><small>Active queue</small></article>
+      <article><span>CONFIRMED</span><strong id="bulkConfirmedCount">0</strong><small>Retailer-confirmed</small></article>
+    </div>
+
+    <section class="bulk-queue-card">
+      <div class="bulk-card-head">
+        <div><span>ORDER QUEUE</span><strong>Customer checkout status</strong></div>
+        <span id="bulkQueueState" class="bulk-state-chip">CLEAR</span>
+      </div>
+      <div id="bulkQueue" class="bulk-queue">
+        <div class="bulk-empty"><strong>No orders yet</strong><span>Create and approve a fulfilment batch to see customer orders here.</span></div>
+      </div>
+    </section>
   `;
-  document.head.appendChild(style);
+
+  const anchor=document.querySelector('.human-action-centre')||document.querySelector('.funding-workspace')||document.querySelector('.rewards-centre');
+  if(anchor)anchor.before(host);
+  else document.querySelector('main')?.appendChild(host);
 
   const money=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
   const esc=v=>{const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML};
@@ -47,9 +49,15 @@
   }
 
   function statusLabel(status){
-    return ({READY:'READY',CLAIMED:'READY',OPENED:'IN PROGRESS',WAITING_STOCK:'WAITING FOR STOCK',REQUIRES_ACTION:'NEEDS ATTENTION',CONFIRMED:'CONFIRMED',FAILED:'NEEDS ATTENTION'})[status]||'IN PROGRESS';
+    return ({READY:'READY',CLAIMED:'READY',OPENED:'IN PROGRESS',WAITING_STOCK:'WATCHING STOCK',REQUIRES_ACTION:'NEEDS ATTENTION',CONFIRMED:'CONFIRMED',FAILED:'NEEDS ATTENTION'})[status]||'IN PROGRESS';
   }
-
+  function statusTone(status){
+    if(status==='CONFIRMED')return 'confirmed';
+    if(['REQUIRES_ACTION','FAILED'].includes(status))return 'attention';
+    if(status==='WAITING_STOCK')return 'watching';
+    if(['READY','CLAIMED','OPENED'].includes(status))return 'running';
+    return 'neutral';
+  }
   function attentionText(b){
     const code=String(b.failure_code||'');
     if(/LOGIN|PASSWORD/i.test(code))return 'Sign in required';
@@ -65,63 +73,86 @@
     const running=baskets.filter(b=>['OPENED','WAITING_STOCK','REQUIRES_ACTION'].includes(b.status)).length;
     const confirmed=baskets.filter(b=>b.status==='CONFIRMED').length;
     const lines=baskets.reduce((n,b)=>n+Number(b.item_count||0),0);
+    const attention=baskets.filter(b=>['REQUIRES_ACTION','FAILED'].includes(b.status)).length;
 
-    document.querySelector('#bulkBasketCount').textContent=String(baskets.length);
-    document.querySelector('#bulkLineCount').textContent=String(lines);
-    document.querySelector('#bulkReadyCount').textContent=String(ready+running);
-    document.querySelector('#bulkConfirmedCount').textContent=String(confirmed);
+    host.querySelector('#bulkBasketCount').textContent=String(baskets.length);
+    host.querySelector('#bulkLineCount').textContent=String(lines);
+    host.querySelector('#bulkReadyCount').textContent=String(ready+running);
+    host.querySelector('#bulkConfirmedCount').textContent=String(confirmed);
 
-    const runButton=document.querySelector('#bulkRun');
+    const queueState=host.querySelector('#bulkQueueState');
+    queueState.textContent=attention?attention+' NEED ATTENTION':ready+running?(ready+running)+' ACTIVE':'CLEAR';
+    queueState.className='bulk-state-chip '+(attention?'attention':ready+running?'running':'clear');
+
+    const runButton=host.querySelector('#bulkRun');
     runButton.disabled=!baskets.some(b=>b.status==='READY');
-    runButton.title=runButton.disabled?'No new orders are waiting':'Prepare all new orders for checkout';
+    runButton.title=runButton.disabled?'No new orders are waiting':'Prepare waiting orders for checkout';
 
-    document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>{
+    host.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>{
       const note=attentionText(b);
       const watching=b.status==='WAITING_STOCK';
       const actionable=['OPENED','REQUIRES_ACTION','FAILED'].includes(b.status)&&!/^STOCK_WATCH_/.test(String(b.failure_code||''));
-      const action=actionable?'<button type="button" class="secondary" data-focus-session>Resume exact session</button>':'';
-      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)&&!/^STOCK_WATCH_/.test(String(b.failure_code||''))?'<button class="secondary" data-retry>Requeue task</button>':'';
+      const action=actionable?'<button type="button" class="secondary" data-focus-session>Resume session</button>':'';
+      const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)&&!/^STOCK_WATCH_/.test(String(b.failure_code||''))?'<button type="button" class="secondary" data-retry>Requeue</button>':'';
       const stockAction=watching
         ?'<button type="button" class="secondary" data-stock-stop>Pause watch</button>'
         :(/^STOCK_WATCH_(PAUSED|EXPIRED)$/.test(String(b.failure_code||''))?'<button type="button" class="secondary" data-stock-resume>Resume watch</button>':'');
       const stockMeta=watching
-        ?'<div class="stock-watch-note"><b>AUTO-BUY '+(b.stock_watch_auto_order?'ON':'OFF')+'</b> · next '+(b.stock_next_check_at?new Date(b.stock_next_check_at).toLocaleString('en-IN'):'pending')+' · ceiling '+money(b.stock_watch_max_amount_minor||0)+'</div>'
+        ?'<div class="stock-watch-note"><b>AUTO-BUY '+(b.stock_watch_auto_order?'ON':'OFF')+'</b><span>Next '+(b.stock_next_check_at?new Date(b.stock_next_check_at).toLocaleString('en-IN'):'pending')+' · ceiling '+money(b.stock_watch_max_amount_minor||0)+'</span></div>'
         :'';
       return `
-        <div class="bulk-row" data-basket="${esc(b.id)}">
-          <div class="bulk-order-copy">
-            <strong>${esc(b.customer_reference||b.recipient)} · ${esc(b.retailer)}</strong>
-            <small>${esc(b.recipient)} · ${esc(b.account_reference||'Account not added')}</small>
-            <small>${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>
-            ${stockMeta}${note?'<div class="bulk-exception"><b>NEEDS ATTENTION</b> · '+esc(note)+'</div>':''}
+        <article class="bulk-order-card" data-basket="${esc(b.id)}">
+          <div class="bulk-order-main">
+            <div class="bulk-order-avatar">${esc(String(b.retailer||'R').slice(0,1).toUpperCase())}</div>
+            <div class="bulk-order-copy">
+              <strong>${esc(b.customer_reference||b.recipient||'Customer order')}</strong>
+              <span>${esc(b.retailer)} · ${esc(b.account_reference||'Account not added')}</span>
+              <small>${esc(b.recipient)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>
+              ${stockMeta}
+              ${note?'<div class="bulk-exception"><b>Needs attention</b><span>'+esc(note)+'</span></div>':''}
+            </div>
           </div>
-          <div><small>Items</small><strong>${Number(b.item_count||0)}</strong></div>
-          <div><small>Order value</small><strong>${money(b.amount_minor)}</strong></div>
-          <div><small>Status</small><span class="bulk-status">${esc(statusLabel(b.status))}</span><div class="bulk-action">${action}${retry}${stockAction}</div></div>
-        </div>`;
+          <div class="bulk-order-facts">
+            <div><span>ITEMS</span><strong>${Number(b.item_count||0)}</strong></div>
+            <div><span>VALUE</span><strong>${money(b.amount_minor)}</strong></div>
+          </div>
+          <div class="bulk-order-state">
+            <span class="bulk-status ${statusTone(b.status)}">${esc(statusLabel(b.status))}</span>
+            <div class="bulk-action">${action}${retry}${stockAction}</div>
+          </div>
+        </article>`;
     }).join(''):'<div class="bulk-empty"><strong>No orders yet</strong><span>Create and approve a fulfilment batch to see customer orders here.</span></div>';
   }
 
   async function load(){
+    const refresh=host.querySelector('#bulkRefresh');
+    refresh?.classList.add('is-refreshing');
     try{
       const data=await request('/api/bulk-baskets');
       baskets=data.baskets||[];
       render();
-    }catch(error){console.error(error)}
+    }catch(error){
+      console.error(error);
+      host.querySelector('#bulkQueue').innerHTML='<div class="bulk-empty error"><strong>Unable to load bulk orders</strong><span>'+esc(error.message)+'</span></div>';
+    }finally{refresh?.classList.remove('is-refreshing')}
   }
 
-  document.querySelector('#bulkRun').onclick=async()=>{
-    const button=document.querySelector('#bulkRun');
-    button.disabled=true;button.textContent='Preparing orders…';
+  host.querySelector('#bulkRun').onclick=async()=>{
+    const button=host.querySelector('#bulkRun');
+    button.disabled=true;button.textContent='Preparing…';
     try{
-      const result=await request('/api/bulk-queue/claim',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({limit:Number(document.querySelector('#bulkClaimSize').value)})});
+      const result=await request('/api/bulk-queue/claim',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({limit:Number(host.querySelector('#bulkClaimSize').value)})
+      });
       await load();
-      if(window.toast)window.toast(result.claimed?result.claimed+' order(s) ready for checkout':'No new orders are waiting');
-    }catch(error){alert(error.message)}
+      window.toast?.(result.claimed?result.claimed+' order(s) ready for checkout':'No new orders are waiting');
+    }catch(error){window.toast?.(error.message)||alert(error.message)}
     finally{button.textContent='Prepare orders';await load()}
   };
 
-  document.querySelector('#bulkRefresh').onclick=load;
+  host.querySelector('#bulkRefresh').onclick=load;
+
   host.onclick=async event=>{
     const stockStop=event.target.closest('[data-stock-stop]');
     const stockResume=event.target.closest('[data-stock-resume]');
@@ -134,31 +165,33 @@
           body:JSON.stringify(stockStop?{enabled:false}:{enabled:true,autoOrder:true,extendDays:30})
         });
         await load();
-        if(window.toast)window.toast(stockStop?'Stock watch paused':'Stock watch resumed');
-      }catch(error){alert(error.message)}
+        window.toast?.(stockStop?'Stock watch paused':'Stock watch resumed');
+      }catch(error){window.toast?.(error.message)||alert(error.message)}
       finally{button.disabled=false}
       return;
     }
+
     const focus=event.target.closest('[data-focus-session]');
     if(focus){
       const row=focus.closest('[data-basket]');if(!row)return;
-      focus.disabled=true;const previous=focus.textContent;focus.textContent='Opening live session…';
+      focus.disabled=true;const previous=focus.textContent;focus.textContent='Opening…';
       try{
         await request('/api/human-actions/'+row.dataset.basket+'/focus',{method:'POST'});
-        if(window.toast)window.toast('The exact retailer session is being brought forward by the worker');
-      }catch(error){alert(error.message)}
+        window.toast?.('Opening the exact retailer session on the connected worker');
+      }catch(error){window.toast?.(error.message)||alert(error.message)}
       finally{focus.textContent=previous;setTimeout(()=>{focus.disabled=false},1200)}
       return;
     }
+
     const retry=event.target.closest('[data-retry]');
     if(!retry)return;
-    const row=retry.closest('[data-basket]');
+    const row=retry.closest('[data-basket]');if(!row)return;
     retry.disabled=true;
     try{
       await request('/api/bulk-queue/'+row.dataset.basket+'/retry',{method:'POST'});
       await load();
-      if(window.toast)window.toast('Order task requeued');
-    }catch(error){alert(error.message)}
+      window.toast?.('Order task requeued');
+    }catch(error){window.toast?.(error.message)||alert(error.message)}
     finally{retry.disabled=false}
   };
 

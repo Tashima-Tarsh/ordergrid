@@ -26,10 +26,11 @@
       <div><span>PAYMENT VERIFY</span><strong id="humanPaymentCount">0</strong></div>
       <div><span>LIVE SESSIONS</span><strong id="humanLiveCount">0</strong></div>
     </div>
-    <div id="humanActionQueue" class="human-action-list"><div class="human-action-empty"><strong>No human action required</strong><span>Autopilot will surface OTP, CAPTCHA, CVV and bank authentication here.</span></div></div>
+    <div id="humanActionQueue" class="human-action-list"><div class="human-action-empty"><strong>No human action required</strong><span>OrderGrid surfaces OTP, CAPTCHA, CVV and bank authentication here only when human action is required.</span></div></div>
   `;
-  const anchor=document.querySelector('.autopilot-suite');
+  const anchor=document.querySelector('.funding-workspace')||document.querySelector('.rewards-centre');
   if(anchor)anchor.before(host);
+  else document.querySelector('main')?.appendChild(host);
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -70,7 +71,7 @@
             <button type="button" data-focus-session ${action.worker_online?'':'disabled'}>Resume exact session</button>
           </div>
         </article>`;
-    }).join(''):'<div class="human-action-empty"><strong>No human action required</strong><span>Autopilot will surface OTP, CAPTCHA, CVV and bank authentication here.</span></div>';
+    }).join(''):'<div class="human-action-empty"><strong>No human action required</strong><span>OrderGrid surfaces OTP, CAPTCHA, CVV and bank authentication here only when human action is required.</span></div>';
   }
   async function load(){
     try{
