@@ -13,7 +13,7 @@ import { loadConfig } from "./config.js";
 import { audit, createDb } from "./db.js";
 import { decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } from "./security.js";
 import { createOrderQueue } from "./queue.js";
-import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
+import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
 import { disconnectTenantIssuer, loadTenantIssuer, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
@@ -736,6 +736,73 @@ app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
   return {commandId:rows[0].id,status:rows[0].status};
 });
 
+
+app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    productUrl:z.string().url().max(2048),
+    retailerAccountId:z.string().uuid().optional()
+  }).parse(req.body);
+  let productUrl:string;
+  try{productUrl=flipkartProductCandidateUrl(body.productUrl)}
+  catch(error){return reply.code(400).send({error:"invalid_flipkart_product_url",message:error instanceof Error?error.message:"Invalid Flipkart product URL"})}
+  const params:any[]=[p.tenantId];
+  let accountFilter="";
+  if(body.retailerAccountId){params.push(body.retailerAccountId);accountFilter=` and ra.id=${params.length}`;}
+  const account=await db.query(
+    `select ra.id,ra.account_reference,ra.label,ra.profile_key,ra.session_status,ra.session_worker_id,ew.last_seen
+     from retailer_accounts ra
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     where ra.tenant_id=$1 and ra.retailer='flipkart' and ra.active${accountFilter}
+     order by
+       case when ra.session_status='READY' and ew.last_seen>now()-interval '30 seconds' then 0 else 1 end,
+       coalesce(ra.session_checked_at,ra.updated_at) desc
+     limit 1`,
+    params
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(409).send({error:"flipkart_account_required",message:"Connect an authorised Flipkart account first."});
+  if(row.session_status!=="READY")return reply.code(409).send({error:"flipkart_session_not_ready",message:"Prepare and authenticate this Flipkart account before checking a product.",retailerAccountId:row.id});
+  if(!row.session_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000){
+    return reply.code(409).send({error:"flipkart_worker_offline",message:"The OrderGrid native worker that owns this Flipkart session is offline. Start the worker and try again.",retailerAccountId:row.id});
+  }
+  const pending=await db.query(
+    `select id,status from execution_worker_commands
+     where tenant_id=$1 and worker_id=$2 and command='PRODUCT_CHECK'
+       and status in ('PENDING','PROCESSING')
+       and payload->>'retailerAccountId'=$3 and payload->>'productUrl'=$4
+     order by requested_at desc limit 1`,
+    [p.tenantId,row.session_worker_id,String(row.id),productUrl]
+  );
+  if(pending.rows[0])return reply.code(202).send({commandId:pending.rows[0].id,status:pending.rows[0].status,retailerAccountId:row.id});
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,null,'PRODUCT_CHECK',$3,$4)
+     returning id,status,requested_at`,
+    [p.tenantId,row.session_worker_id,{
+      retailer:"flipkart",retailerAccountId:String(row.id),profileKey:String(row.profile_key),
+      accountReference:String(row.account_reference),accountLabel:row.label??null,productUrl
+    },p.id]
+  );
+  await audit(db,p.tenantId,p.id,"flipkart_mobile.check_requested","retailer_account",String(row.id),{productUrl});
+  return reply.code(202).send({commandId:rows[0].id,status:rows[0].status,retailerAccountId:row.id,requestedAt:rows[0].requested_at});
+});
+
+app.get("/api/products/flipkart/mobile/check/:commandId",async(req,reply)=>{
+  const p=req.principal!,commandId=z.string().uuid().parse((req.params as any).commandId);
+  const {rows}=await db.query(
+    `select id,status,error,result,payload->>'retailerAccountId' retailer_account_id,
+       payload->>'accountReference' account_reference,payload->>'accountLabel' account_label,
+       requested_at,processing_at,completed_at
+     from execution_worker_commands
+     where id=$1 and tenant_id=$2 and command='PRODUCT_CHECK' limit 1`,
+    [commandId,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"product_check_not_found"});
+  return rows[0];
+});
+
 app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)=>{
   const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
   const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
@@ -1130,14 +1197,23 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
 app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(req,reply)=>{
   const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
   const commandId=z.string().uuid().parse((req.params as any).commandId);
-  const body=z.object({ok:z.boolean(),error:z.string().max(300).optional()}).parse(req.body);
+  const body=z.object({
+    ok:z.boolean(),
+    error:z.string().max(300).optional(),
+    result:z.record(z.string(),z.unknown()).optional()
+  }).parse(req.body);
   const worker=await db.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3",[p.tenantId,workerId,p.id]);
   if(!worker.rows[0])return reply.code(403).send({error:"worker_access_denied"});
-  const {rows}=await db.query(
-    "update execution_worker_commands set status=$1,completed_at=now(),error=$2 where id=$3 and tenant_id=$4 and worker_id=$5 and status='PROCESSING' returning id,status",
-    [body.ok?"COMPLETED":"FAILED",body.error??null,commandId,p.tenantId,workerId]
+  const command=await db.query(
+    "select command,payload from execution_worker_commands where id=$1 and tenant_id=$2 and worker_id=$3 and status='PROCESSING' limit 1",
+    [commandId,p.tenantId,workerId]
   );
-  if(!rows[0])return reply.code(404).send({error:"worker_command_not_found"});
+  if(!command.rows[0])return reply.code(404).send({error:"worker_command_not_found"});
+  if(command.rows[0].command==="PRODUCT_CHECK"&&body.ok&&!body.result)return reply.code(400).send({error:"product_check_result_required"});
+  const {rows}=await db.query(
+    "update execution_worker_commands set status=$1,completed_at=now(),error=$2,result=$3 where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING' returning id,status,result",
+    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId]
+  );
   return rows[0];
 });
 
@@ -2238,6 +2314,7 @@ app.post("/api/batches",async(req,reply)=>{
       quantity:z.number().int().positive().max(10000),
       addressId:z.string().uuid().optional(),
       estimatedUnitPriceMinor:z.number().int().positive().optional(),
+      productCheckId:z.string().uuid().optional(),
       hsnSac:z.string().trim().min(2).max(16).optional(),
       gstRate:z.number().min(0).max(100).optional(),
       cessRate:z.number().min(0).max(100).default(0),
@@ -2248,7 +2325,38 @@ app.post("/api/batches",async(req,reply)=>{
   const fullyEstimated=input.items.every(i=>i.estimatedUnitPriceMinor);
   if(!fullyEstimated&&!jobs)return reply.code(422).send({error:"estimated_price_required"});
 
-  const preparedItems=input.items.map(item=>({...item,retailer:retailerForProductUrl(item.productUrl).id}));
+  const preparedItems:any[]=[];
+  for(const item of input.items){
+    const retailer=retailerForProductUrl(item.productUrl).id;
+    if(retailer==="flipkart"){
+      if(!item.productCheckId)return reply.code(409).send({error:"flipkart_product_check_required",message:"Run Check product for this Flipkart mobile before creating the fulfilment batch."});
+      const verifiedUrl=flipkartProductCandidateUrl(item.productUrl);
+      const checked=await db.query(
+        `select status,result,payload,completed_at from execution_worker_commands
+         where id=$1 and tenant_id=$2 and command='PRODUCT_CHECK' limit 1`,
+        [item.productCheckId,p.tenantId]
+      );
+      const command=checked.rows[0],result=command?.result??{};
+      if(!command||command.status!=="COMPLETED"||result.state!=="READY"||result.isMobile!==true||result.maxQuantityVerified!==true){
+        return reply.code(409).send({error:"flipkart_product_check_not_ready",message:"The Flipkart product check is not complete and verified."});
+      }
+      if(String(command.payload?.productUrl||"")!==verifiedUrl){
+        return reply.code(409).send({error:"flipkart_product_url_changed",message:"The Flipkart URL changed after verification. Run Check product again."});
+      }
+      const checkedAt=Date.parse(String(result.checkedAt||command.completed_at||""));
+      if(!Number.isFinite(checkedAt)||Date.now()-checkedAt>10*60_000){
+        return reply.code(409).send({error:"flipkart_product_check_stale",message:"The Flipkart price/quantity check is older than 10 minutes. Refresh it before approval."});
+      }
+      const livePrice=Number(result.sellingPriceMinor||0),maxQuantity=Number(result.maxQuantity||0);
+      if(!livePrice||item.estimatedUnitPriceMinor!==livePrice){
+        return reply.code(409).send({error:"flipkart_price_changed",message:"The submitted price does not match the latest verified Flipkart price. Run Check product again.",verifiedPriceMinor:livePrice});
+      }
+      if(!Number.isInteger(maxQuantity)||maxQuantity<1||item.quantity>maxQuantity){
+        return reply.code(409).send({error:"flipkart_quantity_exceeds_verified_limit",message:"Requested quantity exceeds the maximum verified for this Flipkart account.",maxQuantity});
+      }
+    }
+    preparedItems.push({...item,retailer});
+  }
   const addressIds=[...new Set(preparedItems.flatMap(item=>item.addressId?[item.addressId]:[]))];
   if(addressIds.length){
     const owned=await db.query(

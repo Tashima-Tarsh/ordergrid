@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "../src/retailers.js";
+import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "../src/retailers.js";
 
 test("recognizes supported Indian retailers without accepting lookalike hosts",()=>{
   assert.equal(retailerForProductUrl("https://www.amazon.in/dp/B0TEST").id,"amazon-in");
@@ -18,4 +18,11 @@ test("verified execution URL removes fragments and validates retailer order IDs"
   assert.equal(verifiedRetailerUrl("https://www.amazon.in/dp/B0TEST#reviews"),"https://www.amazon.in/dp/B0TEST");
   assert.equal(validateRetailerOrderId("OD123-456"),"OD123-456");
   assert.throws(()=>validateRetailerOrderId("<script>"));
+});
+
+
+test("flipkart product candidate accepts canonical product-detail URLs only",()=>{
+  assert.equal(flipkartProductCandidateUrl("https://www.flipkart.com/example-phone/p/itm123ABC?pid=MOB123#x"),"https://www.flipkart.com/example-phone/p/itm123ABC?pid=MOB123");
+  assert.throws(()=>flipkartProductCandidateUrl("https://www.amazon.in/dp/B0TEST1234"));
+  assert.throws(()=>flipkartProductCandidateUrl("https://www.flipkart.com/search?q=phone"));
 });
