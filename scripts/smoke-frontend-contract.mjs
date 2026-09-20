@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
