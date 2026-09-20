@@ -9,12 +9,15 @@ test("OrderGrid worker accepts supported HTTPS retailers", () => {
   assert.equal(allowedRetailerUrl("https://www.amazon.in/dp/B000000000"), true);
   assert.equal(allowedRetailerUrl("https://www.flipkart.com/item/p/abc"), true);
   assert.equal(allowedRetailerUrl("https://shop.example/products/widget"), true);
+  assert.equal(allowedRetailerUrl("https://merchant.example/item/device"), true);
 });
 
 test("OrderGrid worker rejects lookalikes and credential URLs", () => {
   assert.equal(allowedRetailerUrl("https://amazon.in.evil.example/item"), false);
   assert.equal(allowedRetailerUrl("http://amazon.in/item"), false);
   assert.equal(allowedRetailerUrl("https://user:pass@flipkart.com/item"), false);
+  assert.equal(allowedRetailerUrl("https://localhost/item"), false);
+  assert.equal(allowedRetailerUrl("https://127.0.0.1/item"), false);
 });
 
 test("profile keys are stable and do not expose the reference", () => {

@@ -1185,7 +1185,67 @@ app.get("/api/reports/orders.csv",async(req,reply)=>{
   return csv;
 });
 
-app.post("/api/batches",async(req,reply)=>{const p=req.principal!;const input=z.object({name:z.string().min(3).max(120),paymentRoute:z.enum(["Corporate virtual card","Cash on Delivery"]).default("Corporate virtual card"),items:z.array(z.object({productUrl:z.string().url(),quantity:z.number().int().positive().max(10000),addressId:z.string().uuid().optional(),estimatedUnitPriceMinor:z.number().int().positive().optional()})).min(1).max(5000)}).parse(req.body); const c=await db.connect();try{await c.query("begin");const fullyEstimated=input.items.every(i=>i.estimatedUnitPriceMinor);if(!fullyEstimated&&!jobs)return reply.code(422).send({error:"estimated_price_required"});const total=input.items.reduce((sum,i)=>sum+(i.estimatedUnitPriceMinor??0)*i.quantity,0);const b=await c.query("insert into order_batches(tenant_id,name,created_by,status,estimated_total_minor,payment_route) values($1,$2,$3,$4,$5,$6) returning id,status",[p.tenantId,input.name,fullyEstimated?"AWAITING_APPROVAL":"DRAFT",total,input.paymentRoute]);for(const item of input.items){const retailer=retailerForProductUrl(item.productUrl).id;await c.query("insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,unit_price_minor,pricing_status,pricing_checked_at) values($1,$2,$3,$4,$5,$6,$7,$8)",[b.rows[0].id,item.productUrl,retailer,item.quantity,item.addressId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null]);}await c.query("commit");await audit(db,p.tenantId,p.id,"batch.created","order_batch",b.rows[0].id,{items:input.items.length,total});if(!fullyEstimated&&jobs)await jobs.queue.add("price-batch",{batchId:b.rows[0].id,tenantId:p.tenantId},{jobId:`price:${b.rows[0].id}`,attempts:5,backoff:{type:"exponential",delay:2000},removeOnComplete:1000});return reply.code(201).send(b.rows[0]);}catch(e){await c.query("rollback");throw e}finally{c.release()}});
+app.post("/api/batches",async(req,reply)=>{
+  const p=req.principal!;
+  const input=z.object({
+    name:z.string().min(3).max(120),
+    paymentRoute:z.enum(["Corporate virtual card","Cash on Delivery"]).default("Corporate virtual card"),
+    items:z.array(z.object({
+      productUrl:z.string().url(),
+      quantity:z.number().int().positive().max(10000),
+      addressId:z.string().uuid().optional(),
+      estimatedUnitPriceMinor:z.number().int().positive().optional()
+    })).min(1).max(5000)
+  }).parse(req.body);
+
+  const fullyEstimated=input.items.every(i=>i.estimatedUnitPriceMinor);
+  if(!fullyEstimated&&!jobs)return reply.code(422).send({error:"estimated_price_required"});
+
+  const preparedItems=input.items.map(item=>({...item,retailer:retailerForProductUrl(item.productUrl).id}));
+  const addressIds=[...new Set(preparedItems.flatMap(item=>item.addressId?[item.addressId]:[]))];
+  if(addressIds.length){
+    const owned=await db.query(
+      `select count(*)::int count
+       from addresses a
+       join address_books ab on ab.id=a.address_book_id
+       where a.id=any($1::uuid[]) and ab.tenant_id=$2`,
+      [addressIds,p.tenantId]
+    );
+    if(Number(owned.rows[0]?.count||0)!==addressIds.length)return reply.code(404).send({error:"recipient_not_found"});
+  }
+
+  const total=preparedItems.reduce((sum,i)=>sum+(i.estimatedUnitPriceMinor??0)*i.quantity,0);
+  const c=await db.connect();
+  try{
+    await c.query("begin");
+    const b=await c.query(
+      "insert into order_batches(tenant_id,name,created_by,status,estimated_total_minor,payment_route) values($1,$2,$3,$4,$5,$6) returning id,status",
+      [p.tenantId,input.name,p.id,fullyEstimated?"AWAITING_APPROVAL":"DRAFT",total,input.paymentRoute]
+    );
+    for(const item of preparedItems){
+      await c.query(
+        "insert into batch_items(batch_id,product_url,retailer,requested_quantity,address_id,unit_price_minor,pricing_status,pricing_checked_at) values($1,$2,$3,$4,$5,$6,$7,$8)",
+        [b.rows[0].id,item.productUrl,item.retailer,item.quantity,item.addressId??null,item.estimatedUnitPriceMinor??null,item.estimatedUnitPriceMinor?"ESTIMATED":"PENDING",item.estimatedUnitPriceMinor?new Date():null]
+      );
+    }
+    await c.query("commit");
+    await audit(db,p.tenantId,p.id,"batch.created","order_batch",b.rows[0].id,{items:preparedItems.length,total});
+    if(!fullyEstimated&&jobs){
+      await jobs.queue.add("price-batch",{batchId:b.rows[0].id,tenantId:p.tenantId},{
+        jobId:`price:${b.rows[0].id}`,
+        attempts:5,
+        backoff:{type:"exponential",delay:2000},
+        removeOnComplete:1000
+      });
+    }
+    return reply.code(201).send(b.rows[0]);
+  }catch(e){
+    await c.query("rollback");
+    throw e;
+  }finally{
+    c.release();
+  }
+});
 app.post("/api/batches/:id/approve",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const id=z.string().uuid().parse((req.params as any).id);const {rows}=await db.query("update order_batches set status='APPROVED',approved_by=$1,approved_at=now(),updated_at=now() where id=$2 and tenant_id=$3 and status='AWAITING_APPROVAL' returning id",[p.id,id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"batch_not_approvable"});await audit(db,p.tenantId,p.id,"batch.approved","order_batch",id);if(jobs){await jobs.queue.add("place-batch",{batchId:id,tenantId:p.tenantId},{jobId:`place:${id}`,attempts:3,backoff:{type:"exponential",delay:5000}});}else{await db.query(`insert into purchase_orders(tenant_id,batch_item_id,status,retailer,amount_minor,idempotency_key) select $1,i.id,'REQUIRES_ACTION',i.retailer,i.unit_price_minor*i.requested_quantity,$2||i.id from batch_items i where i.batch_id=$3 on conflict(idempotency_key) do update set amount_minor=excluded.amount_minor,failure_code=null,failure_message=null,updated_at=now()`,[p.tenantId,`basket:${id}:`,id]);await syncCheckoutBaskets(db,p.tenantId,id);const automationPolicy=await getAutomationPolicy(p.tenantId);if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){await claimReadyBaskets(p.tenantId,p.id,Number(automationPolicy.max_active_orders||8),automationPolicy);}}return {ok:true};});
 app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error",requestId:req.id});});
 

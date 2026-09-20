@@ -108,12 +108,15 @@ function retailerAuthScript(credentials){
     return {acted:false};
   })()`;
 }
-function pageStateScript(postalCode,paymentRoute,commercialApprovedAmountMinor){
+function pageStateScript(address,paymentRoute,commercialApprovedAmountMinor){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,120000);
     const lower=text.toLowerCase();
     const route=${JSON.stringify(paymentRoute)};
+    const address=${JSON.stringify(address||{})};
     const approvedAmount=${commercialApprovedAmountMinor==null?"null":JSON.stringify(commercialApprovedAmountMinor)};
     const valueOf=e=>String(e?.value||e?.getAttribute?.('value')||e?.innerText||e?.textContent||e?.getAttribute?.('aria-label')||'').trim();
+    const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const setValue=(el,value)=>{if(!el||value==null||value==='')return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,String(value));else el.value=String(value);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
     const parseMoney=value=>{const match=String(value||'').replace(/,/g,'').match(/(?:₹|rs\\.?|inr)?\\s*(\\d+(?:\\.\\d{1,2})?)/i);if(!match)return null;const n=Number(match[1]);return Number.isFinite(n)?Math.round(n*100):null;};
     const findPayableAmountMinor=()=>{
       const selectors=[
@@ -140,20 +143,61 @@ function pageStateScript(postalCode,paymentRoute,commercialApprovedAmountMinor){
     if(hasPassword)return {state:'CHALLENGE',code:'LOGIN_REQUIRED',message:'Retailer login is required for this customer account',href:location.href};
     if(hasOtp)return {state:'CHALLENGE',code:'OTP_REQUIRED',message:'Retailer OTP or verification code is required',href:location.href};
     if(has3ds)return {state:'CHALLENGE',code:'PAYMENT_AUTH_REQUIRED',message:'Bank/issuer authentication is required',href:location.href};
-    const cardInput=document.querySelector('input[autocomplete="cc-number"],input[name*="cardNumber" i],input[id*="cardNumber" i]');
-    if(cardInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'A card payment method must be supplied through an approved issuer/PCI flow',href:location.href};
-    const postcode=${JSON.stringify(postalCode||"")};
-    if(postcode&&/select.*address|delivery address|choose.*address/i.test(lower)){
+
+    const postcode=String(address.postalCode||'').trim();
+    if(postcode&&/(select.{0,20}address|delivery address|shipping address|choose.{0,20}address|add.{0,20}address)/i.test(lower)){
       const addressBlocks=[...document.querySelectorAll('address,[class*="address" i],[data-testid*="address" i]')];
-      const match=addressBlocks.find(x=>String(x.innerText||'').includes(postcode));
-      if(match){const root=match.closest('li,div,section,form')||match;const btn=[...root.querySelectorAll('button,input[type="submit"],a')].find(x=>/(use this address|deliver to this address|select|continue)/i.test(valueOf(x)));if(btn){btn.click();return {state:'RUNNING',action:'ADDRESS_SELECTED',href:location.href};}}
+      const match=addressBlocks.find(x=>String(x.innerText||x.textContent||'').includes(postcode));
+      if(match){
+        const root=match.closest('li,div,section,form')||match;
+        const btn=[...root.querySelectorAll('button,input[type="submit"],a')].filter(visible).find(x=>/(use this address|deliver to this address|deliver here|select|continue)/i.test(valueOf(x)));
+        if(btn){btn.click();return {state:'RUNNING',action:'ADDRESS_SELECTED',href:location.href};}
+      }
+      const inputs=[...document.querySelectorAll('input,textarea,select')].filter(visible);
+      const field=(patterns)=>inputs.find(x=>patterns.some(re=>re.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||x.autocomplete||''))));
+      const recipient=field([/full.?name/i,/recipient/i,/name/i]);
+      const phone=field([/phone/i,/mobile/i,/tel/i]);
+      const line1=field([/address.?line.?1/i,/address1/i,/street/i,/house/i,/building/i]);
+      const line2=field([/address.?line.?2/i,/address2/i,/landmark/i]);
+      const city=field([/city/i,/town/i]);
+      const state=field([/state/i,/province/i,/region/i]);
+      const postal=field([/postal/i,/postcode/i,/zip/i,/pincode/i,/pin.?code/i]);
+      const looksLikeAddressForm=Boolean(line1&&city&&postal);
+      if(looksLikeAddressForm){
+        setValue(recipient,address.recipient);setValue(phone,address.phone);setValue(line1,address.line1);setValue(line2,address.line2);setValue(city,address.city);setValue(postal,postcode);
+        if(state){
+          if(state.tagName==='SELECT'){
+            const option=[...state.options].find(o=>String(o.textContent||o.value).trim().toLowerCase()===String(address.state||'').trim().toLowerCase())||[...state.options].find(o=>String(o.textContent||o.value).toLowerCase().includes(String(address.state||'').trim().toLowerCase()));
+            if(option){state.value=option.value;state.dispatchEvent(new Event('change',{bubbles:true}));}
+          }else setValue(state,address.state);
+        }
+        const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
+        const save=controls.find(x=>/(use this address|save.*address|deliver to this address|deliver here|add address|continue)/i.test(valueOf(x)));
+        if(save){save.click();return {state:'RUNNING',action:'ADDRESS_ADDED',href:location.href};}
+      }
     }
+
     if(route.toLowerCase().includes('cash')){
-      const controls=[...document.querySelectorAll('label,button,input[type="radio"],div[role="radio"]')];
+      const controls=[...document.querySelectorAll('label,button,input[type="radio"],div[role="radio"]')].filter(visible);
       const cod=controls.find(x=>/(cash on delivery|pay on delivery|cod)/i.test(valueOf(x)));
       if(cod){const input=cod.matches?.('input')?cod:cod.querySelector?.('input[type="radio"]');(input||cod).click();return {state:'RUNNING',action:'COD_SELECTED',href:location.href};}
+    }else if(/payment method|select payment|choose payment|pay with/i.test(lower)){
+      const options=[...document.querySelectorAll('label,[role="radio"],li,div')].filter(visible);
+      const saved=options.find(x=>{
+        const label=valueOf(x).replace(/\\s+/g,' ');
+        return /(ending in|ends in|saved card|card ending|\\*{2,}|x{2,}|•{2,}).{0,30}\\d{2,4}/i.test(label)&&!/(add new|new card)/i.test(label);
+      });
+      if(saved){
+        const radio=saved.matches?.('input[type="radio"]')?saved:saved.querySelector?.('input[type="radio"]');
+        (radio||saved).click();
+        return {state:'RUNNING',action:'SAVED_PAYMENT_SELECTED',href:location.href};
+      }
     }
-    const candidates=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(x=>!x.disabled&&x.getAttribute('aria-disabled')!=='true');
+
+    const cardInput=document.querySelector('input[autocomplete="cc-number"],input[name*="cardNumber" i],input[id*="cardNumber" i]');
+    if(cardInput&&!route.toLowerCase().includes('cash'))return {state:'CHALLENGE',code:'PAYMENT_METHOD_REQUIRED',message:'No tokenized/saved retailer payment method is available. Add the approved payment method in the retailer session; OrderGrid does not collect raw card PAN/CVV.',href:location.href};
+
+    const candidates=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
     const normalPatterns=[/proceed to (buy|checkout)/i,/proceed to checkout/i,/checkout/i,/use this address/i,/deliver to this address/i,/continue/i];
     for(const re of normalPatterns){const el=candidates.find(x=>re.test(valueOf(x)));if(el){el.click();return {state:'RUNNING',action:valueOf(el).slice(0,80),href:location.href};}}
     const finalPatterns=[/place (your )?order/i,/pay now/i,/confirm (and )?(pay|order)/i,/buy now/i,/submit order/i];
@@ -184,7 +228,7 @@ export function cartUrlFor(retailer,productUrl){
   if(known[retailer])return known[retailer];
   const url=new URL(productUrl);return `${url.origin}/cart`;
 }
-async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials,commercialApprovedAmountMinor}){
+async function driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor}){
   for(let round=0;round<12;round++){
     const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&/^https?:/.test(t.url||""));
     const target=targets.find(t=>/(checkout|cart|order|payment|pay|secure|buy)/i.test(t.url||""))||targets[0];
@@ -194,7 +238,7 @@ async function driveCheckout(port,{postalCode,paymentRoute,accountCredentials,co
       await waitReady(connection);
       const auth=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(auth?.acted){await sleep(1400);continue;}
-      const state=await evaluate(connection,pageStateScript(postalCode,paymentRoute,commercialApprovedAmountMinor));
+      const state=await evaluate(connection,pageStateScript(address,paymentRoute,commercialApprovedAmountMinor));
       if(!state)return {state:"FAILED",code:"NO_PAGE_STATE",message:"Retailer page did not return an execution state"};
       if(state.state==="CONFIRMED"||state.state==="CHALLENGE")return state;
       await sleep(1200);
@@ -224,6 +268,6 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     const cartUrl=cartUrlFor(retailer,items[0]?.executionUrl);
     if(cartUrl)await createTarget(port,cartUrl);
   }
-  const state=await driveCheckout(port,{postalCode:address?.postalCode,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
+  const state=await driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
   return {...state,results};
 }

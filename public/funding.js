@@ -40,8 +40,8 @@
     $('#issuerStatus').textContent=provider.configured?'CONNECTED':'SETUP REQUIRED';
     $('#fundingLimit').textContent=provider.configured?'Available':'—';
     $('#connectIssuer').hidden=provider.configured&&!previewOnly;
-    $('#connectIssuer').disabled=true;
-    $('#connectIssuer').textContent=provider.configured?'Connected':'Setup by administrator';
+    $('#connectIssuer').disabled=previewOnly;
+    $('#connectIssuer').textContent=provider.configured?'Connected':previewOnly?'Production setup only':'Connect card programme';
     $('#disconnectIssuer').hidden=!provider.configured||previewOnly;
     $('#virtualCardInventory').innerHTML=cards.length?cards.map((card,i)=>`
       <div class="virtual-card-row" data-card="${card.id}">
@@ -63,7 +63,11 @@
     }
   }
 
-  $('#connectIssuer').onclick=()=>{};
+  $('#connectIssuer').onclick=()=>{
+    if(provider.source==='showroom'){toast('Card programme connection is available on the production OrderGrid service.');return}
+    $('#issuerError').textContent='';
+    $('#issuerDialog').showModal();
+  };
   $('#closeIssuer').onclick=()=>$('#issuerDialog').close();
   $('#cancelIssuer').onclick=()=>$('#issuerDialog').close();
   $('#issuerForm').onsubmit=async event=>{

@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 Write-Host ""
 Write-Host "OrderGrid Windows Checkout Worker" -ForegroundColor Cyan
 Write-Host "This worker opens Chrome locally and uses your authorized retailer sessions."
-Write-Host "It does not bypass Amazon login, OTP, CAPTCHA, 3DS, passwords, or payment authentication."
+Write-Host "It does not bypass retailer login, OTP, CAPTCHA, 3DS, passwords, or payment authentication."
 Write-Host ""
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -39,14 +39,20 @@ Invoke-WebRequest -Uri "https://github.com/Tashima-Tarsh/ordergrid/archive/refs/
 Expand-Archive -Path $zip -DestinationPath $work -Force
 $root = Join-Path $work "ordergrid-main"
 
-$email = Read-Host "OrderGrid email [demo@ordergrid.in]"
-if ([string]::IsNullOrWhiteSpace($email)) { $email = "demo@ordergrid.in" }
+$defaultUrl = if ([string]::IsNullOrWhiteSpace($env:ORDERGRID_URL)) { "https://ordergrid-production.onrender.com" } else { $env:ORDERGRID_URL }
+$url = Read-Host "OrderGrid URL [$defaultUrl]"
+if ([string]::IsNullOrWhiteSpace($url)) { $url = $defaultUrl }
+$url = $url.TrimEnd("/")
+
+$email = Read-Host "OrderGrid email"
+if ([string]::IsNullOrWhiteSpace($email)) { throw "OrderGrid email is required." }
+
 $secure = Read-Host "OrderGrid password" -AsSecureString
 $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try { $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 
-$env:ORDERGRID_URL = "https://ordergrid-showroom.onrender.com"
+$env:ORDERGRID_URL = $url
 $env:ORDERGRID_EMAIL = $email
 $env:ORDERGRID_PASSWORD = $password
 $env:ORDERGRID_PARALLEL = "1"
@@ -54,8 +60,9 @@ $env:ORDERGRID_BASKETS = "5"
 $env:ORDERGRID_DAEMON = "1"
 
 Write-Host ""
-Write-Host "Connecting worker to OrderGrid..." -ForegroundColor Green
-Write-Host "When Chrome opens Amazon, sign in normally if Amazon asks. Complete OTP/CAPTCHA/3DS yourself when shown." -ForegroundColor Yellow
+Write-Host "Connecting worker to $url..." -ForegroundColor Green
+Write-Host "When a retailer asks for sign-in, payment setup, OTP, CAPTCHA or 3DS, complete that protected step yourself." -ForegroundColor Yellow
+Write-Host "Saved/tokenized payment methods can then be reused by the isolated retailer profile without OrderGrid collecting raw card PAN/CVV." -ForegroundColor Yellow
 Write-Host "Keep this window open while testing."
 Write-Host ""
 
