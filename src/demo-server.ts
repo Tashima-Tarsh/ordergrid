@@ -24,19 +24,16 @@ type Item={id:string;tenant_id:string;batchId:string;product_url:string;retailer
 type Task={id:string;tenant_id:string;batch_id:string;address_id:string;status:string;amount_minor:number;failure_message:string;failure_code?:string;product_url:string;title:string;requested_quantity:number;recipient:string;city:string;postal_code:string;retailer:string;account_reference:string;retailer_order_id?:string};
 type Basket={id:string;tenant_id:string;batch_id:string;status:string;retailer:string;account_reference:string;customer_reference:string;recipient:string;city:string;postal_code:string;payment_route:string;batch_name:string;item_count:number;amount_minor:number;auth_status:string;failure_code?:string;failure_message?:string;execution_worker_id?:string;expires_at?:number;opened_at?:number;retailer_order_id?:string;observed_amount_minor?:number;commercial_status?:"PENDING"|"APPROVED"|"REVIEW_REQUIRED";commercial_variance_percent?:number};
 type Worker={id:string;hostname:string;mode:"BULK";last_seen:number};
-type DemoDealer={id:string;name:string;dealer_type:"MAIN"|"SUB";parent_id?:string};
-type DemoDealerUser={id:string;tenant_id:string;email:string;role:"OWNER"|"APPROVER"|"BUYER"|"AUDITOR";home_user:boolean};
-const mainDealerId:string=randomUUID();
-let activeDealerId:string=mainDealerId;
-const dealers=new Map<string,DemoDealer>([[mainDealerId,{id:mainDealerId,name:"OrderGrid Main Dealer",dealer_type:"MAIN"}]]);
-const dealerUsers=new Map<string,DemoDealerUser>();
-dealerUsers.set("demo-owner",{id:"demo-owner",tenant_id:mainDealerId,email,role:"OWNER",home_user:true});
+type DemoUser={id:string;tenant_id:string;email:string;role:"OWNER"|"APPROVER"|"BUYER"|"AUDITOR";active:boolean};
+const workspaceId:string=randomUUID();
+const demoUsers=new Map<string,DemoUser>();
+demoUsers.set("demo-owner",{id:"demo-owner",tenant_id:workspaceId,email,role:"OWNER",active:true});
 const addresses=new Map<string,Address>(),items:Item[]=[],batches:Batch[]=[],tasks:Task[]=[],baskets:Basket[]=[],workers=new Map<string,Worker>();
-const addressesByReference=(reference:string,tenantId=activeDealerId)=>[...addresses.values()].find(a=>a.tenant_id===tenantId&&(a.reference||a.id)===reference);
-const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===activeDealerId);
-const activeBatches=()=>batches.filter(b=>b.tenant_id===activeDealerId);
-const activeTasks=()=>tasks.filter(t=>t.tenant_id===activeDealerId);
-const activeBaskets=()=>baskets.filter(b=>b.tenant_id===activeDealerId);
+const addressesByReference=(reference:string,tenantId=workspaceId)=>[...addresses.values()].find(a=>a.tenant_id===tenantId&&(a.reference||a.id)===reference);
+const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===workspaceId);
+const activeBatches=()=>batches.filter(b=>b.tenant_id===workspaceId);
+const activeTasks=()=>tasks.filter(t=>t.tenant_id===workspaceId);
+const activeBaskets=()=>baskets.filter(b=>b.tenant_id===workspaceId);
 type DemoAutomationPolicy={
   automation_enabled:boolean;auto_assign_virtual_card:boolean;auto_continue_checkout:boolean;max_active_orders:number;failure_pause_percent:number;
   max_price_increase_percent:number;max_order_value_minor:number;max_batch_variance_percent:number;price_breach_action:"PAUSE_ORDER"|"PAUSE_BATCH";
@@ -46,31 +43,14 @@ const automationPolicies=new Map<string,DemoAutomationPolicy>();
 function defaultDemoAutomationPolicy():DemoAutomationPolicy{
   return {automation_enabled:true,auto_assign_virtual_card:true,auto_continue_checkout:true,max_active_orders:8,failure_pause_percent:5,max_price_increase_percent:5,max_order_value_minor:0,max_batch_variance_percent:3,price_breach_action:"PAUSE_ORDER",run_mode:"MANUAL",inherit_parent_policy:true,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()};
 }
-function localAutomationPolicy(tenantId=activeDealerId){
+function localAutomationPolicy(tenantId=workspaceId){
   let policy=automationPolicies.get(tenantId);
-  if(!policy){policy=defaultDemoAutomationPolicy();automationPolicies.set(tenantId,policy);}
+  if(!policy){policy=defaultDemoAutomationPolicy();policy.inherit_parent_policy=false;policy.allow_child_policy_relaxation=false;automationPolicies.set(tenantId,policy);}
   return policy;
 }
 function activeAutomationPolicy(){
-  const local=localAutomationPolicy(activeDealerId),dealer=dealers.get(activeDealerId);
-  if(!dealer?.parent_id||!local.inherit_parent_policy)return local;
-  const parent=localAutomationPolicy(dealer.parent_id);
-  if(parent.allow_child_policy_relaxation)return local;
-  const minCap=(a:number,b:number)=>a<=0?b:b<=0?a:Math.min(a,b);
-  return {
-    ...local,
-    automation_enabled:parent.automation_enabled&&local.automation_enabled,
-    auto_assign_virtual_card:parent.auto_assign_virtual_card&&local.auto_assign_virtual_card,
-    auto_continue_checkout:parent.auto_continue_checkout&&local.auto_continue_checkout,
-    max_active_orders:Math.min(parent.max_active_orders,local.max_active_orders),
-    failure_pause_percent:Math.min(parent.failure_pause_percent,local.failure_pause_percent),
-    max_price_increase_percent:Math.min(parent.max_price_increase_percent,local.max_price_increase_percent),
-    max_order_value_minor:minCap(parent.max_order_value_minor,local.max_order_value_minor),
-    max_batch_variance_percent:Math.min(parent.max_batch_variance_percent,local.max_batch_variance_percent),
-    price_breach_action:parent.price_breach_action==="PAUSE_BATCH"||local.price_breach_action==="PAUSE_BATCH"?"PAUSE_BATCH":"PAUSE_ORDER",
-    run_mode:parent.run_mode==="MANUAL"?"MANUAL":local.run_mode,
-    allow_child_policy_relaxation:false
-  };
+  const local=localAutomationPolicy(workspaceId);
+  return {...local,inherit_parent_policy:false,allow_child_policy_relaxation:false};
 }
 const credentialKey=randomBytes(32).toString("base64");
 const accountRefs=new Map<string,Map<string,string>>();
@@ -114,50 +94,21 @@ app.addHook("preHandler",async(req,reply)=>{if(!req.url.startsWith("/api/")||req
 app.get("/api/health",async()=>({status:"ok",mode:"showroom"}));
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{const body=z.object({email:z.string().email(),password:z.string()}).parse(req.body);if(!same(body.email.toLowerCase(),email)||!same(body.password,password))return reply.code(401).send({error:"invalid_credentials"});reply.setCookie("demo_session",session,{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});return {user:{role:"OWNER"}};});
 app.post("/api/logout",async(_,reply)=>{reply.clearCookie("demo_session",{path:"/"});return {ok:true}});
-app.get("/api/dealer-network",async()=>{
-  const rows=[...dealers.values()].map(d=>({
-    id:d.id,name:d.name,dealer_type:d.dealer_type,active:d.id===activeDealerId,
-    user_count:[...dealerUsers.values()].filter(u=>u.tenant_id===d.id).length,
-    customer_count:[...addresses.values()].filter(a=>a.tenant_id===d.id).length,
-    retailer_account_count:[...addresses.values()].filter(a=>a.tenant_id===d.id).reduce((n,a)=>n+(accountRefs.get(a.id)?.size||0),0),
-    order_count:baskets.filter(b=>b.tenant_id===d.id).length,
-    confirmed_count:baskets.filter(b=>b.tenant_id===d.id&&b.status==="CONFIRMED").length,
-    virtual_card_count:0,
-    funding_connected:false
-  }));
-  return {homeTenantId:mainDealerId,activeTenantId:activeDealerId,canCreateSubdealer:activeDealerId===mainDealerId,dealers:rows};
-});
-app.post("/api/dealer-context",async(req,reply)=>{
-  const body=z.object({tenantId:z.string().uuid()}).parse(req.body);
-  if(!dealers.has(body.tenantId))return reply.code(403).send({error:"dealer_access_denied"});
-  activeDealerId=body.tenantId;
-  const dealer=dealers.get(activeDealerId)!;
-  return {dealer:{id:dealer.id,name:dealer.name},role:"OWNER"};
-});
-app.post("/api/dealers",async(req,reply)=>{
-  if(activeDealerId!==mainDealerId)return reply.code(403).send({error:"main_dealer_owner_required"});
-  const body=z.object({name:z.string().min(2).max(120),ownerEmail:z.string().email(),ownerPassword:z.string().min(14).max(200).optional()}).parse(req.body);
-  if([...dealerUsers.values()].some(u=>u.email.toLowerCase()===body.ownerEmail.toLowerCase()))return reply.code(409).send({error:"email_already_in_use"});
-  const id=randomUUID(),userId=randomUUID();
-  dealers.set(id,{id,name:body.name.trim(),dealer_type:"SUB",parent_id:mainDealerId});
-  dealerUsers.set(userId,{id:userId,tenant_id:id,email:body.ownerEmail.toLowerCase(),role:"OWNER",home_user:true});
-  return reply.code(201).send({dealer:{id,name:body.name.trim()},owner:{id:userId,email:body.ownerEmail.toLowerCase(),role:"OWNER"}});
-});
-app.get("/api/dealer-users",async()=>({users:[...dealerUsers.values()].filter(u=>u.tenant_id===activeDealerId)}));
-app.post("/api/dealer-users",async(req,reply)=>{
+app.get("/api/users",async()=>({users:[...demoUsers.values()].map(u=>({...u,current_user:u.id==="demo-owner"}))}));
+app.post("/api/users",async(req,reply)=>{
   const body=z.object({email:z.string().email(),role:z.enum(["OWNER","APPROVER","BUYER","AUDITOR"]),password:z.string().min(14).max(200).optional()}).parse(req.body);
-  const existing=[...dealerUsers.values()].find(u=>u.tenant_id===activeDealerId&&u.email.toLowerCase()===body.email.toLowerCase());
-  if(existing){existing.role=body.role;return {user:existing}}
+  const existing=[...demoUsers.values()].find(u=>u.email.toLowerCase()===body.email.toLowerCase());
+  if(existing){existing.role=body.role;existing.active=true;return {user:existing}}
   if(!body.password)return reply.code(400).send({error:"password_required_for_new_user"});
-  const id=randomUUID(),user:DemoDealerUser={id,tenant_id:activeDealerId,email:body.email.toLowerCase(),role:body.role,home_user:true};
-  dealerUsers.set(id,user);return reply.code(201).send({user});
+  const id=randomUUID(),user:DemoUser={id,tenant_id:workspaceId,email:body.email.toLowerCase(),role:body.role,active:true};
+  demoUsers.set(id,user);return reply.code(201).send({user});
 });
-app.delete("/api/dealer-users/:userId",async(req,reply)=>{
+app.delete("/api/users/:userId",async(req,reply)=>{
   const id=String((req.params as any).userId);
-  const user=dealerUsers.get(id);
-  if(!user||user.tenant_id!==activeDealerId)return reply.code(404).send({error:"user_not_found"});
   if(id==="demo-owner")return reply.code(409).send({error:"cannot_remove_current_user"});
-  dealerUsers.delete(id);return {ok:true};
+  const user=demoUsers.get(id);
+  if(!user)return reply.code(404).send({error:"user_not_found"});
+  user.active=false;return {ok:true};
 });
 app.get("/api/dashboard",async()=>{const batchGroups=new Map<string,Batch[]>(),taskGroups=new Map<string,Task[]>();for(const b of activeBatches())batchGroups.set(b.status,[...(batchGroups.get(b.status)??[]),b]);for(const t of activeTasks())taskGroups.set(t.status,[...(taskGroups.get(t.status)??[]),t]);return {batches:[...batchGroups].map(([status,list])=>({status,count:list.length,total:list.reduce((n,b)=>n+b.estimated_total_minor,0)})),orders:[...taskGroups].map(([status,list])=>({status,count:list.length}))};});
 app.get("/api/batches",async()=>({batches:activeBatches()}));
@@ -168,7 +119,7 @@ app.post("/api/cards/provider/connect",async(_,reply)=>reply.code(409).send({err
 app.delete("/api/cards/provider",async(_,reply)=>reply.code(409).send({error:"showroom_preview_only"}));
 app.get("/api/runtime",async()=>({api:"OrderGrid API",mode:"showroom-real-browser-test",checkoutEngine:{id:"ordergrid-checkout-engine",status:"API_ONLINE",capacity:8,sessionModel:"isolated-local-browser-profiles"},database:"in-memory-showroom"}));
 app.get("/api/automation",async()=>{
-  const effective=activeAutomationPolicy(),localPolicy=localAutomationPolicy(activeDealerId),dealer=dealers.get(activeDealerId),policy={...effective,inherited_from_tenant_id:dealer?.parent_id||null,effective_source:dealer?.parent_id&&localPolicy.inherit_parent_policy?"INHERITED_GUARDRAILS":"LOCAL"},basketsNow=activeBaskets(),addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id));
+  const effective=activeAutomationPolicy(),localPolicy=localAutomationPolicy(workspaceId),policy={...effective,inherited_from_tenant_id:null,effective_source:"LOCAL"},basketsNow=activeBaskets(),addressesNow=activeAddresses(),addressIds=new Set(addressesNow.map(a=>a.id));
   const accounts=[...accountRefs.entries()].filter(([addressId])=>addressIds.has(addressId)).flatMap(([addressId,refs])=>[...refs.entries()].map(([retailer])=>({addressId,retailer})));
   const ready=basketsNow.filter(b=>["READY","CLAIMED"].includes(b.status)).length;
   const inProgress=basketsNow.filter(b=>b.status==="OPENED").length;
@@ -196,7 +147,7 @@ app.get("/api/automation",async()=>{
       {name:"Retailer-confirmed completion evidence",status:"ENFORCED"},
       {name:"Protected verification is never bypassed",status:"ENFORCED"}
     ],
-    canEdit:true,canRelaxChildren:activeDealerId===mainDealerId
+    canEdit:true,canRelaxChildren:false
   };
 });
 app.get("/api/automation/preflight",async()=>{
@@ -226,15 +177,15 @@ app.put("/api/automation/policy",async(req)=>{
     maxActiveOrders:z.number().int().min(1).max(50),failurePausePercent:z.number().min(0).max(100),
     maxPriceIncreasePercent:z.number().min(0).max(100),maxOrderValueMinor:z.number().int().min(0),
     maxBatchVariancePercent:z.number().min(0).max(100),priceBreachAction:z.enum(["PAUSE_ORDER","PAUSE_BATCH"]),
-    runMode:z.enum(["MANUAL","CONTINUOUS"]),inheritParentPolicy:z.boolean(),allowChildPolicyRelaxation:z.boolean().default(false)
+    runMode:z.enum(["MANUAL","CONTINUOUS"])
   }).parse(req.body);
   const policy:DemoAutomationPolicy={
     automation_enabled:body.automationEnabled,auto_assign_virtual_card:body.autoAssignVirtualCard,auto_continue_checkout:body.autoContinueCheckout,
     max_active_orders:body.maxActiveOrders,failure_pause_percent:body.failurePausePercent,max_price_increase_percent:body.maxPriceIncreasePercent,
     max_order_value_minor:body.maxOrderValueMinor,max_batch_variance_percent:body.maxBatchVariancePercent,price_breach_action:body.priceBreachAction,
-    run_mode:body.runMode,inherit_parent_policy:body.inheritParentPolicy,allow_child_policy_relaxation:body.allowChildPolicyRelaxation,updated_at:new Date().toISOString()
+    run_mode:body.runMode,inherit_parent_policy:false,allow_child_policy_relaxation:false,updated_at:new Date().toISOString()
   };
-  automationPolicies.set(activeDealerId,policy);return {policy,localPolicy:policy};
+  automationPolicies.set(workspaceId,policy);return {policy,localPolicy:policy};
 });
 
 app.get("/api/control-center",async()=>{
@@ -268,10 +219,10 @@ app.get("/api/bulk-baskets",async()=>{for(const b of activeBaskets()){if(["CLAIM
 app.post("/api/bulk-queue/claim",async(req,reply)=>{const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{}),policy=activeAutomationPolicy();if(!policy.automation_enabled)return reply.code(409).send({error:"autopilot_paused"});const effectiveLimit=Math.min(body.limit,policy.max_active_orders);let claimed=0;for(const basket of activeBaskets().filter(b=>b.status==="READY").slice(0,effectiveLimit)){basket.status="CLAIMED";basket.execution_worker_id=undefined;basket.expires_at=Date.now()+20*60_000;basket.auth_status="QUEUED";basket.failure_code=undefined;basket.failure_message="Queued for OrderGrid Checkout Engine";const address=addressesByReference(basket.customer_reference,basket.tenant_id);for(const task of tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id)){task.status="CLAIMED";task.failure_code=undefined;task.failure_message="Queued for OrderGrid Checkout Engine"}claimed++;}return {claimed,queued:activeBaskets().filter(b=>b.status==="CLAIMED").length};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),worker=workers.get(workerId),policy=activeAutomationPolicy();if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});if(!worker||Date.now()-worker.last_seen>=30_000)return reply.code(409).send({error:"execution_worker_not_online"});const effectiveLimit=Math.min(body.limit,policy.max_active_orders);let assigned=0;for(const basket of activeBaskets().filter(b=>b.status==="CLAIMED"&&!b.execution_worker_id&&(!b.expires_at||b.expires_at>Date.now())).slice(0,effectiveLimit)){basket.execution_worker_id=workerId;assigned++;}return {assigned};});
 app.get("/api/bulk-queue",async(req,reply)=>{const workerId=String((req.query as any)?.workerId||"");if(workerId.length<8)return reply.code(400).send({error:"worker_id_required"});for(const b of activeBaskets()){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets:activeBaskets().filter(b=>b.execution_worker_id===workerId&&["CLAIMED","OPENED","REQUIRES_ACTION"].includes(b.status)).map(b=>({...b,customer_id:b.customer_reference,retailer_account_id:b.customer_reference+":"+b.retailer,profile_key:b.customer_reference+":"+b.retailer}))};});
-app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);if(!basket||basket.execution_worker_id!==body.workerId||!["CLAIMED","OPENED","REQUIRES_ACTION"].includes(basket.status))return reply.code(409).send({error:"basket_unavailable_or_expired"});basket.status="OPENED";basket.opened_at=basket.opened_at||Date.now();basket.expires_at=Date.now()+20*60_000;basket.failure_code=undefined;basket.failure_message=undefined;basket.auth_status="SESSION ACTIVE";const address=addressesByReference(basket.customer_reference,basket.tenant_id);if(!address)return reply.code(404).send({error:"recipient_not_found"});const basketTasks=tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.address_id===address.id&&t.retailer===basket.retailer);let credentials:null|{login:string;password:string}=null;const stored=credentialVault.get(address.id+":"+basket.retailer);if(stored){const plain=decryptJson(stored,credentialKey) as {password?:string};if(plain.password)credentials={login:basket.account_reference,password:String(plain.password)}}reply.header("cache-control","no-store");return {basketId:id,customerId:basket.customer_reference,customerReference:basket.customer_reference,retailerAccountId:basket.customer_reference+":"+basket.retailer,profileKey:basket.customer_reference+":"+basket.retailer,accountReference:basket.account_reference,retailer:basket.retailer,authStatus:basket.auth_status,credentials,paymentRoute:basket.payment_route,address:{recipient:address.recipient,line1:address.line1,line2:address.line2||null,city:address.city,state:address.state,postalCode:address.postal_code,country:address.country},items:basketTasks.map(t=>({purchase_order_id:t.id,product_url:t.product_url,title:t.title,requested_quantity:t.requested_quantity,amount_minor:t.amount_minor,executionUrl:verifiedRetailerUrl(t.product_url)}))};});
+app.post("/api/bulk-queue/:id/open",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128)}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);if(!basket||basket.execution_worker_id!==body.workerId||!["CLAIMED","OPENED","REQUIRES_ACTION"].includes(basket.status))return reply.code(409).send({error:"basket_unavailable_or_expired"});basket.status="OPENED";basket.opened_at=basket.opened_at||Date.now();basket.expires_at=Date.now()+20*60_000;basket.failure_code=undefined;basket.failure_message=undefined;basket.auth_status="SESSION ACTIVE";const address=addressesByReference(basket.customer_reference,basket.tenant_id);if(!address)return reply.code(404).send({error:"recipient_not_found"});const basketTasks=tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.address_id===address.id&&t.retailer===basket.retailer);let credentials:null|{login:string;password:string}=null;const stored=credentialVault.get(address.id+":"+basket.retailer);if(stored){const plain=decryptJson(stored,credentialKey) as {password?:string};if(plain.password)credentials={login:basket.account_reference,password:String(plain.password)}}reply.header("cache-control","no-store");return {basketId:id,customerId:basket.customer_reference,customerReference:basket.customer_reference,retailerAccountId:basket.customer_reference+":"+basket.retailer,profileKey:basket.customer_reference+":"+basket.retailer,accountReference:basket.account_reference,retailer:basket.retailer,authStatus:basket.auth_status,credentials,paymentRoute:basket.payment_route,address:{recipient:address.recipient,line1:address.line1,line2:address.line2||null,city:address.city,state:address.state,postalCode:address.postal_code,country:address.country},items:basketTasks.map(t=>({purchase_order_id:t.id,product_url:t.product_url,title:t.title,requested_quantity:t.requested_quantity,amount_minor:t.amount_minor,executionUrl:verifiedRetailerUrl(t.product_url)}))};});
 app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),amountMinor:z.number().int().nonnegative(),currency:z.literal("INR").default("INR")}).parse(req.body);
-  const basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);
+  const basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);
   if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});
   const policy=activeAutomationPolicy(),expectedMinor=basket.amount_minor;
   if(expectedMinor<=0)return reply.code(409).send({error:"expected_price_missing"});
@@ -300,10 +251,10 @@ app.post("/api/bulk-queue/:id/commercial-check",async(req,reply)=>{
   if(basket.failure_code==="PRICE_POLICY_REVIEW_REQUIRED"){basket.failure_code=undefined;basket.failure_message=undefined;}
   return {allowed:true,status:"APPROVED",approvedAmountMinor:body.amountMinor,expectedAmountMinor:expectedMinor,observedAmountMinor:body.amountMinor,orderVariancePercent,batchVariancePercent};
 });
-app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});basket.status=body.state==="RUNNING"?"OPENED":body.state==="CHALLENGE"?"REQUIRES_ACTION":"FAILED";basket.failure_code=body.code;basket.failure_message=body.message;basket.auth_status=body.state==="CHALLENGE"?(body.code?.includes("LOGIN")?"AUTH REQUIRED":"ACTION REQUIRED"):body.state;for(const task of tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference,basket.tenant_id)?.id)){task.status=basket.status;task.failure_code=body.code;task.failure_message=body.message||""}return {id,status:basket.status};});
-app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),retailerOrderId:z.string().min(3).max(80)}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});const orderId=body.retailerOrderId.trim();if(!(/\b\d{3}-\d{7}-\d{7}\b/.test(orderId)||/^OD[0-9A-Z]{8,}$/i.test(orderId)||/^[A-Z0-9][A-Z0-9._\/-]{4,79}$/i.test(orderId)))return reply.code(400).send({error:"invalid_retailer_order_id"});basket.status="CONFIRMED";basket.retailer_order_id=orderId;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;for(const task of tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference,basket.tenant_id)?.id)){task.status="CONFIRMED";task.retailer_order_id=orderId;task.failure_code=undefined;task.failure_message=""}const batch=batches.find(b=>b.id===basket.batch_id&&b.tenant_id===basket.tenant_id);if(batch){const related=baskets.filter(b=>b.tenant_id===basket.tenant_id&&b.batch_id===batch.id);batch.status=related.every(b=>b.status==="CONFIRMED")?"COMPLETE":"PARTIAL"}return {id,status:"CONFIRMED",retailerOrderId:orderId};});
+app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});basket.status=body.state==="RUNNING"?"OPENED":body.state==="CHALLENGE"?"REQUIRES_ACTION":"FAILED";basket.failure_code=body.code;basket.failure_message=body.message;basket.auth_status=body.state==="CHALLENGE"?(body.code?.includes("LOGIN")?"AUTH REQUIRED":"ACTION REQUIRED"):body.state;for(const task of tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference,basket.tenant_id)?.id)){task.status=basket.status;task.failure_code=body.code;task.failure_message=body.message||""}return {id,status:basket.status};});
+app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{const id=String((req.params as any).id),body=z.object({workerId:z.string().min(8).max(128),retailerOrderId:z.string().min(3).max(80)}).parse(req.body),basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);if(!basket||basket.execution_worker_id!==body.workerId)return reply.code(409).send({error:"basket_not_owned_by_worker"});const orderId=body.retailerOrderId.trim();if(!(/\b\d{3}-\d{7}-\d{7}\b/.test(orderId)||/^OD[0-9A-Z]{8,}$/i.test(orderId)||/^[A-Z0-9][A-Z0-9._\/-]{4,79}$/i.test(orderId)))return reply.code(400).send({error:"invalid_retailer_order_id"});basket.status="CONFIRMED";basket.retailer_order_id=orderId;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;for(const task of tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===addressesByReference(basket.customer_reference,basket.tenant_id)?.id)){task.status="CONFIRMED";task.retailer_order_id=orderId;task.failure_code=undefined;task.failure_message=""}const batch=batches.find(b=>b.id===basket.batch_id&&b.tenant_id===basket.tenant_id);if(batch){const related=baskets.filter(b=>b.tenant_id===basket.tenant_id&&b.batch_id===batch.id);batch.status=related.every(b=>b.status==="CONFIRMED")?"COMPLETE":"PARTIAL"}return {id,status:"CONFIRMED",retailerOrderId:orderId};});
 app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
-  const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);
+  const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);
   if(!basket)return reply.code(404).send({error:"basket_not_found"});
   const address=addressesByReference(basket.customer_reference,basket.tenant_id);
   const basketTasks=tasks.filter(t=>t.tenant_id===basket.tenant_id&&t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id);
@@ -321,7 +272,7 @@ app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
   if(String((req.query as any)?.redirect||"")==="1")return reply.redirect(checkoutUrl);
   return {checkoutUrl,basketId:basket.id,retailer:basket.retailer};
 });
-app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id&&b.tenant_id===activeDealerId);if(!basket)return reply.code(404).send({error:"basket_not_found"});basket.status="READY";basket.execution_worker_id=undefined;basket.expires_at=undefined;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;return {id,status:basket.status};});
+app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const id=String((req.params as any).id),basket=baskets.find(b=>b.id===id&&b.tenant_id===workspaceId);if(!basket)return reply.code(404).send({error:"basket_not_found"});basket.status="READY";basket.execution_worker_id=undefined;basket.expires_at=undefined;basket.auth_status="READY";basket.failure_code=undefined;basket.failure_message=undefined;return {id,status:basket.status};});
 
 app.post("/api/address-books/import",async(req,reply)=>{
   const file=await req.file();if(!file)return reply.code(400).send({error:"file_required"});
@@ -339,7 +290,7 @@ app.post("/api/address-books/import",async(req,reply)=>{
   for(const row of rows.slice(1)){
     if(!row.some(Boolean))continue;
     const id=randomUUID();
-    const address:Address={id,tenant_id:activeDealerId,recipient:val(row,"recipient"),phone:val(row,"phone"),line1:val(row,"line1"),line2:val(row,"line2"),city:val(row,"city"),state:val(row,"state"),postal_code:val(row,"postal_code"),country:val(row,"country")||"IN",reference:val(row,"reference")||"CUST-"+String(addresses.size+1).padStart(3,"0"),amazon_account:val(row,"amazon_account")||val(row,"amazon_user_id")||val(row,"amazon_login"),flipkart_account:val(row,"flipkart_account")||val(row,"flipkart_user_id")||val(row,"flipkart_login")};
+    const address:Address={id,tenant_id:workspaceId,recipient:val(row,"recipient"),phone:val(row,"phone"),line1:val(row,"line1"),line2:val(row,"line2"),city:val(row,"city"),state:val(row,"state"),postal_code:val(row,"postal_code"),country:val(row,"country")||"IN",reference:val(row,"reference")||"CUST-"+String(addresses.size+1).padStart(3,"0"),amazon_account:val(row,"amazon_account")||val(row,"amazon_user_id")||val(row,"amazon_login"),flipkart_account:val(row,"flipkart_account")||val(row,"flipkart_user_id")||val(row,"flipkart_login")};
     addresses.set(id,address);ids.push(id);
     const refs=new Map<string,string>();accountRefs.set(id,refs);
     const seen=new Set<string>();
@@ -359,22 +310,22 @@ app.post("/api/address-books/import",async(req,reply)=>{
   }
   return reply.code(201).send({addressBook:{id:randomUUID(),name:file.filename},addressIds:ids,count:ids.length,retailerAccountsBound,credentialsStored});
 });
-app.post("/api/batches",async(req,reply)=>{const input=z.object({name:z.string().min(3),paymentRoute:z.string().default("Corporate virtual card"),items:z.array(z.object({productUrl:z.string().url(),quantity:z.number().int().positive(),addressId:z.string().uuid(),estimatedUnitPriceMinor:z.number().int().positive()})).min(1)}).parse(req.body);for(const i of input.items)if(!addresses.get(i.addressId)||addresses.get(i.addressId)?.tenant_id!==activeDealerId)return reply.code(404).send({error:"recipient_not_found"});const id=randomUUID(),created_at=new Date().toISOString(),total=input.items.reduce((n,i)=>n+i.quantity*i.estimatedUnitPriceMinor,0),recipient_count=new Set(input.items.map(i=>i.addressId)).size;const batch:Batch={id,tenant_id:activeDealerId,name:input.name,status:"AWAITING_APPROVAL",currency:"INR",estimated_total_minor:total,created_at,item_count:input.items.length,recipient_count,payment_route:input.paymentRoute};batches.unshift(batch);for(const i of input.items){const retailer=retailerForProductUrl(i.productUrl).id;items.push({id:randomUUID(),tenant_id:activeDealerId,batchId:id,product_url:i.productUrl,retailer,requested_quantity:i.quantity,addressId:i.addressId,unit_price_minor:i.estimatedUnitPriceMinor});}return reply.code(201).send({id,status:batch.status});});
+app.post("/api/batches",async(req,reply)=>{const input=z.object({name:z.string().min(3),paymentRoute:z.string().default("Corporate virtual card"),items:z.array(z.object({productUrl:z.string().url(),quantity:z.number().int().positive(),addressId:z.string().uuid(),estimatedUnitPriceMinor:z.number().int().positive()})).min(1)}).parse(req.body);for(const i of input.items)if(!addresses.get(i.addressId)||addresses.get(i.addressId)?.tenant_id!==workspaceId)return reply.code(404).send({error:"recipient_not_found"});const id=randomUUID(),created_at=new Date().toISOString(),total=input.items.reduce((n,i)=>n+i.quantity*i.estimatedUnitPriceMinor,0),recipient_count=new Set(input.items.map(i=>i.addressId)).size;const batch:Batch={id,tenant_id:workspaceId,name:input.name,status:"AWAITING_APPROVAL",currency:"INR",estimated_total_minor:total,created_at,item_count:input.items.length,recipient_count,payment_route:input.paymentRoute};batches.unshift(batch);for(const i of input.items){const retailer=retailerForProductUrl(i.productUrl).id;items.push({id:randomUUID(),tenant_id:workspaceId,batchId:id,product_url:i.productUrl,retailer,requested_quantity:i.quantity,addressId:i.addressId,unit_price_minor:i.estimatedUnitPriceMinor});}return reply.code(201).send({id,status:batch.status});});
 app.post("/api/batches/:id/approve",async(req,reply)=>{
-  const id=z.string().uuid().parse((req.params as any).id),batch=batches.find(b=>b.id===id&&b.tenant_id===activeDealerId);
+  const id=z.string().uuid().parse((req.params as any).id),batch=batches.find(b=>b.id===id&&b.tenant_id===workspaceId);
   if(!batch||batch.status!=="AWAITING_APPROVAL")return reply.code(409).send({error:"batch_not_approvable"});
   batch.status="APPROVED";
   const basketGroups=new Map<string,{address:Address;retailer:string;account:string;tasks:Task[]}>();
-  for(const item of items.filter(i=>i.batchId===id&&i.tenant_id===activeDealerId)){
+  for(const item of items.filter(i=>i.batchId===id&&i.tenant_id===workspaceId)){
     const a=addresses.get(item.addressId)!;
     const account=accountRefs.get(a.id)?.get(item.retailer)||a.reference||a.id;
-    const task:Task={id:randomUUID(),tenant_id:activeDealerId,batch_id:id,address_id:a.id,status:"REQUIRES_ACTION",amount_minor:item.unit_price_minor*item.requested_quantity,failure_message:"Ready for OrderGrid Checkout Engine",product_url:item.product_url,title:new URL(item.product_url).hostname+" product",requested_quantity:item.requested_quantity,recipient:a.recipient,city:a.city,postal_code:a.postal_code,retailer:item.retailer,account_reference:account};
+    const task:Task={id:randomUUID(),tenant_id:workspaceId,batch_id:id,address_id:a.id,status:"REQUIRES_ACTION",amount_minor:item.unit_price_minor*item.requested_quantity,failure_message:"Ready for OrderGrid Checkout Engine",product_url:item.product_url,title:new URL(item.product_url).hostname+" product",requested_quantity:item.requested_quantity,recipient:a.recipient,city:a.city,postal_code:a.postal_code,retailer:item.retailer,account_reference:account};
     tasks.unshift(task);
     const key=a.id+":"+item.retailer,group=basketGroups.get(key)||{address:a,retailer:item.retailer,account,tasks:[]};
     group.tasks.push(task);basketGroups.set(key,group);
   }
   for(const group of basketGroups.values()){
-    baskets.unshift({id:randomUUID(),tenant_id:activeDealerId,batch_id:id,status:"READY",retailer:group.retailer,account_reference:group.account,customer_reference:group.address.reference||group.address.id,recipient:group.address.recipient,city:group.address.city,postal_code:group.address.postal_code,payment_route:batch.payment_route,batch_name:batch.name,item_count:group.tasks.length,amount_minor:group.tasks.reduce((n,t)=>n+t.amount_minor,0),auth_status:"READY"});
+    baskets.unshift({id:randomUUID(),tenant_id:workspaceId,batch_id:id,status:"READY",retailer:group.retailer,account_reference:group.account,customer_reference:group.address.reference||group.address.id,recipient:group.address.recipient,city:group.address.city,postal_code:group.address.postal_code,payment_route:batch.payment_route,batch_name:batch.name,item_count:group.tasks.length,amount_minor:group.tasks.reduce((n,t)=>n+t.amount_minor,0),auth_status:"READY"});
   }
   const automationPolicy=activeAutomationPolicy();if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){let n=0;for(const basket of activeBaskets().filter(b=>b.batch_id===id&&b.status==="READY").slice(0,automationPolicy.max_active_orders)){basket.status="CLAIMED";basket.expires_at=Date.now()+20*60_000;n++;}}
   return {ok:true,baskets:basketGroups.size};

@@ -6,3 +6,17 @@
 .issuer-connect-shell .issuer-connect-form{width:100%;margin:0;padding:26px;max-width:none;box-shadow:none;border-radius:20px}
 body.issuer-connect-open{overflow:hidden}
 @media(max-width:700px){.issuer-connect-overlay{padding:10px}.issuer-connect-shell{max-height:96vh;border-radius:14px}.issuer-connect-shell .issuer-connect-form{padding:18px}}
+
+.gst-product-grid label{display:grid;align-content:end;gap:5px;margin:0}
+.gst-product-grid label small{min-height:30px;font-size:10px;line-height:1.35;color:#64748b}
+.issuer-connect-overlay.issuer-connect-inline{position:relative;z-index:1;inset:auto;display:block;margin:0 0 20px;padding:0;background:transparent;backdrop-filter:none;overflow:visible}
+.issuer-connect-overlay.issuer-connect-inline[hidden]{display:none!important}
+.issuer-connect-inline .issuer-connect-shell{width:100%;max-height:none;overflow:visible;border:1px solid #dbe6ee;border-radius:18px;background:linear-gradient(180deg,#fff,#f8fbfd);box-shadow:0 14px 40px rgba(15,23,42,.07)}
+.issuer-connect-inline .issuer-connect-form{padding:24px}
+.funding-card-identity{margin:18px 0;padding:18px;border:1px solid #d7e4ec;border-radius:14px;background:#f8fbff}
+.funding-card-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}
+.funding-card-title small{font-size:9px;font-weight:900;letter-spacing:.11em;color:#64748b}
+.funding-card-title h3{margin:3px 0 0;color:#0f172a}
+.funding-card-title>span{padding:6px 9px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:9px;font-weight:900;letter-spacing:.08em}
+.pci-safe-note{margin:8px 0 0!important;padding:10px 12px;border-radius:10px;background:#fff7ed;color:#7c2d12!important;font-size:11px;line-height:1.5}
+@media(max-width:700px){.issuer-connect-inline .issuer-connect-form{padding:18px}.funding-card-identity{padding:14px}}

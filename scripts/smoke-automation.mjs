@@ -46,8 +46,6 @@ function policy(overrides={}){
     maxBatchVariancePercent:5,
     priceBreachAction:"PAUSE_ORDER",
     runMode:"MANUAL",
-    inheritParentPolicy:true,
-    allowChildPolicyRelaxation:false,
     ...overrides
   };
 }
