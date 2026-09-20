@@ -842,6 +842,144 @@ app.patch("/api/retailer-accounts/:id",async(req,reply)=>{
   return rows[0];
 });
 
+app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    retailer:z.enum(["amazon-in","flipkart"]).optional(),
+    accountIds:z.array(z.string().uuid()).max(1000).optional(),
+    targetDays:z.number().int().min(1).max(90).default(20)
+  }).parse(req.body??{});
+  const params:any[]=[p.tenantId,body.targetDays];
+  const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')","credential_status<>'MISSING'"];
+  if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
+  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status='VERIFYING',session_target_days=$2,session_check_requested_at=now(),
+       session_check_claimed_at=null,session_worker_id=null,updated_at=now()
+     where ${clauses.join(" and ")}
+     returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
+    params
+  );
+  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
+  return {count:rows.length,accounts:rows};
+});
+
+app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const account=await db.query(
+    `select ra.id,ra.retailer,ra.profile_key,ra.session_worker_id,ew.last_seen
+     from retailer_accounts ra
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     where ra.id=$1 and ra.tenant_id=$2 limit 1`,
+    [id,p.tenantId]
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(404).send({error:"retailer_account_not_found"});
+  if(!row.session_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"session_worker_offline"});
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,null,'FOCUS_SESSION',$3,$4) returning id,status`,
+    [p.tenantId,row.session_worker_id,{retailer:row.retailer,retailerAccountId:id,profileKey:row.profile_key},p.id]
+  );
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
+app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const live=await client.query(
+      "select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
+      [p.tenantId,workerId,p.id]
+    );
+    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    await client.query(
+      `update retailer_accounts set session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING'
+       where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '15 minutes'`,
+      [p.tenantId]
+    );
+    const picked=await client.query(
+      `select id,retailer,account_reference,profile_key
+       from retailer_accounts
+       where tenant_id=$1 and active and retailer in ('amazon-in','flipkart')
+         and credential_status<>'MISSING' and session_check_requested_at is not null
+         and session_check_claimed_at is null
+       order by session_check_requested_at,id
+       for update skip locked
+       limit $2`,
+      [p.tenantId,body.limit]
+    );
+    const ids=picked.rows.map(r=>r.id);
+    if(ids.length)await client.query(
+      `update retailer_accounts set session_check_claimed_at=now(),session_worker_id=$1,session_status='VERIFYING',updated_at=now()
+       where tenant_id=$2 and id=any($3::uuid[])`,
+      [workerId,p.tenantId,ids]
+    );
+    await client.query("commit");
+    const accounts:any[]=[];
+    for(const row of picked.rows){
+      let credentials:null|{login:string;password:string}=null;
+      const stored=await db.query(
+        "select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1",
+        [p.tenantId,row.id]
+      );
+      if(stored.rows[0]){
+        const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+        if(decrypted.password)credentials={login:String(row.account_reference),password:String(decrypted.password)};
+      }
+      accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials});
+    }
+    return {accounts};
+  }catch(error){await client.query("rollback");throw error}finally{client.release()}
+});
+
+app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",async(req,reply)=>{
+  const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
+  const retailerAccountId=z.string().uuid().parse((req.params as any).retailerAccountId);
+  const body=z.object({
+    status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
+    code:z.string().max(100).optional(),
+    message:z.string().max(500).optional()
+  }).parse(req.body);
+  const account=await db.query(
+    "select id,created_by,retailer,account_reference,session_target_days from retailer_accounts where id=$1 and tenant_id=$2 and session_worker_id=$3 limit 1",
+    [retailerAccountId,p.tenantId,workerId]
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(409).send({error:"session_check_not_owned_by_worker"});
+  const ready=body.status==="READY";
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status=$1,session_checked_at=now(),
+       session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
+       session_check_requested_at=null,session_check_claimed_at=null,
+       auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
+       credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
+                              when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
+       last_authenticated_at=case when $1='READY' then now() else last_authenticated_at end,
+       updated_at=now()
+     where id=$2 and tenant_id=$3
+     returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id`,
+    [body.status,retailerAccountId,p.tenantId]
+  );
+  await createNotification({
+    tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
+    title:ready?"Retailer account ready":"Retailer verification required",
+    message:ready
+      ?`${row.retailer} account ${row.account_reference} is session-ready. The 20-day window is a target and may be shortened by retailer security checks.`
+      :(body.message??`${row.retailer} account ${row.account_reference} needs verification before automated checkout.`),
+    idempotencyKey:`session:${retailerAccountId}:${body.status}:${new Date().toISOString().slice(0,13)}`,
+    payload:{retailerAccountId,retailer:row.retailer,code:body.code??null}
+  });
+  return rows[0];
+});
+
 app.put("/api/customers/:customerId/retailer-accounts/:retailer",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
@@ -997,6 +1135,42 @@ app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 
 
+app.get("/api/notifications",async(req)=>{
+  const p=req.principal!;
+  const query=z.object({
+    unread:z.enum(["true","false"]).optional(),
+    limit:z.coerce.number().int().min(1).max(200).default(50)
+  }).parse(req.query??{});
+  const {rows}=await db.query(
+    `select id,type,title,message,checkout_basket_id,payload,read_at,created_at
+     from notifications
+     where tenant_id=$1 and (user_id is null or user_id=$2)
+       and ($3::boolean=false or read_at is null)
+     order by created_at desc limit $4`,
+    [p.tenantId,p.id,query.unread==="true",query.limit]
+  );
+  return {notifications:rows,unread:rows.filter(r=>!r.read_at).length};
+});
+
+app.patch("/api/notifications/:id/read",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(
+    "update notifications set read_at=coalesce(read_at,now()) where id=$1 and tenant_id=$2 and (user_id is null or user_id=$3) returning id,read_at",
+    [id,p.tenantId,p.id]
+  );
+  if(!rows[0])return reply.code(404).send({error:"notification_not_found"});
+  return rows[0];
+});
+
+app.post("/api/notifications/read-all",async(req)=>{
+  const p=req.principal!;
+  const result=await db.query(
+    "update notifications set read_at=now() where tenant_id=$1 and (user_id is null or user_id=$2) and read_at is null",
+    [p.tenantId,p.id]
+  );
+  return {updated:result.rowCount??0};
+});
+
 app.get("/api/human-actions",async(req)=>{
   const p=req.principal!;
   const {rows}=await db.query(`
@@ -1097,8 +1271,10 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
     `,[p.tenantId,ids]);
     await client.query("commit");
     return {commands:commands.rows.map(r=>({
-      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,retailer:r.retailer,
-      retailerAccountId:r.retailer_account_id,profileKey:r.profile_key,payload:r.payload
+      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
+      retailer:r.retailer??r.payload?.retailer,
+      retailerAccountId:r.retailer_account_id??r.payload?.retailerAccountId,
+      profileKey:r.profile_key??r.payload?.profileKey,payload:r.payload
     }))};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
 });
