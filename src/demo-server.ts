@@ -96,7 +96,7 @@ function importedRetailer(value:string){
 }
 const app=Fastify({logger:true,trustProxy:true});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
-await app.register(rateLimit,{max:120,timeWindow:"1 minute"});
+await app.register(rateLimit,{max:600,timeWindow:"1 minute"});
 await app.register(cookie,{secret});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
