@@ -846,13 +846,16 @@ app.get("/api/retailer-finance",async(req)=>{
   }).parse(req.query??{});
   const {rows}=await db.query(`
     select ra.id retailer_account_id,ra.account_reference,ra.label,ra.active,ra.auth_status,
+      ra.reward_balance_observed,ra.reward_balance_observed_at,ra.reward_tier,
       coalesce(sum(case when re.event_type='PENDING' then re.units else 0 end),0)::int pending_rewards,
-      coalesce(sum(case
+      coalesce(ra.reward_balance_observed,sum(case
         when re.event_type in ('CREDITED','ADJUSTED') then re.units
         when re.event_type in ('REDEEMED','REVERSED') then -re.units
         else 0 end),0)::int available_rewards,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status='SETTLED'),0)::bigint settled_refund_minor,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf where rf.retailer_account_id=ra.id and rf.status in ('REQUESTED','INITIATED','PROCESSING')),0)::bigint pending_refund_minor,
+      coalesce((select count(*) from retailer_order_observations roo where roo.retailer_account_id=ra.id and roo.refund_status is not null),0)::int observed_refund_orders,
+      coalesce((select max(roo.observed_at) from retailer_order_observations roo where roo.retailer_account_id=ra.id),ra.reward_balance_observed_at)::timestamptz last_reconciled_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id),0)::int order_count
     from retailer_accounts ra
     left join retailer_reward_events re on re.retailer_account_id=ra.id
@@ -864,13 +867,15 @@ app.get("/api/retailer-finance",async(req)=>{
   const totals=await db.query(`
     select
       count(*)::int account_count,
-      coalesce((select sum(case
-        when re.event_type in ('CREDITED','ADJUSTED') then re.units
-        when re.event_type in ('REDEEMED','REVERSED') then -re.units
-        else 0 end)
-        from retailer_reward_events re
-        join retailer_accounts ra2 on ra2.id=re.retailer_account_id
-        where re.tenant_id=$1 and ra2.retailer=$2),0)::int available_rewards,
+      coalesce((select sum(coalesce(ra2.reward_balance_observed,(
+          select sum(case
+            when re.event_type in ('CREDITED','ADJUSTED') then re.units
+            when re.event_type in ('REDEEMED','REVERSED') then -re.units
+            else 0 end)
+          from retailer_reward_events re where re.retailer_account_id=ra2.id
+        ),0))
+        from retailer_accounts ra2
+        where ra2.tenant_id=$1 and ra2.retailer=$2),0)::int available_rewards,
       coalesce((select sum(rf.amount_minor) from retailer_refunds rf
         join retailer_accounts ra3 on ra3.id=rf.retailer_account_id
         where rf.tenant_id=$1 and ra3.retailer=$2 and rf.status='SETTLED'),0)::bigint settled_refund_minor,
