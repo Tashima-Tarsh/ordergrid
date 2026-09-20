@@ -24,6 +24,7 @@ export interface VirtualCardIssuer {
   configured():boolean;
   testConnection():Promise<void>;
   createCard(input:{cardholder:CardholderInput;label?:string}):Promise<IssuedCard>;
+  configureCard(input:{providerCardId:string;providerAccountId:string;onlineAllowed:boolean;posAllowed:boolean}):Promise<void>;
   loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}):Promise<void>;
 }
 
@@ -32,6 +33,7 @@ export class DisabledVirtualCardIssuer implements VirtualCardIssuer {
   configured(){return false}
   async testConnection(){throw new Error("card_issuer_not_connected")}
   async createCard():Promise<IssuedCard>{throw new Error("card_issuer_not_connected")}
+  async configureCard():Promise<void>{throw new Error("card_issuer_not_connected")}
   async loadCard():Promise<void>{throw new Error("card_issuer_not_connected")}
 }
 
@@ -105,6 +107,15 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
     const rawMasked=payload.maskedNumber??payload.maskedCardNumber;
     const maskedNumber=rawMasked?String(rawMasked):undefined;
     return{provider:"enkash",providerCardId:String(providerCardId),providerAccountId:String(providerAccountId),maskedNumber,status:String(payload.cardStatus?.label??payload.cardStatus?.name??"ACTIVE"),balanceMinor:Math.round(Number(payload.otbBalance??0)*100)};
+  }
+  async configureCard(input:{providerCardId:string;providerAccountId:string;onlineAllowed:boolean;posAllowed:boolean}){
+    await this.request("/api/v0/partner/enKashCard/velocity/rule",{
+      companyId:this.config.ENKASH_COMPANY_ID,
+      cardAccountId:input.providerAccountId,
+      enKashCardIds:input.providerCardId,
+      onlineAllowed:input.onlineAllowed,
+      posAllowed:input.posAllowed
+    });
   }
   async loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}){
     await this.request("/api/v0/partner/enKashCard/balance",{
