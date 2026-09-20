@@ -319,3 +319,150 @@ body.product-shell main>.view-section:not(.view-active){display:none!important}
   .overview-progress-grid{grid-template-columns:1fr 1fr}
   .preflight-grid{grid-template-columns:1fr 1fr!important}
 }
+
+
+/* Screenshot-driven density corrections v2 */
+body.product-shell .metrics.view-section{display:none!important}
+
+.overview-commandbar{min-height:108px}
+.overview-command-identity{flex:1 1 auto}
+.overview-command-actions{
+  flex:0 0 auto;
+  flex-wrap:nowrap!important;
+  white-space:nowrap;
+}
+.overview-command-actions button,
+.overview-command-actions .overview-status{white-space:nowrap;flex:none}
+#syncNow.premium-icon-button{
+  overflow:hidden;
+  line-height:1;
+  font-size:17px!important;
+  text-indent:0;
+}
+#syncNow.is-refreshing{animation:ogRefreshSpin .75s linear infinite}
+@keyframes ogRefreshSpin{to{transform:rotate(360deg)}}
+
+/* Autopilot uses two independent vertical stacks; no shared grid-row whitespace. */
+.automation-layout{
+  display:grid!important;
+  grid-template-columns:minmax(420px,.86fr) minmax(0,1.14fr)!important;
+  grid-template-areas:none!important;
+  gap:10px!important;
+  align-items:start!important;
+}
+.automation-column{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:10px;
+  align-content:start;
+  min-width:0;
+}
+.automation-live,
+.automation-policy,
+.automation-guardrails,
+.automation-health{grid-area:auto!important;min-width:0}
+
+/* Eight workflow states fit in four compact rows instead of one tall vertical ladder. */
+.automation-live .automation-workflow-list{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px!important;
+}
+.automation-live .automation-workflow{
+  min-width:0;
+  grid-template-columns:26px minmax(0,1fr) auto!important;
+  min-height:52px!important;
+}
+.automation-live .automation-flow-copy{min-width:0}
+.automation-live .automation-flow-copy strong,
+.automation-live .automation-flow-copy small{
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.automation-live .automation-flow-copy small{
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+
+/* Force policy content into explicit full-width vertical flow.
+   This prevents legacy grid/cascade rules from placing heading, banner and fields side-by-side. */
+.automation-policy{
+  display:block!important;
+  width:100%;
+  box-sizing:border-box;
+}
+.automation-policy>.automation-card-head{display:flex!important;width:100%;box-sizing:border-box}
+.automation-policy>.effective-policy-banner{
+  display:flex!important;
+  width:100%!important;
+  box-sizing:border-box;
+  flex-wrap:wrap!important;
+  align-items:center;
+  margin:0 0 8px!important;
+}
+.automation-policy #automationPolicyForm{
+  display:flex!important;
+  flex-direction:column!important;
+  width:100%!important;
+  min-width:0;
+  gap:8px!important;
+  grid-template-columns:none!important;
+}
+.automation-policy .policy-grid{
+  display:grid!important;
+  width:100%;
+  min-width:0;
+  box-sizing:border-box;
+}
+.automation-policy .policy-grid-primary{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+}
+.automation-policy .commercial-policy-block{
+  width:100%;
+  box-sizing:border-box;
+}
+.automation-policy .commercial-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+}
+.automation-policy .policy-grid label{
+  display:flex!important;
+  flex-direction:column;
+  justify-content:flex-start;
+  min-width:0;
+}
+.automation-policy .policy-grid label>span{min-height:24px!important}
+.automation-policy .policy-grid small{min-height:28px!important}
+.automation-policy .policy-toggle-grid{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  width:100%;
+}
+.automation-policy .policy-save-row{width:100%;box-sizing:border-box}
+
+/* Guardrails should consume the remaining left-column space efficiently. */
+.automation-guardrails .automation-rule-list{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  column-gap:12px;
+}
+.automation-guardrails .automation-rule-list>div{min-width:0}
+
+/* At laptop widths, policy remains compact without cramped four-column controls. */
+@media(max-width:1320px){
+  .automation-layout{grid-template-columns:minmax(380px,.82fr) minmax(0,1.18fr)!important}
+  .automation-policy .commercial-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:1060px){
+  .automation-layout{grid-template-columns:1fr!important}
+  .automation-live .automation-workflow-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:720px){
+  .overview-commandbar{min-height:0}
+  .overview-command-actions{flex-wrap:wrap!important}
+  .automation-live .automation-workflow-list,
+  .automation-guardrails .automation-rule-list{grid-template-columns:1fr}
+  .automation-policy .policy-grid-primary,
+  .automation-policy .commercial-grid,
+  .automation-policy .policy-toggle-grid{grid-template-columns:1fr!important}
+}
