@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/funding.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -10,6 +10,8 @@ function must(condition,message){
 function count(text,needle){return text.split(needle).length-1}
 
 const html=files["public/index.html"];
+const app=files["public/app.js"];
+const wizard=files["public/wizard.js"];
 const funding=files["public/funding.js"];
 const userDashboard=files["public/user-dashboard.js"];
 const dashboard=files["public/dashboard.js"];
@@ -21,6 +23,8 @@ const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
 const demo=files["src/demo-server.ts"];
+const agent=files["agent/index.mjs"];
+const cdp=files["agent/cdp.mjs"];
 
 for(const id of [
   "connectIssuer","disconnectIssuer","issuerDialog","issuerForm","issuerProvider","issuerBankName",
@@ -62,5 +66,17 @@ must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redir
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");
 must(sw.includes("'./fulfilment.js'"),"asset contract: fulfilment.js must be cached because navigation loads it");
+must(wizard.includes("Check product"),"flipkart mobile contract: Check product control missing");
+must(wizard.includes("/api/products/flipkart/mobile/check"),"flipkart mobile contract: product check API missing from wizard");
+must(wizard.includes("maxQuantityVerified"),"flipkart mobile contract: verified account quantity ceiling missing");
+must(app.includes("productCheckId"),"flipkart mobile contract: fulfilment payload must include productCheckId");
+must(server.includes('app.post("/api/products/flipkart/mobile/check"'),"flipkart mobile contract: check start route missing");
+must(server.includes('app.get("/api/products/flipkart/mobile/check/:commandId"'),"flipkart mobile contract: check status route missing");
+must(server.includes("flipkart_product_check_stale"),"flipkart mobile contract: stale price protection missing");
+must(server.includes("flipkart_quantity_exceeds_verified_limit"),"flipkart mobile contract: quantity ceiling enforcement missing");
+must(agent.includes('command.command==="PRODUCT_CHECK"'),"flipkart mobile contract: native worker command missing");
+must(cdp.includes("inspectFlipkartMobile"),"flipkart mobile contract: browser product inspector missing");
+must(cdp.includes("flipkartCartProbeScript"),"flipkart mobile contract: account quantity probe missing");
+must(!wizard.includes('max="2"'),"flipkart mobile contract: quantity limit must not be hard-coded to two");
 
 console.log("Frontend/card connector contract OK");
