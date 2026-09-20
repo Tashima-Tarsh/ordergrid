@@ -80,7 +80,18 @@ app.get("/api/control-center",async()=>{
 });
 app.post("/api/execution-worker/heartbeat",async(req)=>{const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.literal("BULK").default("BULK")}).parse(req.body??{});workers.set(body.workerId,{id:body.workerId,hostname:body.hostname||"OrderGrid Windows Worker",mode:"BULK",last_seen:Date.now()});return {ok:true};});
 app.get("/api/execution-workers",async()=>({workers:[...workers.values()].filter(w=>Date.now()-w.last_seen<30_000).map(w=>({id:w.id,hostname:w.hostname,mode:w.mode,last_seen:new Date(w.last_seen).toISOString(),capacity:8,kind:"LOCAL_BROWSER"}))}));
-app.get("/api/recipients",async()=>({recipients:[...addresses.values()].map(a=>({id:a.id,customer_reference:a.reference||a.id,recipient:a.recipient,phone:a.phone,city:a.city,state:a.state,postal_code:a.postal_code,retailer_accounts:Object.fromEntries([...(accountRefs.get(a.id)||new Map()).entries())}))}));
+app.get("/api/recipients",async()=>({
+  recipients:[...addresses.values()].map(a=>({
+    id:a.id,
+    customer_reference:a.reference||a.id,
+    recipient:a.recipient,
+    phone:a.phone,
+    city:a.city,
+    state:a.state,
+    postal_code:a.postal_code,
+    retailer_accounts:Object.fromEntries([...(accountRefs.get(a.id)||new Map<string,string>()).entries()])
+  }))
+}));
 app.get("/api/bulk-baskets",async()=>{for(const b of baskets){if(["CLAIMED","OPENED"].includes(b.status)&&b.expires_at&&b.expires_at<Date.now()){b.status="READY";b.execution_worker_id=undefined;b.expires_at=undefined}}return {baskets};});
 app.post("/api/bulk-queue/claim",async(req)=>{const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});let claimed=0;for(const basket of baskets.filter(b=>b.status==="READY").slice(0,body.limit)){basket.status="CLAIMED";basket.execution_worker_id=undefined;basket.expires_at=Date.now()+20*60_000;basket.auth_status="QUEUED";basket.failure_code=undefined;basket.failure_message="Queued for OrderGrid Checkout Engine";const address=addressesByReference(basket.customer_reference);for(const task of tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id)){task.status="CLAIMED";task.failure_code=undefined;task.failure_message="Queued for OrderGrid Checkout Engine"}claimed++;}return {claimed,queued:baskets.filter(b=>b.status==="CLAIMED").length};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),worker=workers.get(workerId);if(!worker||Date.now()-worker.last_seen>=30_000)return reply.code(409).send({error:"execution_worker_not_online"});let assigned=0;for(const basket of baskets.filter(b=>b.status==="CLAIMED"&&!b.execution_worker_id&&(!b.expires_at||b.expires_at>Date.now())).slice(0,body.limit)){basket.execution_worker_id=workerId;assigned++;}return {assigned};});
