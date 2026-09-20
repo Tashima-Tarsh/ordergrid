@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/funding.js","public/user-dashboard.js","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","package.json"
+  "public/index.html","public/funding.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -11,7 +11,12 @@ function count(text,needle){return text.split(needle).length-1}
 
 const html=files["public/index.html"];
 const funding=files["public/funding.js"];
-const dashboard=files["public/user-dashboard.js"];
+const userDashboard=files["public/user-dashboard.js"];
+const dashboard=files["public/dashboard.js"];
+const dashboardCss=files["public/dashboard.css"];
+const overviewCss=files["public/overview-premium.css"];
+const automation=files["public/automation-center.js"];
+const automationCss=files["public/automation-center.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
@@ -41,11 +46,20 @@ must(server.includes('app.get("/api/cards/banks"'),"backend contract: bank catal
 must(server.includes('app.get("/api/issuers"'),"backend contract: issuers route missing");
 must(server.includes('app.post("/api/cards/provider/connect"'),"backend contract: issuer connect route missing");
 must(server.includes('app.post("/api/cards"'),"backend contract: card creation route missing");
-must(dashboard.includes("document.querySelector('.command-dashboard')"),"dashboard contract: user dashboard must mount in the current dashboard");
-must(!dashboard.includes(".command-dashboard .overview-shell"),"dashboard contract: stale overview-shell dependency returned");
+must(userDashboard.includes("document.querySelector('.command-dashboard')"),"dashboard contract: user dashboard must mount in the current dashboard");
+must(!userDashboard.includes(".command-dashboard .overview-shell"),"dashboard contract: stale user-dashboard overview-shell dependency returned");
+must(html.includes('href="overview-premium.css"'),"dashboard contract: premium overview stylesheet must be linked in head");
+must(sw.includes("'./overview-premium.css'"),"dashboard contract: premium overview stylesheet must be precached");
+must(overviewCss.includes(".overview-shell"),"dashboard contract: premium overview styles missing");
+must(dashboard.includes("WORKSPACE USERS"),"dashboard contract: workspace user scope missing");
+must(!dashboard.includes("/api/dealer-network"),"dashboard contract: stale dealer API returned");
+must(!/DEALER NETWORK|Main Dealer|Sub-dealer|Current dealer/i.test(dashboard),"dashboard contract: dealer hierarchy wording returned");
+must(automation.includes("automation-control-center"),"autopilot contract: premium automation center missing");
+must(automationCss.includes(".automation-layout"),"autopilot contract: premium layout styles missing");
+must(automationCss.includes(".automation-policy"),"autopilot contract: policy console styles missing");
 must(navigation.includes("let view='hidden'"),"navigation contract: unknown sections must not leak into Dashboard");
 must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redirect support missing");
-must(!sw.includes("overview-premium.css"),"stale cache contract: unused overview-premium.css must not be precached");
+must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");
 must(sw.includes("'./fulfilment.js'"),"asset contract: fulfilment.js must be cached because navigation loads it");
 

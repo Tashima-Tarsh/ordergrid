@@ -1,6 +1,6 @@
-const CACHE='ordergrid-product-v26';
+const CACHE='ordergrid-product-v27';
 const ASSETS=[
-  './','./index.html','./styles.css','./finance.css','./premium.css','./dashboard.css',
+  './','./index.html','./styles.css','./finance.css','./premium.css','./overview-premium.css','./dashboard.css',
   './customer.css','./control-center.css','./automation-center.css','./fulfilment.css',
   './app.js','./dashboard.js','./funding.js','./rewards.js','./bulk.js','./notifications.js',
   './control-center.js','./automation-center.js','./navigation.js','./fulfilment.js',

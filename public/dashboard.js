@@ -1,5 +1,4 @@
 (()=>{
-const style=document.createElement('link');style.rel='stylesheet';style.href='overview-premium.css';document.head.appendChild(style);
 const command=document.querySelector('.command-dashboard');
 if(!command)return;
 command.classList.add('premium-overview');
@@ -16,7 +15,7 @@ command.innerHTML=`
       <div class="overview-primary">
         <div class="overview-primary-copy">
           <h3>Procurement command,<br>without the noise.</h3>
-          <p id="brainAnswer">Loading live order, dealer and automation status…</p>
+          <p id="brainAnswer">Loading live orders, users and automation status…</p>
         </div>
         <div class="overview-exposure">
           <span>APPROVED EXPOSURE</span>
@@ -72,13 +71,13 @@ command.innerHTML=`
     <div class="overview-network">
       <section class="overview-network-panel">
         <div class="overview-section-head">
-          <div><p class="eyebrow">DEALER NETWORK</p><h3>Current operating scope</h3></div>
-          <button class="secondary" id="ovOpenControl">Open Control Center</button>
+          <div><p class="eyebrow">WORKSPACE USERS</p><h3>Current operating scope</h3></div>
+          <button class="secondary" id="ovOpenControl">Open users & permissions</button>
         </div>
-        <h4 class="overview-dealer-name" id="ovDealerName">Current dealer</h4>
-        <p class="overview-dealer-meta" id="ovDealerMeta">Loading dealer hierarchy…</p>
+        <h4 class="overview-dealer-name" id="ovWorkspaceName">OrderGrid workspace</h4>
+        <p class="overview-dealer-meta" id="ovWorkspaceMeta">Loading users and account readiness…</p>
         <div class="overview-network-stats">
-          <div class="overview-network-stat"><span>DEALERS</span><strong id="ovDealerCount">0</strong></div>
+          <div class="overview-network-stat"><span>USERS</span><strong id="ovUserCount">0</strong></div>
           <div class="overview-network-stat"><span>CUSTOMERS</span><strong id="ovCustomerCount">0</strong></div>
           <div class="overview-network-stat"><span>RETAILER ACCOUNTS</span><strong id="ovRetailerCount">0</strong></div>
         </div>
@@ -116,18 +115,18 @@ async function load(){
   const button=$('#syncNow');
   if(button){button.disabled=true;button.textContent='Refreshing…'}
   try{
-    const paths=['/api/control-center','/api/automation','/api/automation/preflight','/api/dealer-network','/api/batches','/api/checkout-tasks'];
+    const paths=['/api/control-center','/api/automation','/api/automation/preflight','/api/users','/api/batches','/api/checkout-tasks'];
     const settled=await Promise.allSettled(paths.map(request));
     const value=i=>settled[i].status==='fulfilled'?settled[i].value:{};
-    const control=value(0),automation=value(1),preflight=value(2),network=value(3),batchData=value(4),taskData=value(5);
+    const control=value(0),automation=value(1),preflight=value(2),userData=value(3),batchData=value(4),taskData=value(5);
     const policy=automation.policy||preflight.policy||{};
     const orders=control.orders||{};
     const accounts=control.accounts||{};
     const cards=control.cards||{};
     const tasks=taskData.tasks||[];
     const batches=batchData.batches||[];
-    const dealers=network.dealers||[];
-    const activeDealer=dealers.find(d=>d.active)||dealers[0]||null;
+    const users=userData.users||[];
+    const activeUsers=users.filter(u=>u.active!==false);
 
     const requested=Number(orders.total??tasks.length??0);
     const ready=Number(orders.ready??automation.summary?.ready??0);
@@ -146,7 +145,7 @@ async function load(){
     if(orderAttention>0)exceptions.push(orderAttention+' order'+(orderAttention===1?'':'s')+' require operational review.');
     if(Number(accounts.needs_attention||0)>0)exceptions.push(number(accounts.needs_attention)+' retailer account'+(Number(accounts.needs_attention)===1?'':'s')+' need authentication or credential attention.');
     if(Number(orders.cards_needed||0)>0&&!programmeConnected)exceptions.push(number(orders.cards_needed)+' order'+(Number(orders.cards_needed)===1?'':'s')+' need cards, but the card programme is not connected.');
-    if(policy.automation_enabled===false)exceptions.push('Autopilot is paused for the current dealer.');
+    if(policy.automation_enabled===false)exceptions.push('Autopilot is paused for the current workspace.');
     if(Number(preflight.needsAttention||0)>orderAttention)exceptions.push(number(preflight.needsAttention)+' order checks need attention before Autopilot can advance.');
     attentionCount=exceptions.length;
 
@@ -188,11 +187,11 @@ async function load(){
     set('#ovPriceGuard','+'+Number(policy.max_price_increase_percent??5)+'% ceiling');
     set('#ovCards',programmeConnected?'Connected':(Number(orders.cards_needed||0)>0?'Setup required':'Not required yet'));
     set('#ovAccounts',accountsTotal?number(credentialsReady)+' / '+number(accountsTotal)+' ready':'No accounts yet');
-    set('#ovDealerName',activeDealer?.name||'Current dealer');
-    set('#ovDealerMeta',activeDealer?(activeDealer.dealer_type==='MAIN'?'Main Dealer workspace':'Sub-dealer workspace')+' · '+number(activeDealer.user_count||0)+' users':'Dealer scope will appear after sign-in.');
-    set('#ovDealerCount',number(dealers.length));
-    set('#ovCustomerCount',number(activeDealer?.customer_count??control.customers??0));
-    set('#ovRetailerCount',number(activeDealer?.retailer_account_count??accountsTotal));
+    set('#ovWorkspaceName','OrderGrid workspace');
+    set('#ovWorkspaceMeta',activeUsers.length?number(activeUsers.length)+' active user'+(activeUsers.length===1?'':'s')+' · '+number(credentialsReady)+' retailer account credential'+(credentialsReady===1?'':'s')+' ready':'Add users and retailer accounts to start operations.');
+    set('#ovUserCount',number(activeUsers.length));
+    set('#ovCustomerCount',number(control.customers??0));
+    set('#ovRetailerCount',number(accountsTotal));
     set('#ovRunMode',String(policy.run_mode||'MANUAL').replaceAll('_',' '));
     set('#ovConcurrency',number(policy.max_active_orders??8));
     set('#ovFailureGuard',Number(policy.failure_pause_percent??5)+'%');
