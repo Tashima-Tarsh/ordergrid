@@ -105,7 +105,7 @@ app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
   const address=addressesByReference(basket.customer_reference);
   const basketTasks=tasks.filter(t=>t.batch_id===basket.batch_id&&t.retailer===basket.retailer&&t.address_id===address?.id);
   if(!basketTasks.length)return reply.code(409).send({error:"basket_has_no_items"});
-  let checkoutUrl=verifiedRetailerUrl(basketTasks[0].product_url);
+  let checkoutUrl=verifiedRetailerUrl(basketTasks[0]!.product_url);
   if(basket.retailer==="amazon-in"){
     const parts:string[]=[];let n=1;
     for(const task of basketTasks){
