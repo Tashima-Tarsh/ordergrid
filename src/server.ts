@@ -741,7 +741,7 @@ app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.
 
 app.get("/api/issuers",async(req)=>{
   const p=req.principal!;
-  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,connected_at,updated_at from issuer_connections where tenant_id=$1 order by provider",[p.tenantId]);
+  const {rows}=await db.query("select id,provider,status,bank_name,programme_name,card_network,bank_code,integration_mode,capabilities,connected_at,updated_at from issuer_connections where tenant_id=$1 order by bank_name,provider",[p.tenantId]);
   return {issuers:rows};
 });
 app.get("/api/funding-policies",async(req)=>{
