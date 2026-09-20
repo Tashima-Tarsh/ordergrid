@@ -433,6 +433,37 @@ function retailerFromImport(value:string){
   }catch{return null}
 }
 
+app.get("/api/retailer-users/template.xlsx",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const workbook=new ExcelJS.Workbook();
+  const sheet=workbook.addWorksheet("Flipkart Users");
+  sheet.columns=[
+    {header:"reference",key:"reference",width:16},
+    {header:"recipient",key:"recipient",width:22},
+    {header:"phone",key:"phone",width:15},
+    {header:"flipkart_user_id",key:"flipkart_user_id",width:24},
+    {header:"line1",key:"line1",width:28},
+    {header:"line2",key:"line2",width:22},
+    {header:"city",key:"city",width:16},
+    {header:"state",key:"state",width:18},
+    {header:"postal_code",key:"postal_code",width:13},
+    {header:"max_concurrent_orders",key:"max_concurrent_orders",width:22},
+    {header:"flipkart_password",key:"flipkart_password",width:22}
+  ];
+  sheet.addRow({
+    reference:"USER-001",recipient:"Amit Sharma",phone:"9876543210",
+    flipkart_user_id:"9876543210",line1:"House 12, Example Road",line2:"Near Landmark",
+    city:"Ludhiana",state:"Punjab",postal_code:"141001",max_concurrent_orders:1,flipkart_password:""
+  });
+  sheet.getRow(1).font={bold:true};
+  sheet.views=[{state:"frozen",ySplit:1}];
+  const buffer=await workbook.xlsx.writeBuffer();
+  reply.header("content-type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  reply.header("content-disposition",'attachment; filename="ordergrid-flipkart-users-template.xlsx"');
+  return reply.send(Buffer.from(buffer as any));
+});
+
 app.post("/api/address-books/import",async(req,reply)=>{
   const p=req.principal!;
   const file=await req.file();
@@ -457,7 +488,7 @@ app.post("/api/address-books/import",async(req,reply)=>{
   try{
     await client.query("begin");
     const book=await client.query("insert into address_books(tenant_id,name,created_by) values($1,$2,$3) returning id,name",[p.tenantId,file.filename.replace(/\.[^.]+$/,"").slice(0,120),p.id]);
-    const ids:string[]=[];
+    const ids:string[]=[],retailerAccountIds:string[]=[];
     let retailerAccountsBound=0,credentialsStored=0;
     for(const row of rows.slice(1)){
       if(!row.some(Boolean))continue;
@@ -484,17 +515,18 @@ app.post("/api/address-books/import",async(req,reply)=>{
         [book.rows[0].id,customerId,value(row,"recipient"),phone,value(row,"line1"),value(row,"line2")||null,value(row,"city"),value(row,"state"),postal,(value(row,"country")||"IN").toUpperCase(),externalReference]
       );
       ids.push(inserted.rows[0].id);
-      const importedAccounts=new Map<string,{accountReference:string;password:string}>();
+      const importedAccounts=new Map<string,{accountReference:string;password:string;maxConcurrentOrders:number}>();
+      const rowMaxConcurrentOrders=Math.max(1,Math.min(100,Number(value(row,"max_concurrent_orders").trim()||"1")||1));
       for(const [column,retailer] of Object.entries(retailerAccountColumns)){
         const accountReference=value(row,column).trim();
         if(!accountReference||importedAccounts.has(retailer))continue;
         const password=(retailerPasswordColumns[retailer]||[]).map(name=>value(row,name).trim()).find(Boolean)||"";
-        importedAccounts.set(retailer,{accountReference,password});
+        importedAccounts.set(retailer,{accountReference,password,maxConcurrentOrders:rowMaxConcurrentOrders});
       }
       const genericRetailer=retailerFromImport(value(row,"retailer"));
       const genericLogin=(value(row,"retailer_login")||value(row,"retailer_user_id")||value(row,"retailer_username")).trim();
       if(genericRetailer&&genericLogin&&!importedAccounts.has(genericRetailer)){
-        importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:value(row,"retailer_password").trim()});
+        importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:value(row,"retailer_password").trim(),maxConcurrentOrders:rowMaxConcurrentOrders});
       }
       for(const [retailer,credential] of importedAccounts){
         const login=credential.accountReference.slice(0,240);
@@ -517,26 +549,27 @@ app.post("/api/address-books/import",async(req,reply)=>{
           account=await client.query(
             `update retailer_accounts set customer_id=$1,
                credential_status=case when $2='STORED' then 'STORED' else credential_status end,
-               active=true,updated_at=now()
-             where id=$3 and tenant_id=$4 returning id`,
-            [customerId,credential.password?"STORED":"MISSING",byLogin.rows[0].id,p.tenantId]
+               active=true,max_concurrent_orders=$3,updated_at=now()
+             where id=$4 and tenant_id=$5 returning id`,
+            [customerId,credential.password?"STORED":"MISSING",credential.maxConcurrentOrders,byLogin.rows[0].id,p.tenantId]
           );
         }else if(byCustomer.rows[0]){
           account=await client.query(
             `update retailer_accounts set account_reference=$1,
                credential_status=case when $2='STORED' then 'STORED' else credential_status end,
-               active=true,updated_at=now()
-             where id=$3 and tenant_id=$4 returning id`,
-            [login,credential.password?"STORED":"MISSING",byCustomer.rows[0].id,p.tenantId]
+               active=true,max_concurrent_orders=$3,updated_at=now()
+             where id=$4 and tenant_id=$5 returning id`,
+            [login,credential.password?"STORED":"MISSING",credential.maxConcurrentOrders,byCustomer.rows[0].id,p.tenantId]
           );
         }else{
           account=await client.query(
-            `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,credential_status,active,created_by)
-             values($1,$2,$3,$4,'AUTH_REQUIRED',$5,true,$6) returning id`,
-            [p.tenantId,customerId,retailer,login,credential.password?"STORED":"MISSING",p.id]
+            `insert into retailer_accounts(tenant_id,customer_id,retailer,account_reference,auth_status,credential_status,active,max_concurrent_orders,created_by)
+             values($1,$2,$3,$4,'AUTH_REQUIRED',$5,true,$6,$7) returning id`,
+            [p.tenantId,customerId,retailer,login,credential.password?"STORED":"MISSING",credential.maxConcurrentOrders,p.id]
           );
         }
         retailerAccountsBound++;
+        retailerAccountIds.push(String(account.rows[0].id));
         if(credential.password){
           const encrypted=encryptJson({password:credential.password},config.DATA_ENCRYPTION_KEY_BASE64);
           await client.query(
@@ -554,7 +587,7 @@ app.post("/api/address-books/import",async(req,reply)=>{
     if(!ids.length)throw new Error("No valid address rows");
     await client.query("commit");
     await audit(db,p.tenantId,p.id,"address_book.imported","address_book",book.rows[0].id,{count:ids.length,retailerAccountsBound,credentialsStored});
-    return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,count:ids.length,retailerAccountsBound,credentialsStored});
+    return reply.code(201).send({addressBook:book.rows[0],addressIds:ids,retailerAccountIds:[...new Set(retailerAccountIds)],count:ids.length,retailerAccountsBound,credentialsStored});
   }catch(e){
     await client.query("rollback");
     throw e;
