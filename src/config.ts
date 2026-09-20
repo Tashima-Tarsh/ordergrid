@@ -13,6 +13,8 @@ const schema = z.object({
   DB_PASSWORD: z.string().min(1).optional(),
   ORDERGRID_DB_TOKEN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
+  WORKER_API_TOKEN: z.string().min(32).optional(),
+  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
   SESSION_SECRET: z.string().min(32),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
@@ -44,6 +46,7 @@ const schema = z.object({
   if(!value.DB_USER)ctx.addIssue({code:"custom",path:["DB_USER"],message:"DB_USER is required when DATABASE_URL is not set"});
   if(!value.DB_PASSWORD&&!value.ORDERGRID_DB_TOKEN)ctx.addIssue({code:"custom",path:["ORDERGRID_DB_TOKEN"],message:"A database credential is required when DATABASE_URL is not set"});
   if(!value.BOOTSTRAP_ADMIN_PASSWORD&&!value.BOOTSTRAP_ADMIN_SECRET)ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_SECRET"],message:"A bootstrap administrator secret is required"});
+  if(value.NODE_ENV==="production"&&!value.WORKER_API_TOKEN)ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN is required in production"});
 });
 export type Config = z.infer<typeof schema>;
 export const loadConfig = (): Config => schema.parse(process.env);
