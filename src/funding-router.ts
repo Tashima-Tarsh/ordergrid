@@ -81,7 +81,7 @@ export async function assignAvailableVirtualCard(db:Db,tenantId:string,basketId:
       return null;
     }
     await client.query("update virtual_cards set customer_id=$1,checkout_basket_id=$2,updated_at=now() where id=$3",[row.customer_id,basketId,card.rows[0].id]);
-    await client.query("update checkout_baskets set virtual_card_id=$1,updated_at=now() where id=$2 and tenant_id=$3",[card.rows[0].id,basketId,tenantId]);
+    await client.query("update checkout_baskets set virtual_card_id=$1,payment_status='CARD_ASSIGNED',updated_at=now() where id=$2 and tenant_id=$3",[card.rows[0].id,basketId,tenantId]);
     await client.query("commit");
     return card.rows[0].id as string;
   }catch(error){
