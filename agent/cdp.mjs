@@ -284,7 +284,7 @@ function retailerHost(retailer){
 }
 function authChallengeScript(){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,80000).toLowerCase();
-    const otp=Boolean(document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i]'))||/(otp|one time password|verification code)/i.test(text);
+    const otp=Boolean(document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i]'))||/(enter|request|verify|send).{0,24}(otp|one time password|verification code)/i.test(text);
     const captcha=Boolean(document.querySelector('iframe[src*="captcha" i],[class*="captcha" i],[id*="captcha" i],input[name*="captcha" i]'))||/captcha|i am not a robot/i.test(text);
     const password=Boolean(document.querySelector('input[type="password"]'));
     const login=/log in|login|sign in|enter email|enter mobile|request otp/i.test(text)&&(password||Boolean(document.querySelector('input[type="email"],input[type="tel"]')));
