@@ -142,7 +142,10 @@ export async function testAndSaveBankConnection(
        ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
        connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
        bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network,
-       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,capabilities=excluded.capabilities
+       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,
+       funding_cardholder_name=excluded.funding_cardholder_name,funding_card_last4=excluded.funding_card_last4,
+       funding_card_expiry_month=excluded.funding_card_expiry_month,funding_card_expiry_year=excluded.funding_card_expiry_year,
+       capabilities=excluded.capabilities
      returning id`,
     [
       input.tenantId,input.credentials.bankCode,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
