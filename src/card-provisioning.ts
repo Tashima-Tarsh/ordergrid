@@ -44,11 +44,12 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
     return {status:"PROGRAMME_REQUIRED" as const,cardId:null};
   }
-  const cardholder=configuredCardholder(config);
-  if(!cardholder){
+  const configuredHolder=configuredCardholder(config);
+  if(state.issuer.provider==="enkash"&&!configuredHolder){
     await db.query("update checkout_baskets set payment_status='VERIFICATION_REQUIRED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
     return {status:"CARDHOLDER_PROFILE_REQUIRED" as const,cardId:null};
   }
+  const cardholder=configuredHolder??{};
 
   const expectedMinor=Math.max(100,Number(row.amount_minor||0));
   const amountMinor=Math.max(expectedMinor,Math.floor(Number(fundingAmountMinor||expectedMinor)));
