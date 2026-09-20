@@ -49,11 +49,12 @@ For managed workstations:
 $env:ORDERGRID_URL = "https://your-ordergrid.example"
 $env:ORDERGRID_EMAIL = "worker@example.com"
 $env:ORDERGRID_PASSWORD = "<worker-password>"
+$env:ORDERGRID_WORKER_TOKEN = "<machine-token>"
 $env:ORDERGRID_PARALLEL = "4"
 npm run agent
 ```
 
-The worker stays online by default and heartbeats into OrderGrid. The Bulk ordering page shows the live worker count.
+The worker requires both an authorized OrderGrid user session and the deployment machine token (`ORDERGRID_WORKER_TOKEN`). It stays online by default and heartbeats into OrderGrid. The Bulk ordering page shows the live worker count.
 
 Optional:
 

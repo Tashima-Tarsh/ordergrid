@@ -198,6 +198,7 @@ Start it from the repository:
 $env:ORDERGRID_URL = "https://your-ordergrid.example"
 $env:ORDERGRID_EMAIL = "worker@example.com"
 $env:ORDERGRID_PASSWORD = "<worker-password>"
+$env:ORDERGRID_WORKER_TOKEN = "<machine-token>"
 npm run agent
 ```
 
@@ -411,6 +412,7 @@ Implemented controls include:
 - global API rate limiting;
 - Helmet security headers and CSP;
 - request-ID logging;
+- dedicated machine-token requirement on native worker execution routes;
 - sensitive request-log redaction;
 - AES-256-GCM secret encryption;
 - HTTPS-only retailer URL validation;
@@ -425,17 +427,22 @@ Implemented controls include:
 
 Supabase public tables have RLS enabled without browser policies. The intended access path is the server-side Postgres role; direct browser Data API reads are denied by RLS.
 
-### Security hardening still recommended before high-value rollout
+### Production security hardening status
 
-The current audit identified several items that should be completed before calling a deployment hardened enterprise production:
+The current deployment now includes:
 
-1. tighten role authorization on every mutating endpoint, especially batch/import and worker lifecycle endpoints;
-2. introduce a dedicated worker credential/token model rather than relying only on an ordinary authenticated user session plus worker ID;
-3. make audit-log immutability a database permission guarantee (the application role currently has broader table privileges than strictly required);
-4. revoke unnecessary Data API grants from `anon` / `authenticated` as defense-in-depth, even though RLS currently denies rows;
-5. move the `citext` extension out of the public schema when practical;
-6. add / review covering indexes for high-volume foreign-key paths based on real query traffic;
-7. run a third-party security review before processing material payment volume.
+- explicit OWNER / APPROVER / BUYER enforcement on procurement import and batch-creation mutations;
+- a dedicated native-worker machine token in addition to the worker user's authenticated session;
+- timing-safe worker-token comparison and request-log redaction;
+- append-only application permissions on `audit_log`;
+- no direct `anon` / `authenticated` grants on OrderGrid public tables;
+- `citext` outside the public schema;
+- foreign-key indexes on all currently reported unindexed FK paths;
+- production database TLS verification enabled by default.
+
+The owner-level Supabase hardening SQL is kept in `ops/supabase-production-hardening.sql` and must be applied using the database owner / Supabase migration channel, not the restricted OrderGrid application role.
+
+A third-party penetration test is still recommended before processing material payment volume.
 
 ---
 
@@ -459,6 +466,8 @@ SESSION_SECRET=...
 DATA_ENCRYPTION_KEY_BASE64=...
 BOOTSTRAP_ADMIN_EMAIL=...
 BOOTSTRAP_ADMIN_PASSWORD=...
+WORKER_API_TOKEN=...
+DB_SSL_REJECT_UNAUTHORIZED=true
 ```
 
 ### Database
@@ -470,7 +479,9 @@ npm run build
 npm run db:migrate
 ```
 
-The current migration set includes the Flipkart product-check and retailer-account-pinning schema.
+The application migration set includes the Flipkart product-check and retailer-account-pinning schema.
+
+For a Supabase production installation, apply the owner-level hardening separately with `ops/supabase-production-hardening.sql` using the database-owner migration channel.
 
 ### Queue worker
 
@@ -533,7 +544,7 @@ Before selling a deployment as fully production-ready, complete this pilot:
 2. configure a health check and production alerting;
 3. decide whether Redis/BullMQ is required and deploy a queue worker if it is;
 4. run all database migrations and Supabase advisors;
-5. harden the role / worker authentication items listed above;
+5. verify the production health endpoint reports `workerAuth: true` and the expected queue mode;
 6. onboard one real retailer account;
 7. complete OTP/manual sign-in;
 8. verify a real product price and account quantity limit;

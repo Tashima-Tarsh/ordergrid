@@ -10,6 +10,7 @@ const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/
 const rl=createInterface({input,output});
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let cookie="";
+const workerToken=process.env.ORDERGRID_WORKER_TOKEN||"";
 
 async function ask(label){return(await rl.question(label)).trim()}
 async function readSecret(label){
@@ -23,7 +24,7 @@ async function readSecret(label){
   });
 }
 async function api(path,options={}){
-  const response=await fetch(`${baseUrl}${path}`,{...options,headers:{"content-type":"application/json",...(cookie?{cookie}:{}),...(options.headers||{})}});
+  const response=await fetch(`${baseUrl}${path}`,{...options,headers:{"content-type":"application/json",...(cookie?{cookie}:{}),...(workerToken?{"x-ordergrid-worker-token":workerToken}:{}),...(options.headers||{})}});
   const body=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(`${body.error||response.statusText} (${response.status})`);
   return {body,response};
@@ -98,6 +99,7 @@ async function main(){
   output.write("It does not bypass OTP, CAPTCHA, 3DS, passwords or retailer security controls.\n\n");
   const chrome=findChrome();
   if(!chrome)throw new Error("Google Chrome was not found. Install Chrome and run again.");
+  if(!workerToken)throw new Error("ORDERGRID_WORKER_TOKEN is required. Configure the machine token issued for this deployment.");
   await login();
 
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");

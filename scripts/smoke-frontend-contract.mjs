@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -29,6 +29,9 @@ const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
 const worker=files["src/worker.ts"];
+const configSource=files["src/config.ts"];
+const dbSource=files["src/db.ts"];
+const hardeningMigration=files["ops/supabase-production-hardening.sql"];
 const baskets=files["src/baskets.ts"];
 const allocation=files["src/flipkart-allocation.ts"];
 const allocationMigration=files["src/migrations/023_flipkart_account_pinned_batch_items.sql"];
@@ -131,6 +134,20 @@ must(server.includes("trigger={mode:policy.run_mode,fired:true"),"autopilot trig
 must(worker.includes("triggerContinuousAutopilot"),"autopilot trigger contract: background batch worker must trigger continuous automation");
 must(worker.includes('policy.run_mode!=="CONTINUOUS"'),"autopilot trigger contract: background worker must respect run mode");
 must(worker.includes("autopilotClaimed:automation.claimed"),"autopilot trigger contract: queued batch audit must record automatic claims");
+must(configSource.includes("WORKER_API_TOKEN"),"security contract: production worker token configuration missing");
+must(configSource.includes('value.NODE_ENV==="production"&&!value.WORKER_API_TOKEN'),"security contract: production must require a worker machine token");
+must(configSource.includes("DB_SSL_REJECT_UNAUTHORIZED"),"security contract: database TLS verification control missing");
+must(dbSource.includes("rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED"),"security contract: production DB TLS must not be hard-coded insecure");
+must(server.includes("x-ordergrid-worker-token"),"security contract: worker routes must verify machine token");
+must(server.includes("req.headers.x-ordergrid-worker-token"),"security contract: worker token must be redacted from request logs");
+must(server.includes('workerAuth:Boolean(config.WORKER_API_TOKEN)'),"health contract: worker auth readiness must be visible");
+must(server.includes("timingSafeEqual"),"security contract: machine token comparison must be timing-safe");
+must(server.includes("worker_role_required"),"security contract: machine routes must require an execution-capable role");
+must(agent.includes("ORDERGRID_WORKER_TOKEN"),"security contract: native worker must send machine token");
+must(server.includes('app.post("/api/address-books/import",async(req,reply)=>{')&&server.includes('if(!["OWNER","APPROVER","BUYER"].includes(p.role))'),"security contract: address import must be role-protected");
+must(hardeningMigration.includes("revoke all privileges on all tables in schema public from anon, authenticated"),"database contract: browser roles must have no direct public-table grants");
+must(hardeningMigration.includes("revoke update, delete, truncate on table public.audit_log from ordergrid_app"),"database contract: application role must not mutate audit history");
+must(hardeningMigration.includes("alter extension citext set schema extensions"),"database contract: citext must stay outside public schema");
 must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redirect support missing");
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");

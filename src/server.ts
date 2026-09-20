@@ -5,7 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import staticPlugin from "@fastify/static";
 import multipart from "@fastify/multipart";
 import ExcelJS from "exceljs";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -147,13 +147,25 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
   }
   return {claimed:ids.length,ids};
 }
-const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
+const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","req.headers.x-ordergrid-worker-token","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
 await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
 
 declare module "fastify" { interface FastifyRequest { principal?:{id:string;homeTenantId:string;tenantId:string;role:string} } }
+
+function secretEqual(a:string|undefined,b:string|undefined){
+  if(!a||!b)return false;
+  const left=Buffer.from(a),right=Buffer.from(b);
+  return left.length===right.length&&timingSafeEqual(left,right);
+}
+function workerMachineRoute(req:any){
+  const path=String(req.url||"").split("?")[0];
+  if(path.startsWith("/api/execution-worker/"))return true;
+  if(path==="/api/bulk-queue"&&String(req.url||"").includes("workerId="))return true;
+  return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
+}
 app.addHook("preHandler",async(req,reply)=>{
   if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
@@ -165,9 +177,14 @@ app.addHook("preHandler",async(req,reply)=>{
   `,[tokenHash(raw)]);
   if(!rows[0])return reply.code(401).send({error:"unauthorized"});
   req.principal={id:rows[0].id,homeTenantId:rows[0].home_tenant_id,tenantId:rows[0].tenant_id,role:rows[0].role};
+  if(workerMachineRoute(req)){
+    if(!["OWNER","APPROVER","BUYER"].includes(req.principal.role))return reply.code(403).send({error:"worker_role_required"});
+    const supplied=String(req.headers["x-ordergrid-worker-token"]||"");
+    if(!secretEqual(supplied,config.WORKER_API_TOKEN))return reply.code(401).send({error:"worker_token_required"});
+  }
 });
 
-app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok"}});
+app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),queueMode:jobs?"bullmq":"direct"}});
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
   const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);
@@ -487,6 +504,7 @@ app.get("/api/retailer-users/template.xlsx",async(req,reply)=>{
 
 app.post("/api/address-books/import",async(req,reply)=>{
   const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const file=await req.file();
   if(!file)return reply.code(400).send({error:"file_required"});
   const buffer=await file.toBuffer();
@@ -2660,6 +2678,7 @@ app.get("/api/reports/orders.csv",async(req,reply)=>{
 
 app.post("/api/batches",async(req,reply)=>{
   const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const input=z.object({
     name:z.string().min(3).max(120),
     paymentRoute:z.enum(["Corporate virtual card","Cash on Delivery"]).default("Corporate virtual card"),
