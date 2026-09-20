@@ -77,7 +77,7 @@
 
     document.querySelector('#bulkQueue').innerHTML=baskets.length?baskets.map(b=>{
       const note=attentionText(b);
-      const action=b.retailer==='amazon-in'?'<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1">Continue checkout</a>':'';
+      const action='<a class="secondary amazon-open-link" href="/api/bulk-baskets/'+encodeURIComponent(b.id)+'/browser-checkout?redirect=1">Continue checkout</a>';
       const retry=['REQUIRES_ACTION','FAILED'].includes(b.status)?'<button class="secondary" data-retry>Try again</button>':'';
       return `
         <div class="bulk-row" data-basket="${esc(b.id)}">
