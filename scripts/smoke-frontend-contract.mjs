@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/navigation.js","public/sw.js","src/server.ts","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -93,5 +93,14 @@ must(!files["public/rewards.js"].includes("poolOnly=true"),"retailer user contra
 must(server.includes('app.post("/api/retailer-users"'),"retailer user contract: bound user API missing");
 must(server.includes("addr.postal_code address_postal_code"),"retailer user contract: retailer account response must expose bound delivery profile");
 must(server.includes("retailer_account_already_bound_to_another_user"),"retailer user contract: account identity collision protection missing");
+must(html.includes('class="retailer-user-dialog"'),"retailer user contract: wide onboarding dialog missing");
+must(html.includes('Download Excel template'),"retailer user contract: Excel template download missing");
+must(html.includes('max_concurrent_orders'),"retailer user contract: bulk import must expose concurrency field");
+must(files["public/styles.css"].includes("#retailerUserDialog.retailer-user-dialog{width:min(1280px"),"retailer user contract: desktop dialog must be wide");
+must(files["public/styles.css"].includes("max-height:none;overflow:visible"),"retailer user contract: dialog must not use nested scrolling");
+must(server.includes('app.get("/api/retailer-users/template.xlsx"'),"retailer user contract: Excel template API missing");
+must(server.includes("retailerAccountIds:[...new Set(retailerAccountIds)]"),"retailer user contract: bulk import must return bound account ids");
+must(files["public/rewards.js"].includes("Importing & preparing…"),"retailer user contract: bulk import must prepare sessions");
+must(files["public/rewards.js"].includes("accountIds:ids,retailer:'flipkart'"),"retailer user contract: imported Flipkart sessions must be queued");
 
 console.log("Frontend/card connector contract OK");

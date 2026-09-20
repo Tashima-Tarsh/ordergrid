@@ -204,19 +204,42 @@
     finally{button.disabled=false;button.textContent='Save user & prepare login'}
   });
 
+  $('#retailerUsersBulkFile')?.addEventListener('change',event=>{
+    const file=event.target.files?.[0];
+    const meta=$('#retailerUsersBulkFileMeta');
+    if(meta)meta.textContent=file?(file.name+' · '+Math.max(1,Math.round(file.size/1024))+' KB'):'No file selected';
+    $('#retailerUsersBulkError').textContent='';
+  });
+
   $('#retailerUsersBulkForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
     const button=$('#importRetailerUsers'),file=$('#retailerUsersBulkFile')?.files?.[0];
-    button.disabled=true;button.textContent='Importing…';$('#retailerUsersBulkError').textContent='';
+    button.disabled=true;button.textContent='Importing & preparing…';$('#retailerUsersBulkError').textContent='';
     try{
       if(!file)throw new Error('Choose a CSV or XLSX file');
       const data=new FormData();data.append('file',file,file.name);
       const result=await request('/api/address-books/import',{method:'POST',body:data});
-      event.currentTarget.reset();$('#retailerUserDialog').close();
+      let queued=0;
+      const ids=result.retailerAccountIds||[];
+      try{
+        const workerState=await request('/api/execution-workers');
+        if((workerState.workers||[]).length&&ids.length){
+          const prepared=await request('/api/retailer-accounts/prepare',{
+            method:'POST',headers:{'content-type':'application/json'},
+            body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:20})
+          });
+          queued=Number(prepared.count||0);
+        }
+      }catch{}
+      event.currentTarget.reset();
+      if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
+      $('#retailerUserDialog').close();
       await load();
-      toast(result.count+' users imported · '+result.retailerAccountsBound+' retailer login(s) bound');
+      toast(queued
+        ?result.count+' users imported · '+queued+' Flipkart session(s) queued for OTP verification'
+        :result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) bound. Start the secure browser worker to verify sessions.');
     }catch(error){$('#retailerUsersBulkError').textContent=error.message}
-    finally{button.disabled=false;button.textContent='Import users & addresses'}
+    finally{button.disabled=false;button.textContent='Import users & prepare sessions'}
   });
 
   $('#retailerAccountsFile')?.addEventListener('change',async event=>{
