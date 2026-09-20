@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -20,6 +20,10 @@ const overviewCss=files["public/overview-premium.css"];
 const automation=files["public/automation-center.js"];
 const automationCss=files["public/automation-center.css"];
 const workspaceCss=files["public/workspace-premium.css"];
+const gst=files["public/gst.js"];
+const gstCss=files["public/gst-premium.css"];
+const fulfilment=files["public/fulfilment.js"];
+const fulfilmentCss=files["public/fulfilment.css"];
 const navigation=files["public/navigation.js"];
 const sw=files["public/sw.js"];
 const server=files["src/server.ts"];
@@ -115,6 +119,31 @@ must(demo.includes("SHOWROOM_REDIRECT_URL"),"showroom contract: production redir
 must(sw.includes("'./overview-premium.css'"),"dashboard contract: overview-premium.css must be precached");
 must(sw.includes("'./fulfilment.css'"),"asset contract: fulfilment.css must be cached because navigation loads it");
 must(sw.includes("'./fulfilment.js'"),"asset contract: fulfilment.js must be cached because navigation loads it");
+must(html.includes('href="gst-premium.css"'),"GST contract: premium GST stylesheet must be loaded");
+must(sw.includes("'./gst-premium.css'"),"GST contract: premium GST stylesheet must be cached");
+must(sw.includes("'./gst.js'"),"GST contract: GST client must be cached");
+must(navigation.includes("['gst','▣','GST & invoices']"),"GST navigation contract: first-class GST route missing");
+must(navigation.includes("gst:'gst-invoices'"),"GST navigation contract: GST route hash missing");
+must(navigation.includes("classList.contains('gst-compliance'))view='gst'"),"GST navigation contract: GST page must not be mixed into Payments");
+must(navigation.includes("x.tagName!=='DIALOG'"),"navigation contract: dialogs must not be hidden as route sections");
+for(const id of ["gstCompliance","gstProfileForm","gstBasket","createGstInvoice","gstInvoiceList","downloadGstReport","gstNewInvoice","refreshGst","gstIrnDialog","gstIrnForm"]){
+  must(count(html,`id="${id}"`)===1,`GST contract: #${id} must exist exactly once`);
+}
+must(gst.includes("showTab('billing')"),"GST contract: billing tab flow missing");
+must(gst.includes("request('/api/gst/invoices'"),"GST contract: invoice creation API missing");
+must(gst.includes("request('/api/gst/profile'"),"GST contract: GST profile API missing");
+must(gst.includes("data-irn"),"GST contract: IRN action missing");
+must(gst.includes("gstIrnDialog"),"GST contract: IRN modal flow missing");
+must(!gst.includes("prompt("),"GST contract: browser prompt must not be used for IRN/QR");
+must(gstCss.includes(".gst-kpi-strip"),"GST premium contract: KPI strip styling missing");
+must(gstCss.includes(".gst-billing-grid"),"GST premium contract: billing layout styling missing");
+for(const id of ["flowNewBatch","ffBatch","ffProducts","ffRecipients","ffReady","ffAttention","ffConfirmed","ffValue","checkoutAll"]){
+  must(count(html,`id="${id}"`)===1,`fulfilment premium contract: #${id} must exist exactly once`);
+}
+must(fulfilment.includes("#flowAddProducts,#flowImportRecipients,#flowNewBatch"),"fulfilment premium contract: new procurement buttons must open the wizard");
+must(fulfilment.includes("$('#ffAttention')"),"fulfilment premium contract: live attention KPI missing");
+must(fulfilmentCss.includes(".ff-kpi-strip"),"fulfilment premium contract: KPI strip styling missing");
+must(fulfilmentCss.includes(".cart-accent"),"fulfilment premium contract: premium cart styling missing");
 must(wizard.includes("Check product"),"flipkart mobile contract: Check product control missing");
 must(wizard.includes("/api/products/flipkart/mobile/check"),"flipkart mobile contract: product check API missing from wizard");
 must(wizard.includes("maxQuantityVerified"),"flipkart mobile contract: verified account quantity ceiling missing");

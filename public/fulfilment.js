@@ -42,10 +42,24 @@
     const needsAttention=tasks.filter(t=>['REQUIRES_ACTION','FAILED'].includes(t.status)).length;
     const inProgress=tasks.filter(t=>t.status==='OPENED').length;
     const waiting=tasks.filter(t=>['REQUIRES_ACTION','CLAIMED','READY'].includes(t.status)).length;
+    const readyForCheckout=tasks.filter(t=>['READY','CLAIMED'].includes(t.status)).length;
     const total=tasks.reduce((sum,t)=>sum+Number(t.amount_minor||0),0);
     const hasBatch=Boolean(batch);
     const approved=Boolean(batch&&['APPROVED','PARTIAL','COMPLETE'].includes(batch.status))||tasks.length>0;
     const allConfirmed=tasks.length>0&&confirmed===tasks.length;
+
+    if($('#ffBatch'))$('#ffBatch').textContent=batch?batch.name:'None';
+    if($('#ffBatchState'))$('#ffBatchState').textContent=batch?String(batch.status||'DRAFT').replaceAll('_',' ')+' · '+(batch.payment_route||'Payment route pending'):'Create procurement to begin';
+    if($('#ffProducts'))$('#ffProducts').textContent=String(products.length);
+    if($('#ffRecipients'))$('#ffRecipients').textContent=String(recipientCount);
+    if($('#ffReady'))$('#ffReady').textContent=String(readyForCheckout);
+    if($('#ffAttention'))$('#ffAttention').textContent=String(needsAttention);
+    if($('#ffConfirmed'))$('#ffConfirmed').textContent=String(confirmed);
+    if($('#ffValue'))$('#ffValue').textContent=money(total||batch?.estimated_total_minor||0);
+    if($('#ffPipelineState')){
+      $('#ffPipelineState').textContent=allConfirmed?'COMPLETE':needsAttention?'ACTION REQUIRED':inProgress?'RUNNING':approved?'READY':'BUILDING';
+      $('#ffPipelineState').className='ff-pipeline-badge '+(allConfirmed?'complete':needsAttention?'attention':inProgress?'running':approved?'ready':'');
+    }
 
     setStep(
       'products',
@@ -151,7 +165,7 @@
   }
 
   document.addEventListener('click',event=>{
-    if(event.target.closest('#flowAddProducts,#flowImportRecipients'))document.querySelector('#newBatch')?.click();
+    if(event.target.closest('#flowAddProducts,#flowImportRecipients,#flowNewBatch'))document.querySelector('#newBatch')?.click();
   });
   window.addEventListener('ordergrid:update',load);
   window.addEventListener('ordergrid:bulk-refresh',load);

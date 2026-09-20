@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OrderGrid | Procurement Operations</title><meta name="description" content="OrderGrid helps teams prepare, approve and place high-volume procurement orders from one clear experience."><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111927'/%3E%3Cpath d='M8 9h16v4H8zm0 6h7v8H8zm9 0h7v8h-7z' fill='%2334d399'/%3E%3C/svg%3E"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="finance.css"><link rel="stylesheet" href="premium.css"><link rel="stylesheet" href="overview-premium.css"><link rel="stylesheet" href="dashboard.css"><link rel="stylesheet" href="customer.css"><link rel="stylesheet" href="control-center.css"><link rel="stylesheet" href="automation-center.css"><link rel="stylesheet" href="workspace-premium.css"></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OrderGrid | Procurement Operations</title><meta name="description" content="OrderGrid helps teams prepare, approve and place high-volume procurement orders from one clear experience."><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111927'/%3E%3Cpath d='M8 9h16v4H8zm0 6h7v8H8zm9 0h7v8h-7z' fill='%2334d399'/%3E%3C/svg%3E"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="finance.css"><link rel="stylesheet" href="premium.css"><link rel="stylesheet" href="overview-premium.css"><link rel="stylesheet" href="dashboard.css"><link rel="stylesheet" href="customer.css"><link rel="stylesheet" href="control-center.css"><link rel="stylesheet" href="automation-center.css"><link rel="stylesheet" href="workspace-premium.css"><link rel="stylesheet" href="gst-premium.css"></head><body>
 <div id="login" class="overlay"><form id="loginForm" class="login-card"><div class="brand"><span class="mark">OG</span><span>ORDERGRID</span></div><p class="eyebrow">PROCUREMENT OPERATIONS</p><h1>Sign in to OrderGrid</h1><p>Manage high-volume procurement in one clear flow.</p><label>Email<input name="email" type="email" placeholder="owner@example.com" autocomplete="username" required></label><label>Password<input name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required></label><button type="submit">Sign in</button><p id="loginError" class="error"></p></form></div>
 <header><div class="brand"><span class="mark">OG</span><span>ORDERGRID</span></div><div class="head-actions"><span class="live"><b></b> Ready</span><button class="secondary" id="controlCenterTop">Control Center</button><button class="secondary" id="signOut">Sign out</button></div></header>
 <main><section class="hero"><div><p class="eyebrow">BUSINESS PROCUREMENT</p><h1>One file. One approval.<br><em>Every order placed.</em></h1><p>Add products and recipients, approve once, and follow every order through checkout.</p></div><button id="newBatch">＋ New fulfilment batch</button></section>
@@ -9,66 +9,194 @@
 <section class="rewards-centre"><div class="panel-head"><div><p class="eyebrow">RETAILER USERS & SESSIONS</p><h2>Flipkart users, addresses & verification</h2></div><div class="head-actions"><select id="retailerPoolSelector" aria-label="Retailer"><option value="flipkart">Flipkart</option><option value="amazon-in">Amazon India</option><option value="myntra">Myntra</option><option value="ajio">AJIO</option></select><button type="button" id="addRetailerUser">＋ Add Flipkart user</button><a class="secondary" id="downloadOrderGridWorker" href="/ordergrid-worker.ps1" download>Secure browser worker</a><button type="button" class="secondary" id="prepareRetailerAccounts">Prepare all sessions</button><button id="manageRetailerAccounts" type="button" class="secondary">Login-only pool</button></div></div><div class="reward-summary"><div class="reward-total"><span>ACTIVE ACCOUNTS</span><strong id="totalRetailerAccounts">0</strong><small>No fixed account-count limit</small></div><div><span>AVAILABLE REWARDS</span><strong id="availableSuperCoins">0</strong></div><div><span>PENDING REFUNDS</span><strong id="pendingRefunds">₹0</strong></div><div><span>SETTLED REFUNDS</span><strong id="settledRefunds">₹0</strong></div></div><div class="account-pool-head"><div><strong id="accountPoolTitle">Flipkart users & account pool</strong><small id="accountPoolMeta">Add each authorised Flipkart user with delivery address, then verify the preserved login session by OTP.</small></div><button type="button" class="secondary" id="refreshRetailerAccounts">Refresh</button></div><div id="retailerAccountPool" class="retailer-account-pool"><p class="muted">No retailer accounts loaded yet.</p></div><p class="reward-note">Each order keeps the exact retailer account, virtual card, reward events and refund trail. Account capacity can grow from tens to hundreds without changing the order flow.</p></section>
 <section class="metrics"><article><span>BATCHES</span><strong id="batchCount">0</strong><small>Created in this session</small></article><article><span>RECIPIENTS</span><strong id="recipientCount">0</strong><small>Imported securely</small></article><article><span>ESTIMATED VALUE</span><strong id="totalValue">₹0</strong><small>Across approved tasks</small></article><article><span>SETTLED ORDERS</span><strong id="settledCount">0</strong><small>Retailer-confirmed</small></article><article><span>REWARD LEDGER</span><strong id="rewardCount">0</strong><small>SuperCoins ledger</small></article></section>
 <section class="fulfilment-commerce">
+  <div class="ff-hero">
+    <div class="ff-hero-copy">
+      <span class="ff-orb">OG</span>
+      <div><p class="eyebrow">FULFILMENT COMMAND</p><h2>Procurement execution</h2><p>Products, recipients, approval, account allocation and retailer checkout in one live workspace.</p></div>
+    </div>
+    <div class="ff-hero-actions">
+      <span class="ff-live-chip"><i></i> LIVE</span>
+      <button type="button" class="secondary premium-icon-button" id="reset" aria-label="Refresh fulfilment" title="Refresh fulfilment">↻</button>
+      <button type="button" id="flowNewBatch">＋ New procurement</button>
+    </div>
+  </div>
+
+  <div class="ff-kpi-strip" aria-label="Fulfilment metrics">
+    <article class="ff-kpi-feature"><span>ACTIVE BATCH</span><strong id="ffBatch">None</strong><small id="ffBatchState">Create procurement to begin</small></article>
+    <article><span>PRODUCTS</span><strong id="ffProducts">0</strong><small>Grouped products</small></article>
+    <article><span>RECIPIENTS</span><strong id="ffRecipients">0</strong><small>Bound destinations</small></article>
+    <article><span>READY</span><strong id="ffReady">0</strong><small>Checkout queue</small></article>
+    <article><span>ATTENTION</span><strong id="ffAttention">0</strong><small>Human action</small></article>
+    <article><span>CONFIRMED</span><strong id="ffConfirmed">0</strong><small>Retailer orders</small></article>
+    <article><span>VALUE</span><strong id="ffValue">₹0</strong><small>Current batch</small></article>
+  </div>
+
   <div class="fulfilment-grid">
     <div class="fulfilment-flow">
       <div class="fulfilment-flow-head">
-        <div><p class="eyebrow">FULFILMENT PROCESS</p><h2>Prepare and place the batch</h2><p>Complete each stage on the left. Your live procurement cart stays visible on the right.</p></div>
-        <button class="secondary" id="reset">Refresh</button>
+        <div><p class="eyebrow">EXECUTION PIPELINE</p><h2>From product to confirmation</h2><p>Each stage reflects live batch and checkout state.</p></div>
+        <span class="ff-pipeline-badge" id="ffPipelineState">WAITING</span>
       </div>
 
       <ol class="fulfilment-steps">
         <li class="flow-step" data-flow-step="products">
           <span class="flow-number">1</span>
-          <div class="flow-copy"><small>PRODUCTS</small><h3>Products & quantities</h3><p id="flowProductsSummary">Add the products to procure for every recipient.</p><button type="button" class="secondary flow-edit" id="flowAddProducts">Add products</button></div>
+          <div class="flow-copy"><small>PRODUCTS</small><h3>Products & quantities</h3><p id="flowProductsSummary">Add the products to procure.</p><button type="button" class="secondary flow-edit" id="flowAddProducts">Edit products</button></div>
           <span class="flow-state" id="flowProductsState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="recipients">
           <span class="flow-number">2</span>
-          <div class="flow-copy"><small>RECIPIENTS</small><h3>Recipients & retailer accounts</h3><p id="flowRecipientsSummary">Import recipients and bind their Amazon / retailer account references.</p><div id="recipientAccounts" class="recipient-accounts"><p class="muted">No recipients imported yet.</p></div><button type="button" class="secondary flow-edit" id="flowImportRecipients">Import recipients</button></div>
+          <div class="flow-copy"><small>RECIPIENTS</small><h3>Users & delivery</h3><p id="flowRecipientsSummary">Bind authorised retailer accounts and delivery addresses.</p><div id="recipientAccounts" class="recipient-accounts"><p class="muted">No recipients imported yet.</p></div><button type="button" class="secondary flow-edit" id="flowImportRecipients">Manage recipients</button></div>
           <span class="flow-state" id="flowRecipientsState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="approval">
           <span class="flow-number">3</span>
-          <div class="flow-copy"><small>APPROVAL</small><h3>Review & approve</h3><p id="flowApprovalSummary">Review order value and payment method.</p></div>
+          <div class="flow-copy"><small>APPROVAL</small><h3>Commercial approval</h3><p id="flowApprovalSummary">Review final order value and payment route.</p></div>
           <span class="flow-state" id="flowApprovalState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="checkout">
           <span class="flow-number">4</span>
-          <div class="flow-copy"><small>CHECKOUT</small><h3>Checkout</h3><p id="flowCheckoutSummary">Approved orders are ready to continue.</p><div class="checkout-engine"><div><span class="engine-dot" id="engineDot"></span><div><strong id="engineName">Checkout ready</strong><small id="engineMeta">Approve the batch to continue.</small></div></div><span class="engine-status" id="engineStatus">WAITING</span></div></div>
+          <div class="flow-copy"><small>CHECKOUT</small><h3>Retailer execution</h3><p id="flowCheckoutSummary">Approved orders move through checkout.</p><div class="checkout-engine"><div><span class="engine-dot" id="engineDot"></span><div><strong id="engineName">Checkout ready</strong><small id="engineMeta">Approve the batch to continue.</small></div></div><span class="engine-status" id="engineStatus">WAITING</span></div></div>
           <span class="flow-state" id="flowCheckoutState">WAITING</span>
         </li>
         <li class="flow-step" data-flow-step="confirmation">
           <span class="flow-number">5</span>
-          <div class="flow-copy"><small>CONFIRMATION</small><h3>Retailer-confirmed orders</h3><p id="flowConfirmationSummary">Genuine retailer order IDs will appear here after placement.</p></div>
+          <div class="flow-copy"><small>CONFIRMATION</small><h3>Retailer confirmation</h3><p id="flowConfirmationSummary">Retailer order IDs appear after placement.</p></div>
           <span class="flow-state" id="flowConfirmationState">WAITING</span>
         </li>
       </ol>
 
-      <div id="empty" class="fulfilment-empty">
-        <h3>No fulfilment batch yet</h3>
-        <p>Add products and recipients to start the procurement flow.</p>
-        <button id="emptyNew">Create first batch</button>
+      <div class="ff-lower-grid">
+        <section class="ff-panel">
+          <div class="ff-panel-head"><div><span>RECENT BATCHES</span><strong>Procurement activity</strong></div></div>
+          <div id="empty" class="fulfilment-empty">
+            <h3>No fulfilment batch yet</h3><p>Create a procurement batch to start execution.</p><button id="emptyNew">Create first batch</button>
+          </div>
+          <div id="batches" class="fulfilment-batches"></div>
+        </section>
+        <section class="ff-panel">
+          <div class="ff-panel-head"><div><span>RUN SUMMARY</span><strong>Checkout volume</strong></div></div>
+          <div id="tasks" class="fulfilment-run-summary"><p class="muted">Approved basket volume will appear here.</p></div>
+        </section>
       </div>
-      <div id="batches" class="fulfilment-batches"></div>
-      <div id="tasks" class="fulfilment-run-summary"><p class="muted">Approved basket volume will appear here.</p></div>
     </div>
 
     <aside class="procurement-cart" aria-label="Procurement cart">
-      <div class="cart-head"><p class="eyebrow">ORDER SUMMARY</p><h2>Procurement cart</h2><span id="cartBatchName">No active batch</span></div>
+      <div class="cart-accent"></div>
+      <div class="cart-head"><p class="eyebrow">LIVE ORDER SUMMARY</p><h2>Procurement cart</h2><span id="cartBatchName">No active batch</span></div>
       <div id="cartItems" class="cart-items"><p class="muted">Add products to see them here.</p></div>
       <div class="cart-facts">
         <div><span>Recipients</span><strong id="cartRecipients">0</strong></div>
         <div><span>Order lines</span><strong id="cartLines">0</strong></div>
         <div><span>Payment</span><strong id="cartPayment">—</strong></div>
       </div>
-      <div class="cart-subtotal"><span>Subtotal</span><strong id="cartSubtotal">₹0</strong></div>
+      <div class="cart-subtotal"><span>Approved value</span><strong id="cartSubtotal">₹0</strong></div>
       <div class="cart-progress"><span id="cartProgressText">Nothing ready to place yet.</span></div>
-      <button id="checkoutAll" class="cart-checkout" disabled>Place all baskets</button>
-      <small class="cart-note">If a retailer asks for verification, only that order pauses while the rest can continue.</small>
+      <button id="checkoutAll" class="cart-checkout" disabled>Continue checkout →</button>
+      <small class="cart-note">Protected verification pauses only the affected order; eligible orders can continue independently.</small>
     </aside>
   </div>
 </section>
-<section class="panel"><div class="panel-head"><div><p class="eyebrow">PAYMENT & COMPLIANCE</p><h2>Corporate settlement ledger</h2></div><span class="pill">LIVE ORDER DATA</span></div><div class="card-ledger"><div class="ledger-stats"><div><span>Virtual cards</span><strong id="virtualCount">0</strong></div><div><span>Payments recorded</span><strong id="tokenCount">0</strong></div><div><span>GST invoices</span><strong id="invoiceCount">0</strong></div></div></div><div id="settlements"><p class="muted">Completed payments and invoices will appear here.</p></div></section><section class="panel gst-compliance" id="gstCompliance"><div class="panel-head"><div><p class="eyebrow">GST COMPLIANCE</p><h2>GST profile, invoices & user-wise reports</h2></div><button type="button" class="secondary" id="downloadGstReport">Download GST Excel</button></div><div class="gst-layout"><form id="gstProfileForm" class="gst-profile"><h3>Supplier GST profile</h3><div class="program-grid"><label>Legal name<input name="legalName" required></label><label>Trade name<input name="tradeName"></label><label>GSTIN<input name="gstin" maxlength="15" placeholder="03ABCDE1234F1Z5" required></label><label>State code<input name="stateCode" maxlength="2" inputmode="numeric" placeholder="03" required></label><label>Address line 1<input name="addressLine1" required></label><label>Address line 2<input name="addressLine2"></label><label>City<input name="city" required></label><label>State<input name="state" required></label><label>PIN code<input name="postalCode" maxlength="6" inputmode="numeric" required></label><label>Invoice prefix<input name="invoicePrefix" maxlength="12" value="OG" required></label><label>Authorized signatory<input name="signatoryName"></label><label class="approval-check"><input name="eInvoiceApplicable" type="checkbox"><span>e-Invoice applies to this GSTIN (IRN/QR required before issue)</span></label></div><button type="submit">Save GST profile</button><p class="funding-message" id="gstProfileMessage">Configure the supplier GST profile once.</p></form><div class="gst-invoice-console"><h3>Create GST invoice template</h3><label>Confirmed order<select id="gstBasket"><option value="">No confirmed baskets yet</option></select></label><button type="button" id="createGstInvoice">Create invoice</button><p class="muted">HSN/SAC and GST rate come from each product line. Intra-state supplies split into CGST + SGST; inter-state supplies use IGST.</p><div id="gstInvoiceList"><p class="muted">No GST invoices created yet.</p></div></div></div></section>
+</section>
+<section class="panel"><div class="panel-head"><div><p class="eyebrow">PAYMENT & COMPLIANCE</p><h2>Corporate settlement ledger</h2></div><span class="pill">LIVE ORDER DATA</span></div><div class="card-ledger"><div class="ledger-stats"><div><span>Virtual cards</span><strong id="virtualCount">0</strong></div><div><span>Payments recorded</span><strong id="tokenCount">0</strong></div><div><span>GST invoices</span><strong id="invoiceCount">0</strong></div></div></div><div id="settlements"><p class="muted">Completed payments and invoices will appear here.</p></div></section><section class="gst-compliance gst-premium" id="gstCompliance">
+  <div class="gst-hero">
+    <div class="gst-hero-copy">
+      <span class="gst-hero-mark">GST</span>
+      <div><p class="eyebrow">GST & INVOICES</p><h2>Tax billing workspace</h2><p>Create compliant invoices from confirmed orders, manage your GST profile, attach IRN/QR when applicable, and export the ledger.</p></div>
+    </div>
+    <div class="gst-hero-actions">
+      <button type="button" class="secondary premium-icon-button" id="refreshGst" aria-label="Refresh GST workspace" title="Refresh GST workspace">↻</button>
+      <button type="button" class="secondary" id="downloadGstReport">Export GST Excel</button>
+      <button type="button" id="gstNewInvoice">＋ New invoice</button>
+    </div>
+  </div>
+
+  <div class="gst-kpi-strip">
+    <article class="gst-kpi-primary"><span>GST PROFILE</span><strong id="gstProfileState">SETUP</strong><small id="gstProfileMeta">Configure business GSTIN</small></article>
+    <article><span>INVOICES</span><strong id="gstInvoiceTotal">0</strong><small>Generated</small></article>
+    <article><span>READY</span><strong id="gstReadyCount">0</strong><small>Ready to issue</small></article>
+    <article><span>IRN PENDING</span><strong id="gstIrnCount">0</strong><small>e-Invoice action</small></article>
+    <article><span>CONFIRMED ORDERS</span><strong id="gstConfirmedCount">0</strong><small>Available for billing</small></article>
+    <article><span>INVOICE VALUE</span><strong id="gstInvoiceValue">₹0</strong><small>Total generated</small></article>
+  </div>
+
+  <div class="gst-tabs" role="tablist" aria-label="GST workspace">
+    <button type="button" class="active" data-gst-tab="billing">Billing</button>
+    <button type="button" data-gst-tab="invoices">Invoice register</button>
+    <button type="button" data-gst-tab="profile">GST profile</button>
+  </div>
+
+  <div class="gst-tab-panel active" data-gst-panel="billing">
+    <div class="gst-billing-grid">
+      <section class="gst-card gst-create-card">
+        <div class="gst-card-head"><div><span>QUICK BILLING</span><h3>Create invoice from confirmed order</h3></div><span class="gst-status-chip">LIVE DATA</span></div>
+        <label class="gst-order-select">Confirmed order<select id="gstBasket"><option value="">No confirmed baskets yet</option></select></label>
+        <div class="gst-billing-note">
+          <span class="gst-note-icon">✓</span>
+          <div><strong>Tax classification stays attached to the order</strong><p>HSN/SAC, GST rate and cess are read from the approved product lines. OrderGrid applies CGST + SGST for intra-state supplies and IGST for inter-state supplies.</p></div>
+        </div>
+        <button type="button" id="createGstInvoice" class="gst-create-button">Create GST invoice →</button>
+        <p class="gst-inline-message" id="gstBillingMessage">Choose a confirmed order to generate its invoice.</p>
+      </section>
+
+      <section class="gst-card gst-readiness-card">
+        <div class="gst-card-head"><div><span>ISSUE READINESS</span><h3>Invoice controls</h3></div><span id="gstEinvoiceBadge" class="gst-status-chip neutral">PROFILE REQUIRED</span></div>
+        <div class="gst-readiness-list">
+          <div><span class="gst-ready-dot"></span><div><strong>Supplier identity</strong><small id="gstSupplierReady">Configure GST profile</small></div></div>
+          <div><span class="gst-ready-dot"></span><div><strong>Buyer tax location</strong><small>State code is required on the confirmed order.</small></div></div>
+          <div><span class="gst-ready-dot"></span><div><strong>HSN / SAC + GST rate</strong><small>Validated from the procurement line before invoice creation.</small></div></div>
+          <div><span class="gst-ready-dot"></span><div><strong>e-Invoice gate</strong><small id="gstEinvoiceMeta">IRN/QR is required only when enabled for this GST profile.</small></div></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="gst-card gst-recent-card">
+      <div class="gst-card-head"><div><span>RECENT INVOICES</span><h3>Latest billing activity</h3></div><button type="button" class="secondary premium-quiet-button" data-gst-open-tab="invoices">View register →</button></div>
+      <div id="gstRecentInvoices" class="gst-recent-invoices"><p class="muted">No GST invoices created yet.</p></div>
+    </section>
+  </div>
+
+  <div class="gst-tab-panel" data-gst-panel="invoices" hidden>
+    <section class="gst-card gst-register-card">
+      <div class="gst-card-head"><div><span>INVOICE REGISTER</span><h3>Generated GST invoices</h3></div><span class="gst-status-chip neutral">PRINT / PDF · IRN</span></div>
+      <div id="gstInvoiceList"><p class="muted">No GST invoices created yet.</p></div>
+    </section>
+  </div>
+
+  <div class="gst-tab-panel" data-gst-panel="profile" hidden>
+    <form id="gstProfileForm" class="gst-card gst-profile">
+      <div class="gst-card-head"><div><span>BUSINESS TAX IDENTITY</span><h3>Supplier GST profile</h3></div><span class="gst-status-chip neutral">OWNER / APPROVER</span></div>
+      <div class="gst-profile-grid">
+        <label>Legal name<input name="legalName" required></label>
+        <label>Trade name<input name="tradeName"></label>
+        <label>GSTIN<input name="gstin" maxlength="15" placeholder="03ABCDE1234F1Z5" required></label>
+        <label>State code<input name="stateCode" maxlength="2" inputmode="numeric" placeholder="03" required></label>
+        <label class="span-2">Address line 1<input name="addressLine1" required></label>
+        <label class="span-2">Address line 2<input name="addressLine2"></label>
+        <label>City<input name="city" required></label>
+        <label>State<input name="state" required></label>
+        <label>PIN code<input name="postalCode" maxlength="6" inputmode="numeric" required></label>
+        <label>Invoice prefix<input name="invoicePrefix" maxlength="12" value="OG" required></label>
+        <label class="span-2">Authorized signatory<input name="signatoryName"></label>
+        <label class="gst-einvoice-toggle span-2"><input name="eInvoiceApplicable" type="checkbox"><span><strong>e-Invoice / IRN applies to this GSTIN</strong><small>When enabled, generated invoices remain IRN REQUIRED until an authorised IRP result is attached.</small></span></label>
+      </div>
+      <div class="gst-profile-actions"><p class="funding-message" id="gstProfileMessage">Configure the supplier GST profile once.</p><button type="submit">Save GST profile</button></div>
+    </form>
+  </div>
+</section>
+
+<dialog id="gstIrnDialog" class="gst-irn-dialog">
+  <form id="gstIrnForm">
+    <div class="modal-head"><div><p class="eyebrow">E-INVOICE COMPLETION</p><h2>Attach IRN & signed QR</h2></div><button type="button" class="close" id="closeGstIrn">×</button></div>
+    <p class="gst-irn-copy">Paste the IRN and signed QR payload/reference returned by your authorised Invoice Registration Portal integration.</p>
+    <input type="hidden" name="invoiceId">
+    <label>Invoice Reference Number (IRN)<input name="irn" minlength="20" maxlength="128" required autocomplete="off"></label>
+    <label>Signed QR payload / reference<textarea name="signedQr" rows="5" minlength="10" maxlength="10000" required></textarea></label>
+    <div class="modal-actions"><button type="button" class="secondary" id="cancelGstIrn">Cancel</button><button type="submit">Attach & mark ready</button></div>
+    <p id="gstIrnError" class="error"></p>
+  </form>
+</dialog>
+</section>
 <section class="provider-strip"><span>AVAILABLE STORES</span><b>amazon.in</b><b>Flipkart</b><b>Shopify stores</b><span>•</span><span>Recipient import</span><span>•</span><span>Approval history</span></section></main>
 <dialog id="batchDialog"><form id="batchForm"><div class="modal-head"><div><p class="eyebrow">NEW PROCUREMENT</p><h2>Create fulfilment batch</h2></div><button type="button" class="close" id="close">×</button></div><div class="steps"><b>1 Products</b><span>2 Recipients</span><span>3 Approval</span><span>4 Checkout</span></div><label>Batch name<input name="name" required minlength="3" placeholder="September customer rewards"></label><div id="productRows"><div class="product-entry"><div class="two"><label>Product URL<input name="url" type="url" required placeholder="https://www.amazon.in/dp/..."></label><label>Estimated unit price (₹)<input name="price" type="number" min="1" step="0.01" value="1299" required></label></div><div class="gst-product-grid"><label>Quantity per recipient<input name="quantity" type="number" min="1" max="100" value="1" required></label><label>HSN / SAC<input name="hsnSac" maxlength="16" placeholder="e.g. 8471" required><small>Enter the HSN/SAC from the supplier or retailer tax classification. OrderGrid does not guess it from the product URL.</small></label><label>GST rate<select name="gstRate" required><option value="0">0%</option><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="1.5">1.5%</option><option value="3">3%</option><option value="5">5%</option><option value="7.5">7.5%</option><option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option><option value="40">40%</option></select></label><label>Cess %<input name="cessRate" type="number" min="0" max="100" step="0.01" value="0"></label><label class="gst-inclusive"><input name="priceIncludesGst" type="checkbox" checked> Price includes GST</label><button type="button" class="secondary remove-product" data-remove-product hidden>Remove product</button></div></div></div><button type="button" class="secondary wide" id="addProduct">＋ Add another product</button><label>Payment route<select name="paymentMode"><option value="Corporate virtual card">Corporate virtual card</option><option value="Cash on Delivery">Cash on Delivery</option></select><small>One approval covers the full batch. COD remains subject to retailer and delivery-area eligibility.</small></label><label>Recipient CSV file<input name="file" type="file" accept=".csv,.xlsx"><small>Required: recipient, phone, address, city, state and postal code. For B2B GST reporting add legal_name, gstin and state_code. For retailer sign-in, add retailer + retailer_login + retailer_password, or retailer-specific columns such as amazon_user_id + amazon_password. Passwords are protected after import and are never shown back. Do not upload OTP, CVC or verification codes.</small></label><button type="button" class="secondary wide" id="sample">Use 3 sample recipients</button><div id="recipientPreview" class="preview"></div><div class="modal-actions"><button type="button" class="secondary" id="cancel">Cancel</button><button type="submit">Create & approve</button></div><p id="formError" class="error"></p></form></dialog>
 <div id="issuerDialog" class="issuer-connect-overlay" hidden><div class="issuer-connect-shell"><form id="issuerForm" class="login-card issuer-connect-form"><div class="modal-head"><div><p class="eyebrow">CARD DETAILS & SETUP</p><h2>Funding card & virtual card programme</h2></div><button type="button" class="close" id="closeIssuer">×</button></div><p id="issuerDialogIntro">Review the connected funding-card identity or set up the approved bank/card programme used to create child virtual cards. Only PCI-safe identity is stored here.</p><div class="issuer-bank-shortcuts"><button type="button" data-bank-shortcut="hdfc"><strong>HDFC Bank</strong><span>Open HDFC setup</span></button><button type="button" data-bank-shortcut="axis"><strong>Axis Bank</strong><span>Open Axis setup</span></button><button type="button" data-bank-shortcut="other"><strong>Other issuer</strong><span>Choose from full list</span></button></div><div class="issuer-modal-status"><div><span>PROGRAMME STATUS</span><strong id="issuerModalStatus">SETUP REQUIRED</strong></div><div><span>CURRENT PROGRAMME</span><strong id="issuerModalProgramme">Not connected</strong></div><div><span>FUNDING CARD</span><strong id="issuerModalCard">Not connected</strong></div></div><div class="program-grid"><label>Bank / issuer<select name="provider" id="issuerProvider" required><option value="hdfc">HDFC Bank</option><option value="axis">Axis Bank</option><option value="icici">ICICI Bank</option><option value="sbi">State Bank of India</option><option value="yes">YES BANK</option><option value="kotak">Kotak Mahindra Bank</option><option value="indusind">IndusInd Bank</option><option value="idfc">IDFC FIRST Bank</option><option value="bob">Bank of Baroda</option><option value="enkash">EnKash issuer programme</option><option value="custom">Other Bank / Issuer</option></select></label><label>Bank / issuing partner<input name="bankName" id="issuerBankName" required></label><label>Programme name<input name="programmeName" placeholder="Corporate / Purchase / Business card programme" required></label><label>Card network<select name="cardNetwork" required><option value="VISA">Visa</option><option value="MASTERCARD">Mastercard</option><option value="RUPAY">RuPay</option><option value="AMEX">Amex</option><option value="DINERS">Diners</option><option value="OTHER">Other</option></select></label></div>

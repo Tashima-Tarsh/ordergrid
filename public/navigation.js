@@ -64,6 +64,7 @@ const items=[
   ['fulfilment','▦','Fulfilment'],
   ['bulk','⇉','Bulk orders'],
   ['payments','₹','Payments'],
+  ['gst','▣','GST & invoices'],
   ['cards','◆','Cards & funding'],
   ['rewards','★','Retailer users']
 ];
@@ -78,7 +79,7 @@ const main=document.querySelector('main');
 const title=document.createElement('section');
 title.className='workspace-title';
 main.prepend(title);
-const sections=[...main.children].filter(x=>x!==title);
+const sections=[...main.children].filter(x=>x!==title&&x.tagName!=='DIALOG');
 sections.forEach(s=>{
   let view='hidden';
   if(s.classList.contains('control-center'))view='control';
@@ -89,7 +90,8 @@ sections.forEach(s=>{
   else if(s.classList.contains('funding-workspace'))view='cards';
   else if(s.classList.contains('rewards-centre'))view='rewards';
   else if(s.classList.contains('fulfilment-commerce')||s.classList.contains('checkout-panel')||s.querySelector('h2')?.textContent==='Fulfilment batches')view='fulfilment';
-  else if(s.classList.contains('gst-compliance')||s.querySelector('h2')?.textContent==='Corporate settlement ledger')view='payments';
+  else if(s.classList.contains('gst-compliance'))view='gst';
+  else if(s.querySelector('h2')?.textContent==='Corporate settlement ledger')view='payments';
   s.dataset.view=view;
   s.classList.add('view-section');
 });
@@ -100,11 +102,12 @@ const copy={
   overview:['Dashboard','Live procurement command and recent execution.'],
   fulfilment:['Fulfilment','Products, allocation, approval and checkout.'],
   bulk:['Bulk orders','Customer orders and checkout intervention.'],
-  payments:['Payments','Settlement, GST and completed payment records.'],
+  payments:['Payments','Settlement and completed payment records.'],
+  gst:['GST & Invoices','GST billing, invoice register and tax profile.'],
   cards:['Cards & funding','Funding programme and virtual-card inventory.'],
   rewards:['Retailer users','Authorised accounts, addresses and saved sessions.']
 };
-const hashByView={control:'control-center',autopilot:'autopilot',overview:'dashboard',fulfilment:'fulfilment',bulk:'bulk-orders',payments:'payments',cards:'cards',rewards:'retailer-users'};
+const hashByView={control:'control-center',autopilot:'autopilot',overview:'dashboard',fulfilment:'fulfilment',bulk:'bulk-orders',payments:'payments',gst:'gst-invoices',cards:'cards',rewards:'retailer-users'};
 const viewByHash=Object.fromEntries(Object.entries(hashByView).map(([view,hash])=>[hash,view]));
 const hashView=()=>viewByHash[String(location.hash||'').replace(/^#\/?/,'').replace(/\/$/,'')]||null;
 
@@ -133,6 +136,7 @@ side.querySelectorAll('button[data-view]').forEach(button=>{
     const view=button.dataset.view;
     show(view);
     if(view==='cards')window.dispatchEvent(new CustomEvent('ordergrid:cards-open'));
+    if(view==='gst')window.dispatchEvent(new CustomEvent('ordergrid:gst-open'));
   });
 });
 document.addEventListener('click',e=>{
