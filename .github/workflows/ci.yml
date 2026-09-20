@@ -26,8 +26,8 @@ jobs:
         run: npm run smoke:frontend
       - name: End-to-end showroom checkout smoke test
         run: npm run smoke:demo
-      - name: Dealer hierarchy isolation smoke test
-        run: node scripts/smoke-dealers.mjs
+      - name: User-only workspace contract smoke test
+        run: npm run smoke:users
       - name: Autopilot policy enforcement smoke test
         run: node scripts/smoke-automation.mjs
       - name: Audit production dependencies
