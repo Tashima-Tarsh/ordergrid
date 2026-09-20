@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/automation-center.js","public/automation-center.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/demo-server.ts","agent/index.mjs","agent/cdp.mjs","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -17,8 +17,6 @@ const userDashboard=files["public/user-dashboard.js"];
 const dashboard=files["public/dashboard.js"];
 const dashboardCss=files["public/dashboard.css"];
 const overviewCss=files["public/overview-premium.css"];
-const automation=files["public/automation-center.js"];
-const automationCss=files["public/automation-center.css"];
 const workspaceCss=files["public/workspace-premium.css"];
 const gst=files["public/gst.js"];
 const gstCss=files["public/gst-premium.css"];
@@ -92,39 +90,26 @@ must(dashboard.includes("overview-commandbar"),"dashboard contract: compact comm
 must(dashboard.includes("overview-kpi-strip"),"dashboard contract: horizontal KPI strip missing");
 must(!dashboard.includes("/api/dealer-network"),"dashboard contract: stale dealer API returned");
 must(!/DEALER NETWORK|Main Dealer|Sub-dealer|Current dealer/i.test(dashboard),"dashboard contract: dealer hierarchy wording returned");
-must(automation.includes("automation-control-center"),"autopilot contract: premium automation center missing");
-must(automationCss.includes(".automation-layout"),"autopilot contract: premium layout styles missing");
-must(automationCss.includes(".automation-policy"),"autopilot contract: policy console styles missing");
 must(navigation.includes("let view='hidden'"),"navigation contract: unknown sections must not leak into Dashboard");
 must(navigation.includes("else if(s.classList.contains('metrics'))view='hidden'"),"dashboard density contract: legacy metrics must stay out of Dashboard");
 must(!navigation.includes("command-dashboard')||s.classList.contains('metrics')"),"dashboard density contract: legacy metrics must not share overview route");
 must(dashboard.includes("button.textContent='↻'"),"dashboard density contract: refresh button must remain icon-only");
 must(!dashboard.includes("button.textContent='Refresh dashboard'"),"dashboard density contract: refresh label must not be written into compact icon button");
-must(automation.includes("automation-column-left"),"autopilot density contract: independent left stack missing");
-must(automation.includes("automation-column-right"),"autopilot density contract: independent right stack missing");
-must(workspaceCss.includes(".automation-column"),"autopilot density contract: independent column styles missing");
-must(workspaceCss.includes("grid-template-columns:repeat(2,minmax(0,1fr))"),"autopilot density contract: compact two-column workflow matrix missing");
-must(workspaceCss.includes("flex-direction:column!important"),"autopilot density contract: policy form must be forced into vertical flow");
 must(html.includes('href="workspace-premium.css"'),"premium shell contract: workspace stylesheet must be loaded");
 must(sw.includes("'./workspace-premium.css'"),"premium shell contract: workspace stylesheet must be precached");
 must(workspaceCss.includes(".overview-kpi-strip"),"premium shell contract: dashboard density styles missing");
-must(workspaceCss.includes(".automation-command-surface"),"premium shell contract: autopilot command surface styles missing");
 must(workspaceCss.includes(".overview-batch-rail"),"premium shell contract: horizontal batch rail styles missing");
 must(navigation.includes("hashByView"),"navigation contract: premium route hashes missing");
 must(navigation.includes("overview:'dashboard'"),"navigation contract: dashboard URL route missing");
-must(navigation.includes("autopilot:'autopilot'"),"navigation contract: autopilot URL route missing");
+must(!navigation.includes("['autopilot'"),"frontend contract: Autopilot must not appear in sidebar navigation");
+must(!navigation.includes("autopilot:'autopilot'"),"frontend contract: Autopilot route must stay removed");
+must(!html.includes('class="autopilot-suite"'),"frontend contract: legacy Autopilot suite must stay removed");
+must(!html.includes('class="automation-panel"'),"frontend contract: legacy automation panel must stay removed");
+must(!html.includes('src="autopilot.js"'),"frontend contract: legacy Autopilot script must stay unloaded");
+must(!html.includes('src="automation-center.js"'),"frontend contract: live Autopilot console must stay unloaded");
+must(!html.includes('href="automation-center.css"'),"frontend contract: Autopilot-only stylesheet must stay unloaded");
+must(!sw.includes("'./automation-center.js'")&&!sw.includes("'./automation-center.css'"),"frontend contract: Autopilot assets must stay out of service-worker cache");
 must(navigation.includes("body.product-shell{padding-left:216px}"),"navigation contract: compact premium sidebar width missing");
-must(automation.includes("automation-command-surface"),"autopilot contract: compact command surface missing");
-must(automation.includes('id="autoRefresh"'),"autopilot contract: top command refresh missing");
-must(automation.includes('id="runtimeTrigger"'),"autopilot runtime contract: trigger state missing");
-must(automation.includes('id="policyTriggerExplainer"'),"autopilot runtime contract: trigger explanation missing");
-must(automation.includes("READY/IDLE stage cards are intentionally hidden"),"autopilot runtime contract: static stage-card replacement missing");
-must(!automation.includes('id="automationWorkflowList"'),"autopilot runtime contract: numbered workflow-card list must stay removed");
-must(automation.includes("Save & apply"),"autopilot runtime contract: policy action must communicate application");
-must(automation.includes("▶ Run now"),"autopilot runtime contract: reusable manual trigger missing");
-must(automation.includes("▶ Start continuous"),"autopilot runtime contract: continuous trigger control missing");
-must(workspaceCss.includes(".automation-runtime-grid"),"autopilot runtime contract: compact runtime styling missing");
-must(workspaceCss.includes(".automation-safeguards"),"autopilot runtime contract: compact safeguards disclosure missing");
 must(server.includes('policy.run_mode==="CONTINUOUS"'),"autopilot trigger contract: active continuous policy must trigger on save");
 must(server.includes("status in ('CLAIMED','OPENED') and expires_at>now()"),"autopilot concurrency contract: active orders must count toward max-active limit");
 must(server.includes("Number(policy.max_active_orders||8)-Number(active.rows[0]?.count||0)"),"autopilot concurrency contract: new claims must use remaining active capacity");
