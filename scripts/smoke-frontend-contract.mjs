@@ -228,6 +228,7 @@ must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amaz
 must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
 must(server.includes("session_check_requested_at=null,session_check_claimed_at=null"),"retailer session contract: completed auth challenge must pause until explicit OTP or reconnect action");
 must(server.includes("waitingFor:{retailerAccountId"),"retailer session contract: worker must not start another account while current authentication needs action");
+must(server.includes("case when session_worker_id=$2 then 0 else 1 end"),"retailer session contract: OTP-submitted account must be rechecked before the next account starts");
 must(server.includes("clauses.push(\"(session_status<>'READY'"),"retailer session contract: Connect all must skip already-connected accounts");
 must(cdp.includes('submitRetailerOtp'),"retailer session contract: managed retailer OTP submission missing");
 must(cdp.includes('ORDERGRID_HEADLESS'),"retailer session contract: managed headless browser mode missing");
