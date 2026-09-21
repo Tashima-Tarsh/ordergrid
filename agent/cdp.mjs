@@ -65,6 +65,48 @@ export async function closeProfileBrowser({directory}){
   }catch{return false}
 }
 
+function safeCookie(cookie){
+  const result={
+    name:String(cookie.name||""),
+    value:String(cookie.value||""),
+    domain:String(cookie.domain||""),
+    path:String(cookie.path||"/"),
+    secure:Boolean(cookie.secure),
+    httpOnly:Boolean(cookie.httpOnly)
+  };
+  if(cookie.sameSite==="Strict"||cookie.sameSite==="Lax"||cookie.sameSite==="None")result.sameSite=cookie.sameSite;
+  if(Number.isFinite(Number(cookie.expires))&&Number(cookie.expires)>0)result.expires=Number(cookie.expires);
+  return result;
+}
+export async function exportRetailerSessionState({chrome,directory,retailer}){
+  const host=retailerHost(retailer);if(!host)return {cookies:[]};
+  const port=await ensureChrome(chrome,directory);
+  const target=await createTarget(port,`https://www.${host}/`);
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Network.enable");
+    const result=await connection.send("Network.getAllCookies");
+    const cookies=(result.cookies||[])
+      .filter(cookie=>String(cookie.domain||"").replace(/^\./,"").endsWith(host))
+      .map(safeCookie)
+      .filter(cookie=>cookie.name&&cookie.domain);
+    return {cookies};
+  }finally{connection.close();await closeTarget(port,target)}
+}
+export async function restoreRetailerSessionState({chrome,directory,retailer,sessionState}){
+  const cookies=Array.isArray(sessionState?.cookies)?sessionState.cookies.map(safeCookie).filter(cookie=>cookie.name&&cookie.domain):[];
+  if(!cookies.length)return false;
+  const host=retailerHost(retailer);if(!host)return false;
+  const port=await ensureChrome(chrome,directory);
+  const target=await createTarget(port,`https://www.${host}/`);
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Network.enable");
+    await connection.send("Network.setCookies",{cookies});
+    return true;
+  }finally{connection.close();await closeTarget(port,target)}
+}
+
 async function createTarget(port,url){
   const response=await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
@@ -564,7 +606,8 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 }
 
 
-export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials}){
+export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null}){
+  if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
   const port=await ensureChrome(chrome,directory);
   const url=retailer==="flipkart"
     ?"https://www.flipkart.com/account/orders"
