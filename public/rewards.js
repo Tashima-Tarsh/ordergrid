@@ -103,9 +103,15 @@
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
-      const verifyAction=sessionStatus!=='READY'
+      const credentialMissing=String(account.credential_status||'MISSING')==='MISSING';
+      const credentialAction=credentialMissing
+        ?'<div class="managed-credential"><input type="password" autocomplete="current-password" maxlength="1000" placeholder="Retailer password" data-account-password-input><button type="button" data-save-account-password>Save & connect</button></div>'
+        :'';
+      const verifyAction=sessionStatus!=='READY'&&!credentialMissing
         ?`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`
-        :'<span class="session-connected-chip">✓ Connected</span>';
+        :sessionStatus==='READY'
+          ?'<span class="session-connected-chip">✓ Connected</span>'
+          :'';
       const identity=account.customer_id
         ?esc(account.display_name||account.label||account.account_reference)+' · '+esc(account.customer_reference||'BOUND USER')
         :'LOGIN-ONLY POOL ACCOUNT';
@@ -123,7 +129,7 @@
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
           <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
-          <div class="account-actions">${verifyAction}${otpAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
+          <div class="account-actions">${credentialAction}${verifyAction}${otpAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and secure login.</span></div>';
   }
@@ -335,6 +341,23 @@
   $('#retailerAccountPool')?.addEventListener('click',async event=>{
     const row=event.target.closest('[data-account-id]');if(!row)return;
     const account=accounts.find(x=>x.id===row.dataset.accountId);if(!account)return;
+    const savePassword=event.target.closest('[data-save-account-password]');
+    if(savePassword){
+      const input=row.querySelector('[data-account-password-input]');
+      const password=String(input?.value||'');
+      if(!password){alert('Enter the retailer password.');return}
+      savePassword.disabled=true;const previous=savePassword.textContent;savePassword.textContent='Saving…';
+      try{
+        await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/credential',{
+          method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})
+        });
+        if(input)input.value='';
+        toast('Password encrypted and saved. OrderGrid is connecting this retailer account.');
+        await load();
+      }catch(error){alert(customerError(error))}
+      finally{savePassword.textContent=previous;setTimeout(()=>{savePassword.disabled=false},1200)}
+      return;
+    }
     const submitOtp=event.target.closest('[data-submit-account-otp]');
     if(submitOtp){
       const input=row.querySelector('[data-account-otp-input]');
