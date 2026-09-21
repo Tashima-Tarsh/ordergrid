@@ -5,7 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import staticPlugin from "@fastify/static";
 import multipart from "@fastify/multipart";
 import ExcelJS from "exceljs";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -160,6 +160,29 @@ function secretEqual(a:string|undefined,b:string|undefined){
   const left=Buffer.from(a),right=Buffer.from(b);
   return left.length===right.length&&timingSafeEqual(left,right);
 }
+function secureBrowserSetupToken(userId:string,tenantId:string){
+  const payload=Buffer.from(JSON.stringify({
+    userId,
+    tenantId,
+    expiresAt:Date.now()+10*60*1000,
+    nonce:randomBytes(12).toString("base64url")
+  })).toString("base64url");
+  const signature=createHmac("sha256",config.SESSION_SECRET).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+function readSecureBrowserSetupToken(token:string){
+  const parts=token.split(".");
+  if(parts.length!==2)return null;
+  const [payload,signature]=parts;
+  const expected=createHmac("sha256",config.SESSION_SECRET).update(payload).digest("base64url");
+  if(!secretEqual(signature,expected))return null;
+  try{
+    const parsed=JSON.parse(Buffer.from(payload,"base64url").toString("utf8"));
+    if(typeof parsed.userId!=="string"||typeof parsed.tenantId!=="string"||typeof parsed.expiresAt!=="number")return null;
+    if(parsed.expiresAt<Date.now())return null;
+    return {userId:parsed.userId as string,tenantId:parsed.tenantId as string};
+  }catch{return null}
+}
 function workerMachineRoute(req:any){
   const path=String(req.url||"").split("?",1)[0] ?? "";
   if(path.startsWith("/api/execution-worker/"))return true;
@@ -167,7 +190,7 @@ function workerMachineRoute(req:any){
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
 }
 app.addHook("preHandler",async(req,reply)=>{
-  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;
+  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/secure-browser/bootstrap")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
     select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
@@ -192,6 +215,70 @@ app.get("/api/worker-bootstrap",async(req,reply)=>{
   return {
     workerToken:config.WORKER_API_TOKEN,
     ordergridUrl:config.APP_ORIGIN,
+    autoStartSupported:true
+  };
+});
+
+app.get("/api/secure-browser/setup.cmd",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const setupToken=secureBrowserSetupToken(p.id,p.tenantId);
+  const origin=config.APP_ORIGIN.replace(/\/$/,"");
+  const safeOrigin=origin.replace(/'/g,"''");
+  const safeToken=setupToken.replace(/'/g,"''");
+  const script=[
+    "@echo off",
+    "setlocal",
+    "title OrderGrid Secure Browser Setup",
+    "echo.",
+    "echo  OrderGrid Secure Browser",
+    "echo  One-time Windows setup",
+    "echo.",
+    "echo  Installing the secure browser component. No command entry is required.",
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $env:ORDERGRID_URL='${safeOrigin}'; $env:ORDERGRID_SETUP_TOKEN='${safeToken}'; $p=Join-Path $env:TEMP 'ordergrid-secure-browser-setup.ps1'; Invoke-WebRequest -UseBasicParsing -Uri '${safeOrigin}/ordergrid-worker.ps1' -OutFile $p; & $p"`,
+    "set \"OG_EXIT=%ERRORLEVEL%\"",
+    "if not \"%OG_EXIT%\"==\"0\" (",
+    "  echo.",
+    "  echo  Setup could not finish. Return to OrderGrid and choose Install Secure Browser again.",
+    "  pause",
+    "  exit /b %OG_EXIT%",
+    ")",
+    "echo.",
+    "echo  OrderGrid Secure Browser is ready.",
+    "echo  Return to OrderGrid. Your queued retailer login will open automatically.",
+    "timeout /t 4 /nobreak >nul",
+    "exit /b 0",
+    ""
+  ].join("\r\n");
+  reply.header("cache-control","no-store, private");
+  reply.header("content-type","application/octet-stream");
+  reply.header("content-disposition",'attachment; filename="OrderGrid Secure Browser Setup.cmd"');
+  return reply.send(script);
+});
+
+app.post("/api/secure-browser/bootstrap",{config:{rateLimit:{max:20,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  const body=z.object({setupToken:z.string().min(40).max(4096)}).parse(req.body);
+  const setup=readSecureBrowserSetupToken(body.setupToken);
+  if(!setup)return reply.code(401).send({error:"secure_browser_setup_expired"});
+  const {rows}=await db.query(
+    "select id,tenant_id,role::text role,email from users where id=$1 and tenant_id=$2 and active limit 1",
+    [setup.userId,setup.tenantId]
+  );
+  const user=rows[0];
+  if(!user||!["OWNER","APPROVER","BUYER"].includes(user.role))return reply.code(403).send({error:"secure_browser_setup_forbidden"});
+  const sessionToken=randomBytes(32).toString("base64url");
+  await db.query(
+    "insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '30 days')",
+    [tokenHash(sessionToken),user.id,user.tenant_id]
+  );
+  await audit(db,user.tenant_id,user.id,"secure_browser.installed","execution_worker",null,{sessionDays:30});
+  reply.header("cache-control","no-store, private");
+  return {
+    workerToken:config.WORKER_API_TOKEN,
+    workerSessionToken:sessionToken,
+    ordergridUrl:config.APP_ORIGIN,
+    userEmail:user.email,
+    sessionDays:30,
     autoStartSupported:true
   };
 });
