@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
+import { closeProfileBrowser, executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount, submitRetailerOtp } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -138,6 +138,13 @@ async function main(){
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
             continue;
           }
+          if(command.command==="SUBMIT_OTP"){
+            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
+            const result=await submitRetailerOtp({chrome,directory,retailer:command.retailer,otp:String(command.payload?.otp||"")});
+            if(!result?.ok)throw new Error(result?.reason||"Retailer OTP submission failed");
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
+            continue;
+          }
           throw new Error("Unsupported worker command");
         }catch(error){
           await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(error.message).slice(0,300)})}).catch(()=>{});
@@ -152,6 +159,7 @@ async function main(){
             const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
             result=await inspectFlipkartMobile({chrome,directory,productUrl:String(command.payload?.productUrl||"")});
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
+            await closeProfileBrowser({directory}).catch(()=>{});
             output.write(`Product check ${command.payload?.accountReference||command.retailerAccountId} · ${result.state} · ${result.title||command.payload?.productUrl||""}\n`);
             return {ok:true,friction:productCheckFriction(result,null)};
           }catch(caught){
@@ -176,6 +184,7 @@ async function main(){
               method:"POST",
               body:JSON.stringify({status:result.status,code:result.code,message:result.message})
             }).catch(()=>{});
+            if(result.status!=="REAUTH_REQUIRED")await closeProfileBrowser({directory}).catch(()=>{});
           }
         }catch(error){output.write(`Session readiness cycle error: ${error.message}\n`)}
       }
@@ -208,6 +217,7 @@ async function main(){
                   })
                 });
                 started.delete(basket.id);
+                await closeProfileBrowser({directory}).catch(()=>{});
                 output.write(`Stock watch ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}\n`);
                 continue;
               }
@@ -230,6 +240,7 @@ async function main(){
               if(result.state==="CONFIRMED"&&result.orderId){
                 await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
                 started.delete(basket.id);
+                await closeProfileBrowser({directory}).catch(()=>{});
                 output.write(`Confirmed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer} · ${result.orderId}\n`);
               }else if(result.state==="CHALLENGE"){
                 await postProgress(workerId,basket.id,"CHALLENGE",result.code||"RETAILER_CHALLENGE",result.message||"Retailer action is required");
@@ -237,6 +248,7 @@ async function main(){
               }else if(result.state==="FAILED"){
                 await postProgress(workerId,basket.id,"FAILED",result.code||"EXECUTION_FAILED",result.message||"Checkout execution failed");
                 started.delete(basket.id);
+                await closeProfileBrowser({directory}).catch(()=>{});
                 output.write(`Failed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.message||result.code}\n`);
               }else{
                 await postProgress(workerId,basket.id,"RUNNING",result.code,result.message);
@@ -269,6 +281,7 @@ async function main(){
                   error:[observed.rewardError,observed.orderError].filter(Boolean).join("; ")||null
                 })
               });
+              if(!observed.authChallenge)await closeProfileBrowser({directory}).catch(()=>{});
             }catch(error){
               await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/${encodeURIComponent(account.retailerAccountId)}`,{
                 method:"POST",

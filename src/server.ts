@@ -23,6 +23,7 @@ import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
 import { buildFlipkartAllocation } from "./flipkart-allocation.js";
 import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } from "./user-dashboard-reporting.js";
+import { startManagedExecutionSupervisor } from "./managed-execution.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 type AutomationPolicy={
@@ -930,7 +931,7 @@ app.get("/api/retailer-accounts",async(req)=>{
       addr.city address_city,addr.state address_state,addr.postal_code address_postal_code,addr.country address_country,
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
       ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
-      ra.session_status,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
+      ra.session_status,ra.session_challenge_code,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
       coalesce((select sum(case
         when re.event_type in ('CREDITED','ADJUSTED') then re.units
@@ -1055,7 +1056,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
   const {rows}=await db.query(
     `update retailer_accounts set
-       session_status='VERIFYING',session_target_days=$2,session_check_requested_at=now(),
+       session_status='VERIFYING',session_challenge_code=null,session_target_days=$2,session_check_requested_at=now(),
        session_check_claimed_at=null,session_worker_id=null,updated_at=now()
      where ${clauses.join(" and ")}
      returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
@@ -1087,6 +1088,46 @@ app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
   return {commandId:rows[0].id,status:rows[0].status};
 });
 
+
+app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({otp:z.string().regex(/^\d{4,8}$/)}).parse(req.body);
+  const account=await db.query(`
+    select ra.id,ra.retailer,ra.profile_key,ra.session_worker_id,ra.session_status,ra.session_challenge_code,ew.last_seen
+    from retailer_accounts ra
+    left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+    where ra.id=$1 and ra.tenant_id=$2 and ra.active
+    limit 1
+  `,[id,p.tenantId]);
+  const row=account.rows[0];
+  if(!row)return reply.code(404).send({error:"retailer_account_not_found"});
+  if(row.session_status!=="REAUTH_REQUIRED"||row.session_challenge_code!=="OTP_REQUIRED")return reply.code(409).send({error:"retailer_otp_not_requested"});
+  if(!row.session_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"managed_execution_offline"});
+
+  const protectedOtp=encryptJson({otp:body.otp},config.DATA_ENCRYPTION_KEY_BASE64);
+  const payload={
+    retailer:row.retailer,retailerAccountId:id,profileKey:row.profile_key,
+    otpEncrypted:{
+      ciphertext:protectedOtp.ciphertext.toString("base64"),
+      iv:protectedOtp.iv.toString("base64"),
+      authTag:protectedOtp.authTag.toString("base64")
+    }
+  };
+  const existing=await db.query(
+    "select id,status from execution_worker_commands where tenant_id=$1 and worker_id=$2 and command='SUBMIT_OTP' and payload->>'retailerAccountId'=$3 and status in ('PENDING','PROCESSING') order by requested_at desc limit 1",
+    [p.tenantId,row.session_worker_id,id]
+  );
+  if(existing.rows[0])return {commandId:existing.rows[0].id,status:existing.rows[0].status};
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,null,'SUBMIT_OTP',$3,$4) returning id,status`,
+    [p.tenantId,row.session_worker_id,payload,p.id]
+  );
+  await audit(db,p.tenantId,p.id,"retailer_account.otp_submitted","retailer_account",id,{workerId:row.session_worker_id});
+  return {commandId:rows[0].id,status:rows[0].status};
+});
 
 app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
   const p=req.principal!;
@@ -1340,7 +1381,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
   const ready=body.status==="READY";
   const {rows}=await db.query(
     `update retailer_accounts set
-       session_status=$1,session_checked_at=now(),
+       session_status=$1,session_challenge_code=case when $1='READY' then null else $4 end,session_checked_at=now(),
        session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
        session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end,session_check_claimed_at=null,
        auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
@@ -1350,7 +1391,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
        updated_at=now()
      where id=$2 and tenant_id=$3
      returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id`,
-    [body.status,retailerAccountId,p.tenantId]
+    [body.status,retailerAccountId,p.tenantId,body.code??null]
   );
   await createNotification({
     tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
@@ -1619,6 +1660,50 @@ app.post("/api/human-actions/:id/focus",async(req,reply)=>{
   return {commandId:rows[0].id,status:rows[0].status};
 });
 
+app.post("/api/human-actions/:id/otp",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({otp:z.string().regex(/^\d{4,8}$/)}).parse(req.body);
+  const basket=await db.query(`
+    select cb.id,cb.execution_worker_id,cb.retailer_account_id,cb.retailer,cb.failure_code,
+      ra.profile_key,ew.last_seen
+    from checkout_baskets cb
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join execution_workers ew on ew.tenant_id=cb.tenant_id and ew.id=cb.execution_worker_id
+    where cb.id=$1 and cb.tenant_id=$2 and cb.status in ('REQUIRES_ACTION','OPENED')
+    limit 1
+  `,[id,p.tenantId]);
+  const row=basket.rows[0];
+  if(!row)return reply.code(404).send({error:"action_not_found"});
+  if(!/OTP/i.test(String(row.failure_code||"")))return reply.code(409).send({error:"otp_not_requested"});
+  if(!row.execution_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"execution_worker_offline"});
+
+  const protectedOtp=encryptJson({otp:body.otp},config.DATA_ENCRYPTION_KEY_BASE64);
+  const payload={
+    retailer:row.retailer,
+    retailerAccountId:row.retailer_account_id,
+    profileKey:row.profile_key,
+    otpEncrypted:{
+      ciphertext:protectedOtp.ciphertext.toString("base64"),
+      iv:protectedOtp.iv.toString("base64"),
+      authTag:protectedOtp.authTag.toString("base64")
+    }
+  };
+  const existing=await db.query(
+    "select id,status from execution_worker_commands where tenant_id=$1 and worker_id=$2 and checkout_basket_id=$3 and command='SUBMIT_OTP' and status in ('PENDING','PROCESSING') order by requested_at desc limit 1",
+    [p.tenantId,row.execution_worker_id,id]
+  );
+  if(existing.rows[0])return {commandId:existing.rows[0].id,status:existing.rows[0].status};
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,$3,'SUBMIT_OTP',$4,$5) returning id,status`,
+    [p.tenantId,row.execution_worker_id,id,payload,p.id]
+  );
+  await audit(db,p.tenantId,p.id,"human_action.otp_submitted","checkout_basket",id,{workerId:row.execution_worker_id});
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
 app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
   const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
   const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
@@ -1654,12 +1739,24 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
       order by wc.requested_at
     `,[p.tenantId,ids]);
     await client.query("commit");
-    return {commands:commands.rows.map(r=>({
-      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
-      retailer:r.retailer??r.payload?.retailer,
-      retailerAccountId:r.retailer_account_id??r.payload?.retailerAccountId,
-      profileKey:r.profile_key??r.payload?.profileKey,payload:r.payload
-    }))};
+    return {commands:commands.rows.map(r=>{
+      let payload=r.payload??{};
+      if(r.command==="SUBMIT_OTP"&&payload?.otpEncrypted){
+        const encrypted=payload.otpEncrypted;
+        const secret=decryptJson({
+          ciphertext:Buffer.from(String(encrypted.ciphertext),"base64"),
+          iv:Buffer.from(String(encrypted.iv),"base64"),
+          authTag:Buffer.from(String(encrypted.authTag),"base64")
+        },config.DATA_ENCRYPTION_KEY_BASE64) as {otp?:string};
+        payload={...payload,otpEncrypted:undefined,otp:String(secret.otp||"")};
+      }
+      return {
+        id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
+        retailer:r.retailer??payload?.retailer,
+        retailerAccountId:r.retailer_account_id??payload?.retailerAccountId,
+        profileKey:r.profile_key??payload?.profileKey,payload
+      };
+    })};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
 });
 
@@ -1679,10 +1776,24 @@ app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(re
   );
   if(!command.rows[0])return reply.code(404).send({error:"worker_command_not_found"});
   if(command.rows[0].command==="PRODUCT_CHECK"&&body.ok&&!body.result)return reply.code(400).send({error:"product_check_result_required"});
+  const commandType=String(command.rows[0].command);
+  const commandPayload=command.rows[0].payload??{};
   const {rows}=await db.query(
-    "update execution_worker_commands set status=$1,completed_at=now(),error=$2,result=$3 where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING' returning id,status,result",
-    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId]
+    `update execution_worker_commands
+     set status=$1,completed_at=now(),error=$2,result=$3,
+         payload=case when $7 then '{}'::jsonb else payload end
+     where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING'
+     returning id,status,result`,
+    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId,commandType==="SUBMIT_OTP"]
   );
+  if(commandType==="SUBMIT_OTP"&&body.ok&&commandPayload?.retailerAccountId){
+    await db.query(
+      `update retailer_accounts
+       set session_status='VERIFYING',session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
+       where id=$1 and tenant_id=$2`,
+      [String(commandPayload.retailerAccountId),p.tenantId]
+    );
+  }
   return rows[0];
 });
 
@@ -1841,12 +1952,12 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
     );
     if(body.authChallenge){
       await client.query(
-        "update retailer_accounts set auth_status='CHALLENGE',session_status='REAUTH_REQUIRED',session_checked_at=now(),session_target_expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
-        [retailerAccountId,p.tenantId]
+        "update retailer_accounts set auth_status='CHALLENGE',session_status='REAUTH_REQUIRED',session_challenge_code=$3,session_checked_at=now(),session_target_expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+        [retailerAccountId,p.tenantId,body.authChallenge]
       );
     }else if(!body.error){
       await client.query(
-        "update retailer_accounts set auth_status='READY',session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$1,updated_at=now() where id=$2 and tenant_id=$3",
+        "update retailer_accounts set auth_status='READY',session_status='READY',session_challenge_code=null,session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$1,updated_at=now() where id=$2 and tenant_id=$3",
         [workerId,retailerAccountId,p.tenantId]
       );
     }
@@ -2601,7 +2712,7 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
     await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,stock_watch_enabled=false,stock_next_check_at=null,stock_last_message=case when stock_watch_started_at is not null then 'Order placed after stock became available' else stock_last_message end,updated_at=now() where id=$2",[retailerOrderId,id]);
-    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY' else credential_status end,last_authenticated_at=now(),session_status='READY',session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$3,updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId,body.workerId]);
+    await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY' else credential_status end,last_authenticated_at=now(),session_status='READY',session_challenge_code=null,session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$3,updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId,body.workerId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
     const notifyUser=await basketNotificationUser(p.tenantId,id);
@@ -2894,4 +3005,5 @@ app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof
 
 async function bootstrap(){const {rows}=await db.query("select count(*)::int count from users");if(rows[0].count)return;const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET!;const c=await db.connect();try{await c.query("begin");const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);await c.query("commit");}catch(e){await c.query("rollback");throw e}finally{c.release()}}
 await bootstrap(); await app.listen({port:config.PORT,host:"0.0.0.0"});
-for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});
+const managedExecution=startManagedExecutionSupervisor(db,config);
+for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await managedExecution.stop();await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});

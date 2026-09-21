@@ -44,10 +44,27 @@ async function devtoolsPort(directory,timeoutMs=15000){
 async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
-  const child=spawn(chrome,[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--new-window","about:blank"],{detached:true,stdio:"ignore"});
+  const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--new-window"];
+  if(process.env.ORDERGRID_HEADLESS==="1")args.push("--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu");
+  args.push("about:blank");
+  const child=spawn(chrome,args,{detached:true,stdio:"ignore"});
   child.unref();
   return devtoolsPort(directory);
 }
+export async function closeProfileBrowser({directory}){
+  let port;
+  try{port=await devtoolsPort(directory,1200)}catch{return false}
+  try{
+    const response=await fetch(`http://127.0.0.1:${port}/json/version`).catch(()=>null);
+    if(!response?.ok)return false;
+    const version=await response.json();
+    if(!version?.webSocketDebuggerUrl)return false;
+    const connection=new CdpConnection(version.webSocketDebuggerUrl);
+    try{await connection.send("Browser.close");return true}
+    finally{connection.close()}
+  }catch{return false}
+}
+
 async function createTarget(port,url){
   const response=await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
@@ -415,6 +432,23 @@ function authChallengeScript(){
     return null;
   })()`;
 }
+
+function otpSubmitScript(otp){
+  return `(()=>{const otp=${JSON.stringify(String(otp||""))};
+    if(!/^\\d{4,8}$/.test(otp))return {ok:false,reason:'INVALID_OTP'};
+    const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const setValue=(el,value)=>{const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+    const inputs=[...document.querySelectorAll('input')].filter(visible);
+    const field=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+    if(!field)return {ok:false,reason:'OTP_FIELD_NOT_FOUND'};
+    setValue(field,otp);
+    const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
+    const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
+    const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||field.form?.querySelector('button[type="submit"],input[type="submit"]');
+    if(submit){submit.click();return {ok:true,submitted:true};}
+    return {ok:true,submitted:false};
+  })()`;
+}
 function rewardSnapshotScript(){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,140000);
     const patterns=[
@@ -459,6 +493,24 @@ function orderObservationScript(orders){
     }
     return result;
   })()`;
+}
+
+export async function submitRetailerOtp({chrome,directory,retailer,otp}){
+  const port=await ensureChrome(chrome,directory),host=retailerHost(retailer);
+  const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
+  const target=targets.find(t=>/(checkout|payment|pay|secure|order|cart|login|verify|otp)/i.test(String(t.url||"")))||targets[0];
+  if(!target)return {ok:false,reason:"SESSION_TAB_NOT_FOUND"};
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Page.enable");
+    await connection.send("Page.bringToFront").catch(()=>null);
+    const result=await evaluate(connection,otpSubmitScript(otp));
+    if(!result?.ok)return result||{ok:false,reason:"OTP_SUBMIT_FAILED"};
+    await sleep(1800);
+    const challenge=await evaluate(connection,authChallengeScript()).catch(()=>null);
+    if(challenge)return {ok:false,reason:challenge.code||"OTP_CHALLENGE_REMAINS"};
+    return {ok:true,submitted:true};
+  }finally{connection.close()}
 }
 
 export async function focusRetailerSession({chrome,directory,retailer}){

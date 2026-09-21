@@ -22,6 +22,12 @@ services:
         sync: false
       - key: WORKER_API_TOKEN
         sync: false
+      - key: ORDERGRID_MANAGED_EXECUTION
+        value: "true"
+      - key: ORDERGRID_MANAGED_PARALLEL
+        value: "2"
+      - key: ORDERGRID_MANAGED_BASKETS
+        value: "10"
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "true"
       - key: SESSION_SECRET
