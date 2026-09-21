@@ -173,7 +173,7 @@ function secureBrowserSetupToken(userId:string,tenantId:string){
 function readSecureBrowserSetupToken(token:string){
   const parts=token.split(".");
   if(parts.length!==2)return null;
-  const [payload,signature]=parts;
+  const payload=parts[0]!,signature=parts[1]!;
   const expected=createHmac("sha256",config.SESSION_SECRET).update(payload).digest("base64url");
   if(!secretEqual(signature,expected))return null;
   try{
