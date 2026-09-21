@@ -654,6 +654,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await waitReady(connection);await sleep(round?1100:1600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(acted?.acted){await sleep(1500);continue}
+      if(acted?.challenge)return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url};
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge)return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url};
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
