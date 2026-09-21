@@ -7,6 +7,7 @@ $nodeRoot = Join-Path $runtimeRoot "node"
 $envPath = Join-Path $repoRoot ".env.local"
 $pidPath = Join-Path $stateRoot "server.pid"
 $logPath = Join-Path $stateRoot "server.log"
+$errorLogPath = Join-Path $stateRoot "server-error.log"
 $localUrl = "http://127.0.0.1:3000"
 
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
@@ -160,7 +161,7 @@ try {
   }
 
   Write-Host "Building OrderGrid..." -ForegroundColor DarkGray
-  & $npmExe run build
+  & $npmExe run build:local
   if ($LASTEXITCODE -ne 0) { throw "OrderGrid build failed." }
 
   Write-Host "Applying database migrations..." -ForegroundColor DarkGray
