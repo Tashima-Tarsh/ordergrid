@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","src/migrations/027_purge_flipkart_password_credentials.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","render.yaml","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","src/migrations/027_purge_flipkart_password_credentials.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","scripts/ordergrid-local.ps1","scripts/ordergrid-local-stop.ps1","render.yaml","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -44,6 +44,8 @@ const managedOtpMigration=files["src/migrations/024_managed_retailer_otp.sql"];
 const flipkartOtpSessionMigration=files["src/migrations/025_flipkart_otp_15_day_sessions.sql"];
 const flipkartPasswordPurgeMigration=files["src/migrations/027_purge_flipkart_password_credentials.sql"];
 const managedChromeInstaller=files["scripts/install-managed-chrome.mjs"];
+const localLauncher=files["scripts/ordergrid-local.ps1"];
+const localStop=files["scripts/ordergrid-local-stop.ps1"];
 const renderConfig=files["render.yaml"];
 const packageSource=files["package.json"];
 
@@ -224,7 +226,9 @@ must(allocation.includes("remainingQuantity"),"flipkart allocation contract: all
 must(allocationMigration.includes("add column if not exists retailer_account_id"),"flipkart allocation contract: batch-item account migration missing");
 must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];`),"retailer session contract: OTP-only accounts must be eligible for preparation");
 must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
-must(server.includes(`session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end`),"retailer session contract: OTP challenge must stay queued until authenticated");
+must(server.includes("session_check_requested_at=null,session_check_claimed_at=null"),"retailer session contract: completed auth challenge must pause until explicit OTP or reconnect action");
+must(server.includes("waitingFor:{retailerAccountId"),"retailer session contract: worker must not start another account while current authentication needs action");
+must(server.includes("clauses.push(\"(session_status<>'READY'"),"retailer session contract: Connect all must skip already-connected accounts");
 must(cdp.includes('submitRetailerOtp'),"retailer session contract: managed retailer OTP submission missing");
 must(cdp.includes('ORDERGRID_HEADLESS'),"retailer session contract: managed headless browser mode missing");
 must(agent.includes('command.command==="SUBMIT_OTP"'),"retailer session contract: managed OTP command missing from worker");
@@ -239,9 +243,8 @@ must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart tex
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
 must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
 must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
-must(cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: sanitized Flipkart login diagnostic missing");
-must(!cdp.includes("value:clean(x.value)"),"retailer session contract: login diagnostic must never log field values");
-must(agent.includes("Flipkart login diagnostic"),"retailer session contract: worker diagnostic log missing");
+must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
+must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
 must(server.includes("validFlipkartLogin"),"retailer session contract: Flipkart email/mobile validation missing");
 must(server.includes("flipkart_uses_otp"),"retailer session contract: Flipkart password endpoint must reject password authentication");
@@ -265,10 +268,19 @@ must(managedExecution.includes("startManagedExecutionSupervisor"),"managed execu
 must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution contract: tenant worker session handoff missing");
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
-must(renderConfig.includes("ORDERGRID_MANAGED_EXECUTION"),"managed execution contract: Render managed execution flag missing");
+must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "false"'),"local execution contract: Render must not own retailer browser sessions");
 must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
 must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
-must(files["public/rewards.js"].includes("MANAGED EXECUTION ONLINE"),"retailer session contract: managed execution customer status missing");
+must(files["public/rewards.js"].includes("SECURE BROWSER ONLINE"),"retailer session contract: local Secure Browser customer status missing");
+must(files["public/rewards.js"].includes("waiting OTP"),"retailer session contract: account authentication progress counts missing");
+must(agent.includes("ORDERGRID_SESSION_CLAIM"),"retailer session contract: local worker must support sequential auth claims");
+must(workerInstaller.includes('ORDERGRID_SESSION_CLAIM = "1"'),"retailer session contract: Windows Secure Browser must authenticate one account at a time");
+must(localLauncher.includes("Start-LocalWorker"),"local execution contract: launcher must start retailer worker automatically");
+must(localLauncher.includes('$env:ORDERGRID_HEADLESS = ""'),"local execution contract: retailer browser must run headed on Windows");
+must(localLauncher.includes('ORDERGRID_SESSION_CLAIM = "1"'),"local execution contract: launcher must process authentication sequentially");
+must(localStop.includes("worker.pid"),"local execution contract: stop command must stop the retailer worker");
+must(server.includes('const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:"'),"local execution contract: localhost login cookie mode missing");
+must(server.includes("catch{\n          await db.query(\"delete from private.retailer_session_states"),"local execution contract: stale cloud session checkpoint recovery missing");
 must(files["public/rewards.js"].includes("data-submit-account-otp"),"retailer session contract: account OTP UI missing");
 must(humanActions.includes("data-submit-order-otp"),"retailer session contract: order OTP UI missing");
 must(!html.includes("Install Secure Browser"),"retailer session contract: customer installer must be removed from retailer UI");
