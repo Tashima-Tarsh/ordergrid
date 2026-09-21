@@ -317,7 +317,7 @@
         prepared.push({
           accountReference:item.accountReference,
           label:item.label,
-          password:item.password||undefined,
+          password:selectedRetailer==='flipkart'?undefined:(item.password||undefined),
           maxConcurrentOrders:item.maxConcurrentOrders||defaultConcurrency
         });
       }
