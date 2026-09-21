@@ -1398,13 +1398,15 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
     const accounts:any[]=[];
     for(const row of picked.rows){
       const credentials:{login:string;password?:string}={login:String(row.account_reference)};
-      const stored=await db.query(
-        "select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1",
-        [p.tenantId,row.id]
-      );
-      if(stored.rows[0]){
-        const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
-        if(decrypted.password)credentials.password=String(decrypted.password);
+      if(String(row.retailer)!=="flipkart"){
+        const stored=await db.query(
+          "select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1",
+          [p.tenantId,row.id]
+        );
+        if(stored.rows[0]){
+          const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+          if(decrypted.password)credentials.password=String(decrypted.password);
+        }
       }
       let sessionState:null|{cookies:Record<string,unknown>[]} = null;
       const savedSession=await db.query(
@@ -2437,20 +2439,24 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
     order by po.created_at
   `,[id,p.tenantId]);
   const prepared=items.rows.map(item=>({...item,executionUrl:verifiedRetailerUrl(item.product_url)}));
-  let credentials:null|{login:string;password:string}=null;
-  const storedCredential=await db.query(
-    `select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1`,
-    [p.tenantId,rows[0].retailer_account_id]
-  );
-  if(storedCredential.rows[0]){
-    const decrypted=decryptJson({
-      ciphertext:storedCredential.rows[0].ciphertext,
-      iv:storedCredential.rows[0].iv,
-      authTag:storedCredential.rows[0].auth_tag
-    },config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
-    if(decrypted.password){
-      credentials={login:rows[0].account_reference,password:String(decrypted.password)};
-      await db.query("update private.retailer_credentials set last_used_at=now() where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,rows[0].retailer_account_id]);
+  let credentials:null|{login:string;password?:string}=rows[0].retailer==="flipkart"
+    ?{login:String(rows[0].account_reference)}
+    :null;
+  if(rows[0].retailer!=="flipkart"){
+    const storedCredential=await db.query(
+      `select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1`,
+      [p.tenantId,rows[0].retailer_account_id]
+    );
+    if(storedCredential.rows[0]){
+      const decrypted=decryptJson({
+        ciphertext:storedCredential.rows[0].ciphertext,
+        iv:storedCredential.rows[0].iv,
+        authTag:storedCredential.rows[0].auth_tag
+      },config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+      if(decrypted.password){
+        credentials={login:String(rows[0].account_reference),password:String(decrypted.password)};
+        await db.query("update private.retailer_credentials set last_used_at=now() where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,rows[0].retailer_account_id]);
+      }
     }
   }
   await audit(db,p.tenantId,p.id,"bulk_basket.execution_started","checkout_basket",id,{workerId:body.workerId,customerId:rows[0].customer_id,retailerAccountId:rows[0].retailer_account_id,items:prepared.length});
