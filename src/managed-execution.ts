@@ -65,10 +65,20 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
          where tenant_id=$1
            and active
            and retailer in ('amazon-in','flipkart')
-           and credential_status in ('STORED','READY')
+           and (retailer='flipkart' or credential_status in ('STORED','READY'))
            and (
              session_status in ('UNKNOWN','ERROR')
-             or (session_status='READY' and session_target_expires_at is not null and session_target_expires_at<=now())
+             or (session_status='READY' and (
+               session_target_expires_at is null
+               or session_target_expires_at<=now()
+               or session_worker_id is null
+               or not exists(
+                 select 1 from execution_workers ew
+                 where ew.tenant_id=retailer_accounts.tenant_id
+                   and ew.id=retailer_accounts.session_worker_id
+                   and ew.last_seen>now()-interval '30 seconds'
+               )
+             ))
            )`,
         [tenantId]
       );
