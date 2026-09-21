@@ -23,6 +23,7 @@ import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
 import { buildFlipkartAllocation } from "./flipkart-allocation.js";
 import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } from "./user-dashboard-reporting.js";
+import { startManagedExecutionSupervisor } from "./managed-execution.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 type AutomationPolicy={
@@ -1619,6 +1620,50 @@ app.post("/api/human-actions/:id/focus",async(req,reply)=>{
   return {commandId:rows[0].id,status:rows[0].status};
 });
 
+app.post("/api/human-actions/:id/otp",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({otp:z.string().regex(/^\d{4,8}$/)}).parse(req.body);
+  const basket=await db.query(`
+    select cb.id,cb.execution_worker_id,cb.retailer_account_id,cb.retailer,cb.failure_code,
+      ra.profile_key,ew.last_seen
+    from checkout_baskets cb
+    join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join execution_workers ew on ew.tenant_id=cb.tenant_id and ew.id=cb.execution_worker_id
+    where cb.id=$1 and cb.tenant_id=$2 and cb.status in ('REQUIRES_ACTION','OPENED')
+    limit 1
+  `,[id,p.tenantId]);
+  const row=basket.rows[0];
+  if(!row)return reply.code(404).send({error:"action_not_found"});
+  if(!/OTP/i.test(String(row.failure_code||"")))return reply.code(409).send({error:"otp_not_requested"});
+  if(!row.execution_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"execution_worker_offline"});
+
+  const protectedOtp=encryptJson({otp:body.otp},config.DATA_ENCRYPTION_KEY_BASE64);
+  const payload={
+    retailer:row.retailer,
+    retailerAccountId:row.retailer_account_id,
+    profileKey:row.profile_key,
+    otpEncrypted:{
+      ciphertext:protectedOtp.ciphertext.toString("base64"),
+      iv:protectedOtp.iv.toString("base64"),
+      authTag:protectedOtp.authTag.toString("base64")
+    }
+  };
+  const existing=await db.query(
+    "select id,status from execution_worker_commands where tenant_id=$1 and worker_id=$2 and checkout_basket_id=$3 and command='SUBMIT_OTP' and status in ('PENDING','PROCESSING') order by requested_at desc limit 1",
+    [p.tenantId,row.execution_worker_id,id]
+  );
+  if(existing.rows[0])return {commandId:existing.rows[0].id,status:existing.rows[0].status};
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,$3,'SUBMIT_OTP',$4,$5) returning id,status`,
+    [p.tenantId,row.execution_worker_id,id,payload,p.id]
+  );
+  await audit(db,p.tenantId,p.id,"human_action.otp_submitted","checkout_basket",id,{workerId:row.execution_worker_id});
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
 app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
   const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId);
   const body=z.object({limit:z.number().int().min(1).max(25).default(10)}).parse(req.body??{});
@@ -1654,12 +1699,24 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
       order by wc.requested_at
     `,[p.tenantId,ids]);
     await client.query("commit");
-    return {commands:commands.rows.map(r=>({
-      id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
-      retailer:r.retailer??r.payload?.retailer,
-      retailerAccountId:r.retailer_account_id??r.payload?.retailerAccountId,
-      profileKey:r.profile_key??r.payload?.profileKey,payload:r.payload
-    }))};
+    return {commands:commands.rows.map(r=>{
+      let payload=r.payload??{};
+      if(r.command==="SUBMIT_OTP"&&payload?.otpEncrypted){
+        const encrypted=payload.otpEncrypted;
+        const secret=decryptJson({
+          ciphertext:Buffer.from(String(encrypted.ciphertext),"base64"),
+          iv:Buffer.from(String(encrypted.iv),"base64"),
+          authTag:Buffer.from(String(encrypted.authTag),"base64")
+        },config.DATA_ENCRYPTION_KEY_BASE64) as {otp?:string};
+        payload={...payload,otpEncrypted:undefined,otp:String(secret.otp||"")};
+      }
+      return {
+        id:r.id,command:r.command,checkoutBasketId:r.checkout_basket_id,
+        retailer:r.retailer??payload?.retailer,
+        retailerAccountId:r.retailer_account_id??payload?.retailerAccountId,
+        profileKey:r.profile_key??payload?.profileKey,payload
+      };
+    })};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
 });
 
@@ -1680,8 +1737,12 @@ app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(re
   if(!command.rows[0])return reply.code(404).send({error:"worker_command_not_found"});
   if(command.rows[0].command==="PRODUCT_CHECK"&&body.ok&&!body.result)return reply.code(400).send({error:"product_check_result_required"});
   const {rows}=await db.query(
-    "update execution_worker_commands set status=$1,completed_at=now(),error=$2,result=$3 where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING' returning id,status,result",
-    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId]
+    `update execution_worker_commands
+     set status=$1,completed_at=now(),error=$2,result=$3,
+         payload=case when $7 then '{}'::jsonb else payload end
+     where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING'
+     returning id,status,result`,
+    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId,command.rows[0].command==="SUBMIT_OTP"]
   );
   return rows[0];
 });
@@ -2894,4 +2955,5 @@ app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof
 
 async function bootstrap(){const {rows}=await db.query("select count(*)::int count from users");if(rows[0].count)return;const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET!;const c=await db.connect();try{await c.query("begin");const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);await c.query("commit");}catch(e){await c.query("rollback");throw e}finally{c.release()}}
 await bootstrap(); await app.listen({port:config.PORT,host:"0.0.0.0"});
-for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});
+const managedExecution=startManagedExecutionSupervisor(db,config);
+for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await managedExecution.stop();await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});
