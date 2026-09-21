@@ -1042,6 +1042,42 @@ app.patch("/api/retailer-accounts/:id",async(req,reply)=>{
   return rows[0];
 });
 
+app.post("/api/retailer-accounts/:id/credential",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({password:z.string().min(1).max(1000)}).parse(req.body);
+  const account=await db.query(
+    "select id,retailer,account_reference from retailer_accounts where id=$1 and tenant_id=$2 and active limit 1",
+    [id,p.tenantId]
+  );
+  if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  const encrypted=encryptJson({password:body.password},config.DATA_ENCRYPTION_KEY_BASE64);
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    await client.query(
+      `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
+       values($1,$2,$3,$4,$5,$6,now())
+       on conflict(tenant_id,retailer_account_id) do update set
+         ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,created_by=excluded.created_by,updated_at=now()`,
+      [p.tenantId,id,encrypted.ciphertext,encrypted.iv,encrypted.authTag,p.id]
+    );
+    await client.query(
+      `update retailer_accounts set credential_status='STORED',last_credential_update_at=now(),
+       auth_status='AUTH_REQUIRED',session_status='VERIFYING',session_challenge_code=null,
+       session_check_requested_at=now(),session_check_claimed_at=null,session_worker_id=null,updated_at=now()
+       where id=$1 and tenant_id=$2`,
+      [id,p.tenantId]
+    );
+    await client.query("commit");
+  }catch(error){
+    await client.query("rollback");throw error;
+  }finally{client.release()}
+  await audit(db,p.tenantId,p.id,"retailer_account.credential_updated","retailer_account",id,{retailer:account.rows[0].retailer});
+  return {ok:true,credentialStatus:"STORED",sessionStatus:"VERIFYING"};
+});
+
 app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
