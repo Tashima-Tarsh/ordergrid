@@ -1089,6 +1089,46 @@ app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
 });
 
 
+app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({otp:z.string().regex(/^\d{4,8}$/)}).parse(req.body);
+  const account=await db.query(`
+    select ra.id,ra.retailer,ra.profile_key,ra.session_worker_id,ra.session_status,ew.last_seen
+    from retailer_accounts ra
+    left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+    where ra.id=$1 and ra.tenant_id=$2 and ra.active
+    limit 1
+  `,[id,p.tenantId]);
+  const row=account.rows[0];
+  if(!row)return reply.code(404).send({error:"retailer_account_not_found"});
+  if(row.session_status!=="REAUTH_REQUIRED")return reply.code(409).send({error:"retailer_otp_not_requested"});
+  if(!row.session_worker_id||!row.last_seen||new Date(row.last_seen).getTime()<Date.now()-30_000)return reply.code(409).send({error:"managed_execution_offline"});
+
+  const protectedOtp=encryptJson({otp:body.otp},config.DATA_ENCRYPTION_KEY_BASE64);
+  const payload={
+    retailer:row.retailer,retailerAccountId:id,profileKey:row.profile_key,
+    otpEncrypted:{
+      ciphertext:protectedOtp.ciphertext.toString("base64"),
+      iv:protectedOtp.iv.toString("base64"),
+      authTag:protectedOtp.authTag.toString("base64")
+    }
+  };
+  const existing=await db.query(
+    "select id,status from execution_worker_commands where tenant_id=$1 and worker_id=$2 and command='SUBMIT_OTP' and payload->>'retailerAccountId'=$3 and status in ('PENDING','PROCESSING') order by requested_at desc limit 1",
+    [p.tenantId,row.session_worker_id,id]
+  );
+  if(existing.rows[0])return {commandId:existing.rows[0].id,status:existing.rows[0].status};
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,requested_by)
+     values($1,$2,null,'SUBMIT_OTP',$3,$4) returning id,status`,
+    [p.tenantId,row.session_worker_id,payload,p.id]
+  );
+  await audit(db,p.tenantId,p.id,"retailer_account.otp_submitted","retailer_account",id,{workerId:row.session_worker_id});
+  return {commandId:rows[0].id,status:rows[0].status};
+});
+
 app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
@@ -1736,14 +1776,24 @@ app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(re
   );
   if(!command.rows[0])return reply.code(404).send({error:"worker_command_not_found"});
   if(command.rows[0].command==="PRODUCT_CHECK"&&body.ok&&!body.result)return reply.code(400).send({error:"product_check_result_required"});
+  const commandType=String(command.rows[0].command);
+  const commandPayload=command.rows[0].payload??{};
   const {rows}=await db.query(
     `update execution_worker_commands
      set status=$1,completed_at=now(),error=$2,result=$3,
          payload=case when $7 then '{}'::jsonb else payload end
      where id=$4 and tenant_id=$5 and worker_id=$6 and status='PROCESSING'
      returning id,status,result`,
-    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId,command.rows[0].command==="SUBMIT_OTP"]
+    [body.ok?"COMPLETED":"FAILED",body.error??null,body.result??null,commandId,p.tenantId,workerId,commandType==="SUBMIT_OTP"]
   );
+  if(commandType==="SUBMIT_OTP"&&body.ok&&commandPayload?.retailerAccountId){
+    await db.query(
+      `update retailer_accounts
+       set session_status='VERIFYING',session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
+       where id=$1 and tenant_id=$2`,
+      [String(commandPayload.retailerAccountId),p.tenantId]
+    );
+  }
   return rows[0];
 });
 
