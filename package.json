@@ -8,8 +8,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/ && node scripts/install-managed-chrome.mjs",
-    "build:local": "tsc -p tsconfig.json && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/",
+    "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs && node scripts/install-managed-chrome.mjs",
+    "build:local": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
     "start": "node dist/server.js",
     "start:demo": "node dist/demo-server.js",
     "worker": "node dist/worker.js",
