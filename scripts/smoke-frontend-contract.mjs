@@ -232,6 +232,8 @@ must(server.includes('app.post("/api/human-actions/:id/otp"'),"retailer session 
 must(managedOtpMigration.includes("'SUBMIT_OTP'"),"retailer session contract: managed OTP migration missing");
 must(managedOtpMigration.includes("session_challenge_code"),"retailer session contract: session challenge tracking missing");
 must(cdp.includes("OTP_REQUESTED"),"retailer session contract: Flipkart login identifier must request OTP without a password");
+must(cdp.includes("LOGIN_IDENTIFIER_ENTERED"),"retailer session contract: Flipkart identifier entry must allow the UI to enable its OTP button before clicking");
+must(cdp.includes('[role="button"]'),"retailer session contract: Flipkart role-button login controls must be supported");
 must(server.includes("const credentials:{login:string;password?:string}"),"retailer session contract: OTP-only account identity must reach managed execution");
 must(server.includes('if(String(row.retailer)!=="flipkart")'),"retailer session contract: saved Flipkart passwords must not be used for managed login");
 must(server.includes('rows[0].retailer==="flipkart"'),"retailer session contract: checkout must retain Flipkart login identity for OTP reauthentication");
