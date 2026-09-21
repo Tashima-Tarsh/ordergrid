@@ -36,10 +36,11 @@ must(files["public/control-center.js"].includes("USERS & PERMISSIONS"),"user con
 must(files["public/control-center.js"].includes("'/api/users'"),"user contract: user API not wired");
 
 const retailerUi=files["public/index.html"]+"\n"+files["public/rewards.js"];
-must(retailerUi.includes("Install Secure Browser"),"secure-browser contract: customer install action missing");
-must(retailerUi.includes("/api/secure-browser/setup.cmd"),"secure-browser contract: one-click setup endpoint missing");
-must(!retailerUi.includes("Install / start worker"),"secure-browser contract: worker install jargon remains");
-must(!retailerUi.includes("start the secure browser worker"),"secure-browser contract: worker startup instruction remains");
-must(!retailerUi.includes("Start the OrderGrid secure browser worker first"),"secure-browser contract: developer-only worker error remains");
+must(retailerUi.includes("MANAGED EXECUTION ONLINE"),"managed execution contract: customer status missing");
+must(retailerUi.includes("data-submit-account-otp"),"managed execution contract: account OTP control missing");
+must(!retailerUi.includes("Install Secure Browser"),"managed execution contract: customer installer must be removed");
+must(!retailerUi.includes("Install / start worker"),"managed execution contract: worker install jargon remains");
+must(!retailerUi.includes("start the secure browser worker"),"managed execution contract: worker startup instruction remains");
+must(!retailerUi.includes("Start the OrderGrid secure browser worker first"),"managed execution contract: developer-only worker error remains");
 
 console.log("User-only workspace contract OK");
