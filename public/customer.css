@@ -36,3 +36,8 @@ body.product-shell main{max-width:1280px!important;padding:24px 28px 56px!import
 .managed-otp button{min-height:34px;padding:0 11px;white-space:nowrap}
 .managed-action-note{display:block;max-width:220px;font-size:11px;line-height:1.4;color:#667085}
 @media(max-width:720px){.managed-otp{grid-template-columns:1fr}.managed-action-note{max-width:none}}
+
+.managed-credential{display:grid;grid-template-columns:minmax(120px,1fr) auto;gap:7px;align-items:center;min-width:250px}
+.managed-credential input{min-width:0;height:34px;padding:0 10px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;font:inherit}
+.managed-credential button{min-height:34px;padding:0 11px;white-space:nowrap}
+@media(max-width:720px){.managed-credential{grid-template-columns:1fr}}
