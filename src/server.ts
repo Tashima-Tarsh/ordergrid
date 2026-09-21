@@ -1422,10 +1422,10 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
        where tenant_id=$1 and active and retailer in ('amazon-in','flipkart')
          and session_check_requested_at is not null
          and session_check_claimed_at is null
-       order by session_check_requested_at,id
+       order by case when session_worker_id=$2 then 0 else 1 end,session_check_requested_at,id
        for update skip locked
-       limit $2`,
-      [p.tenantId,body.limit]
+       limit $3`,
+      [p.tenantId,workerId,body.limit]
     );
     const ids=picked.rows.map(r=>r.id);
     if(ids.length)await client.query(
