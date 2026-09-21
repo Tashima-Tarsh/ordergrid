@@ -2,7 +2,7 @@
   const $=s=>document.querySelector(s);
   const esc=value=>{const node=document.createElement('div');node.textContent=String(value??'');return node.innerHTML};
   const moneyMinor=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value||0)/100);
-  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}};
+  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},secureBrowserReady=false;
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -17,6 +17,35 @@
   }
   function retailerName(code){
     return ({flipkart:'Flipkart','amazon-in':'Amazon India',myntra:'Myntra',ajio:'AJIO'})[code]||code;
+  }
+  function customerError(error){
+    const message=String(error?.message||error||'Request failed');
+    if(/worker.*offline|execution worker|session worker/i.test(message))return 'Secure Browser is not connected on this computer.';
+    return message;
+  }
+  function renderSecureBrowserStatus(){
+    const status=$('#secureBrowserStatus'),setup=$('#downloadOrderGridWorker');
+    if(status){
+      status.dataset.ready=secureBrowserReady?'true':'false';
+      status.textContent=secureBrowserReady?'SECURE BROWSER READY':'SETUP REQUIRED';
+    }
+    if(setup){
+      setup.textContent=secureBrowserReady?'Secure Browser ready':'Install Secure Browser';
+      setup.classList.toggle('is-ready',secureBrowserReady);
+      setup.setAttribute('aria-label',secureBrowserReady?'Secure Browser is connected':'Install OrderGrid Secure Browser');
+    }
+  }
+  function startSecureBrowserSetup(){
+    if(secureBrowserReady){
+      toast('Secure Browser is already ready on this computer.');
+      return;
+    }
+    const anchor=document.createElement('a');
+    anchor.href='/api/secure-browser/setup.cmd';
+    anchor.style.display='none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   }
   function parseCsv(text){
     const rows=[];let row=[],cell='',quoted=false;
@@ -61,34 +90,38 @@
     $('#availableSuperCoins').textContent=String(summary.available_rewards||0);
     $('#pendingRefunds').textContent=moneyMinor(summary.pending_refund_minor||0);
     $('#settledRefunds').textContent=moneyMinor(summary.settled_refund_minor||0);
-    $('#accountPoolTitle').textContent=retailerName(retailer)+' users & sessions';
+    $('#accountPoolTitle').textContent=retailerName(retailer)+' users & connections';
     const bound=accounts.filter(a=>a.customer_id).length;
     $('#accountPoolMeta').textContent=`${accounts.length} accounts · ${bound} user/address profiles · ${active} active`;
     if($('#rewardCount'))$('#rewardCount').textContent=String(summary.available_rewards||0);
+    renderSecureBrowserStatus();
 
     $('#retailerAccountPool').innerHTML=operational.length?operational.map(account=>{
-      const status=account.active?(account.auth_status||'AUTH_REQUIRED'):'PAUSED';
       const available=Number(account.available_rewards??account.reward_balance??0);
       const rewardMeta=account.reward_balance_observed_at
         ?'Actual retailer balance · '+new Date(account.reward_balance_observed_at).toLocaleString('en-IN')
         :Number(account.pending_rewards||0)+' pending';
       const refundMeta=(Number(account.observed_refund_orders||0)?Number(account.observed_refund_orders)+' refund status observed · ':'')+moneyMinor(account.pending_refund_minor||0)+' pending';
       const sessionStatus=String(account.session_status||'UNKNOWN');
-      const credential=sessionStatus==='READY'?'SESSION AUTHENTICATED':(account.credential_status==='MISSING'?'OTP / MANUAL SIGN-IN':(account.credential_status||'MISSING'));
       const sessionUntil=account.session_target_expires_at?new Date(account.session_target_expires_at).toLocaleString('en-IN'):'—';
+      const connectionStatus=!account.active?'PAUSED'
+        :sessionStatus==='READY'?'CONNECTED'
+        :sessionStatus==='REAUTH_REQUIRED'?'SIGN-IN REQUIRED'
+        :sessionStatus==='VERIFYING'?'CONNECTING'
+        :'NOT CONNECTED';
       const sessionMeta=sessionStatus==='READY'
-        ?'SESSION READY · target until '+sessionUntil
+        ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?'REAUTH REQUIRED · open preserved session'
+          ?'Sign-in required · open the secure retailer login'
           :sessionStatus==='VERIFYING'
-            ?'VERIFYING SESSION'
-            :'SESSION NOT VERIFIED';
+            ?'Connecting securely…'
+            :'Not connected';
       const sessionAction=account.session_worker_id&&sessionStatus!=='READY'
-        ?'<button type="button" class="secondary" data-open-session>Open OTP session</button>'
+        ?'<button type="button" class="secondary" data-open-session>Open login</button>'
         :'';
       const verifyAction=sessionStatus!=='READY'
-        ?'<button type="button" class="secondary" data-verify-session>Verify login</button>'
-        :'';
+        ?`<button type="button" class="secondary" data-verify-session>${secureBrowserReady?'Connect account':'Install Secure Browser'}</button>`
+        :'<span class="session-connected-chip">✓ Connected</span>';
       const identity=account.customer_id
         ?esc(account.display_name||account.label||account.account_reference)+' · '+esc(account.customer_reference||'BOUND USER')
         :'LOGIN-ONLY POOL ACCOUNT';
@@ -99,7 +132,7 @@
         <article class="retailer-account-row" data-account-id="${esc(account.id)}">
           <div class="account-main">
             <strong>${identity}</strong>
-            <small>Flipkart login: ${esc(account.account_reference)} · ${esc(status)} · ${esc(credential)}</small>
+            <small>Flipkart login: ${esc(account.account_reference)} · ${esc(connectionStatus)}</small>
             <small>${addressMeta}</small>
             <small class="session-line ${sessionStatus==='READY'?'ready':sessionStatus==='REAUTH_REQUIRED'?'attention':''}">${esc(sessionMeta)}</small>
           </div>
@@ -108,18 +141,20 @@
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
           <div class="account-actions">${verifyAction}${sessionAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
-    }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and login.</span></div>';
+    }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and secure login.</span></div>';
   }
   async function load(){
     const encoded=encodeURIComponent(retailer);
-    const [accountResult,financeResult]=await Promise.allSettled([
+    const [accountResult,financeResult,secureBrowserResult]=await Promise.allSettled([
       request('/api/retailer-accounts?retailer='+encoded+'&limit=1000'),
-      request('/api/retailer-finance?retailer='+encoded+'&limit=1000')
+      request('/api/retailer-finance?retailer='+encoded+'&limit=1000'),
+      request('/api/execution-workers')
     ]);
     if(accountResult.status==='fulfilled')accounts=accountResult.value.accounts||[];
     else console.error(accountResult.reason);
     if(financeResult.status==='fulfilled')finance=financeResult.value;
     else console.error(financeResult.reason);
+    secureBrowserReady=secureBrowserResult.status==='fulfilled'&&(secureBrowserResult.value.workers||[]).length>0;
     render();
   }
   function openRetailerUser(){
@@ -141,19 +176,33 @@
   $('#retailerPoolSelector')?.addEventListener('change',event=>{
     retailer=event.target.value;load();
   });
+  $('#downloadOrderGridWorker')?.addEventListener('click',event=>{
+    event.preventDefault();
+    if(secureBrowserReady){
+      toast('Secure Browser is already ready on this computer.');
+      return;
+    }
+    startSecureBrowserSetup();
+    toast('Open the downloaded OrderGrid Secure Browser Setup once. OrderGrid will continue automatically.');
+  });
   $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
-    const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Preparing…';
+    const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Connecting…';
     try{
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:20})
       });
-      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      toast((workerState.workers||[]).length
-        ?result.count+' account session(s) queued. Complete retailer OTP/sign-in in the OrderGrid secure browser window.'
-        :result.count+' account session(s) queued. Start the secure browser worker; it will pick them up automatically.');
+      const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      secureBrowserReady=(secureState.workers||[]).length>0;
+      renderSecureBrowserStatus();
+      if(secureBrowserReady){
+        toast(result.count+' account(s) ready to connect. Complete retailer sign-in in the Secure Browser.');
+      }else{
+        startSecureBrowserSetup();
+        toast(result.count+' account(s) queued. Open the one-time Secure Browser setup; OrderGrid will continue automatically.');
+      }
       await load();
-    }catch(error){alert(error.message)}
+    }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
   });
   $('#addRetailerUser')?.addEventListener('click',openRetailerUser);
@@ -195,15 +244,20 @@
         });
         queued=Number(prepared.count||0)>0;
       }catch{}
-      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      const online=(workerState.workers||[]).length>0;
+      const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      secureBrowserReady=(secureState.workers||[]).length>0;
       formElement.reset();$('#retailerUserDialog').close();
       await load();
-      toast(queued
-        ?(online?'User saved. Flipkart login verification is queued and will open in the secure browser.':'User saved. Login verification is queued; start the secure browser worker and it will open Flipkart automatically.')
-        :'User saved, but login preparation could not be queued. Use Prepare all sessions.');
-    }catch(error){$('#retailerUserError').textContent=error.message}
-    finally{button.disabled=false;button.textContent='Save user & prepare login'}
+      if(queued&&secureBrowserReady){
+        toast('User saved. Secure Flipkart login is opening; complete sign-in or OTP in the retailer window.');
+      }else if(queued){
+        startSecureBrowserSetup();
+        toast('User saved. Open the one-time Secure Browser setup; Flipkart login will open automatically.');
+      }else{
+        toast('User saved. Choose Connect account to continue.');
+      }
+    }catch(error){$('#retailerUserError').textContent=customerError(error)}
+    finally{button.disabled=false;button.textContent='Save user & connect login'}
   });
 
   $('#retailerUsersBulkFile')?.addEventListener('change',event=>{
@@ -217,7 +271,7 @@
     event.preventDefault();
     const formElement=event.currentTarget;
     const button=$('#importRetailerUsers'),file=$('#retailerUsersBulkFile')?.files?.[0];
-    button.disabled=true;button.textContent='Importing & preparing…';$('#retailerUsersBulkError').textContent='';
+    button.disabled=true;button.textContent='Importing & connecting…';$('#retailerUsersBulkError').textContent='';
     try{
       if(!file)throw new Error('Choose a CSV or XLSX file');
       const data=new FormData();data.append('file',file,file.name);
@@ -233,17 +287,22 @@
           queued=Number(prepared.count||0);
         }
       }catch{}
-      const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      const online=(workerState.workers||[]).length>0;
+      const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+      secureBrowserReady=(secureState.workers||[]).length>0;
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
       await load();
-      toast(queued
-        ?result.count+' users imported · '+queued+' Flipkart session(s) queued'+(online?'':' · start the secure browser worker to begin verification')
-        :result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) bound. Use Prepare all sessions.');
-    }catch(error){$('#retailerUsersBulkError').textContent=error.message}
-    finally{button.disabled=false;button.textContent='Import users & prepare sessions'}
+      if(queued&&secureBrowserReady){
+        toast(result.count+' users imported · '+queued+' secure login(s) ready to connect.');
+      }else if(queued){
+        startSecureBrowserSetup();
+        toast(result.count+' users imported. Open the one-time Secure Browser setup; login verification will continue automatically.');
+      }else{
+        toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
+      }
+    }catch(error){$('#retailerUsersBulkError').textContent=customerError(error)}
+    finally{button.disabled=false;button.textContent='Import users & connect logins'}
   });
 
   $('#retailerAccountsFile')?.addEventListener('change',async event=>{
@@ -308,17 +367,23 @@
     const account=accounts.find(x=>x.id===row.dataset.accountId);if(!account)return;
     const verify=event.target.closest('[data-verify-session]');
     if(verify){
-      verify.disabled=true;const previous=verify.textContent;verify.textContent='Queuing…';
+      verify.disabled=true;const previous=verify.textContent;verify.textContent='Starting…';
       try{
         await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:20})
         });
-        const workerState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-        await load();toast((workerState.workers||[]).length
-          ?'Login verification queued. Complete Flipkart OTP/sign-in in the OrderGrid secure browser.'
-          :'Login verification queued. Start the secure browser worker; it will open this Flipkart session automatically.');
-      }catch(error){alert(error.message)}
+        const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
+        secureBrowserReady=(secureState.workers||[]).length>0;
+        if(secureBrowserReady){
+          await load();
+          toast('Secure login is opening. Complete Flipkart sign-in or OTP in the retailer window.');
+        }else{
+          renderSecureBrowserStatus();
+          startSecureBrowserSetup();
+          toast('Open the one-time Secure Browser setup. OrderGrid will then open this Flipkart account automatically.');
+        }
+      }catch(error){alert(customerError(error))}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
       return;
     }
@@ -327,8 +392,15 @@
       open.disabled=true;const previous=open.textContent;open.textContent='Opening…';
       try{
         await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/focus-session',{method:'POST'});
-        toast('Opening the exact preserved retailer session');
-      }catch(error){alert(error.message)}
+        toast('Opening secure retailer login');
+      }catch(error){
+        if(/secure browser is not connected|worker.*offline|session worker/i.test(customerError(error))){
+          secureBrowserReady=false;renderSecureBrowserStatus();startSecureBrowserSetup();
+          toast('Open the one-time Secure Browser setup, then choose Open login again.');
+        }else{
+          alert(customerError(error));
+        }
+      }
       finally{open.textContent=previous;setTimeout(()=>{open.disabled=false},1200)}
       return;
     }
