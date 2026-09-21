@@ -9,7 +9,8 @@ import { executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareReta
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let cookie="";
+const workerSessionToken=process.env.ORDERGRID_SESSION_TOKEN||"";
+let cookie=workerSessionToken?`session=${workerSessionToken}`:"";
 const workerToken=process.env.ORDERGRID_WORKER_TOKEN||"";
 
 async function ask(label){return(await rl.question(label)).trim()}
@@ -30,8 +31,9 @@ async function api(path,options={}){
   return {body,response};
 }
 async function login(){
-  const email=process.env.ORDERGRID_EMAIL||await ask("OrderGrid worker email: ");
-  let password=process.env.ORDERGRID_PASSWORD||await readSecret("OrderGrid worker password: ");
+  if(workerSessionToken)return;
+  const email=process.env.ORDERGRID_EMAIL||await ask("OrderGrid secure browser email: ");
+  let password=process.env.ORDERGRID_PASSWORD||await readSecret("OrderGrid secure browser password: ");
   const {response}=await api("/api/login",{method:"POST",body:JSON.stringify({email,password})});
   password="";
   const setCookies=response.headers.getSetCookie?.()||[response.headers.get("set-cookie")];
@@ -94,8 +96,8 @@ async function runAdaptiveProductCheckPool(commands,state,handler){
 }
 
 async function main(){
-  output.write("\nOrderGrid Native Bulk Ordering Worker\n");
-  output.write("Approved baskets are executed from OrderGrid. The worker drives retailer checkout and reports only genuine authentication/payment challenges.\n");
+  output.write("\nOrderGrid Secure Browser\n");
+  output.write("Approved OrderGrid tasks use isolated retailer browser profiles and report genuine authentication/payment challenges.\n");
   output.write("It does not bypass OTP, CAPTCHA, 3DS, passwords or retailer security controls.\n\n");
   const chrome=findChrome();
   if(!chrome)throw new Error("Google Chrome was not found. Install Chrome and run again.");
