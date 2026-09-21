@@ -16,6 +16,13 @@ create index if not exists retailer_session_states_expiry_idx
 
 update public.retailer_accounts
 set session_target_days=15,
+    session_target_expires_at=case
+      when session_target_expires_at is null then null
+      else least(session_target_expires_at,coalesce(last_authenticated_at,now())+interval '15 days')
+    end,
     updated_at=now()
 where retailer='flipkart'
-  and session_target_days<>15;
+  and (
+    session_target_days<>15
+    or (session_target_expires_at is not null and session_target_expires_at>coalesce(last_authenticated_at,now())+interval '15 days')
+  );
