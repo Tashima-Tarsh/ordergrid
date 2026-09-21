@@ -235,7 +235,8 @@ must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution con
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
 must(renderConfig.includes("ORDERGRID_MANAGED_EXECUTION"),"managed execution contract: Render managed execution flag missing");
-must(packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: production startup must apply migrations before server start");
+must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
+must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
 must(files["public/rewards.js"].includes("MANAGED EXECUTION ONLINE"),"retailer session contract: managed execution customer status missing");
 must(files["public/rewards.js"].includes("data-submit-account-otp"),"retailer session contract: account OTP UI missing");
 must(humanActions.includes("data-submit-order-otp"),"retailer session contract: order OTP UI missing");
