@@ -44,6 +44,7 @@ export function profileKey(reference) {
 }
 
 export function profileRoot() {
+  if (process.env.ORDERGRID_PROFILE_ROOT) return process.env.ORDERGRID_PROFILE_ROOT;
   if (process.platform === "win32") {
     return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "OrderGrid", "profiles");
   }
@@ -52,9 +53,11 @@ export function profileRoot() {
 }
 
 export function chromeCandidates() {
+  const configured=process.env.ORDERGRID_CHROME_PATH?[process.env.ORDERGRID_CHROME_PATH]:[];
   if (process.platform === "win32") {
     const local = process.env.LOCALAPPDATA || "";
     return [
+      ...configured,
       join(process.env.PROGRAMFILES || "C:\\Program Files", "Microsoft", "Edge", "Application", "msedge.exe"),
       join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
       join(local, "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -63,8 +66,8 @@ export function chromeCandidates() {
       join(local, "Google", "Chrome", "Application", "chrome.exe")
     ];
   }
-  if (process.platform === "darwin") return ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
-  return ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "google-chrome", "chromium", "chromium-browser"];
+  if (process.platform === "darwin") return [...configured,"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
+  return [...configured,"/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "google-chrome", "chromium", "chromium-browser"];
 }
 
 export function findChrome() {
