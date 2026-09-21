@@ -55,6 +55,23 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
 
     for(const row of rows){
       const tenantId=String(row.tenant_id);
+      await db.query(
+        `update retailer_accounts
+         set session_status='VERIFYING',
+             session_challenge_code=null,
+             session_check_requested_at=coalesce(session_check_requested_at,now()),
+             session_check_claimed_at=null,
+             updated_at=now()
+         where tenant_id=$1
+           and active
+           and retailer in ('amazon-in','flipkart')
+           and credential_status in ('STORED','READY')
+           and (
+             session_status in ('UNKNOWN','ERROR')
+             or (session_status='READY' and session_target_expires_at is not null and session_target_expires_at<=now())
+           )`,
+        [tenantId]
+      );
       const existing=workers.get(tenantId);
       if(existing&&existing.process.exitCode===null)continue;
 
