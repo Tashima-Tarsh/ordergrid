@@ -5,7 +5,9 @@ const files=Object.fromEntries(await Promise.all([
   "public/control-center.js",
   "public/automation-center.js",
   "public/navigation.js",
-  "public/user-dashboard.js"
+  "public/user-dashboard.js",
+  "public/index.html",
+  "public/rewards.js"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -32,5 +34,12 @@ must(!/\bmain dealer\b/i.test(frontend),"user contract: main dealer wording rema
 must(!/\bdealer network\b/i.test(frontend),"user contract: dealer network wording remains in active frontend");
 must(files["public/control-center.js"].includes("USERS & PERMISSIONS"),"user contract: users panel missing");
 must(files["public/control-center.js"].includes("'/api/users'"),"user contract: user API not wired");
+
+const retailerUi=files["public/index.html"]+"\n"+files["public/rewards.js"];
+must(retailerUi.includes("Install Secure Browser"),"secure-browser contract: customer install action missing");
+must(retailerUi.includes("/api/secure-browser/setup.cmd"),"secure-browser contract: one-click setup endpoint missing");
+must(!retailerUi.includes("Install / start worker"),"secure-browser contract: worker install jargon remains");
+must(!retailerUi.includes("start the secure browser worker"),"secure-browser contract: worker startup instruction remains");
+must(!retailerUi.includes("Start the OrderGrid secure browser worker first"),"secure-browser contract: developer-only worker error remains");
 
 console.log("User-only workspace contract OK");
