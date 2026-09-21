@@ -51,6 +51,20 @@ async function ensureChrome(chrome,directory){
   child.unref();
   return devtoolsPort(directory);
 }
+export async function closeProfileBrowser({directory}){
+  let port;
+  try{port=await devtoolsPort(directory,1200)}catch{return false}
+  try{
+    const response=await fetch(`http://127.0.0.1:${port}/json/version`).catch(()=>null);
+    if(!response?.ok)return false;
+    const version=await response.json();
+    if(!version?.webSocketDebuggerUrl)return false;
+    const connection=new CdpConnection(version.webSocketDebuggerUrl);
+    try{await connection.send("Browser.close");return true}
+    finally{connection.close()}
+  }catch{return false}
+}
+
 async function createTarget(port,url){
   const response=await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
