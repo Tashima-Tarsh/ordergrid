@@ -533,7 +533,6 @@ const retailerAccountColumns:Record<string,string>={
 };
 const retailerPasswordColumns:Record<string,string[]>={
   "amazon-in":["amazon_password","amazon_in_password"],
-  flipkart:["flipkart_password"],
   myntra:["myntra_password"],
   ajio:["ajio_password"],
   tatacliq:["tatacliq_password","tata_cliq_password"],
@@ -548,6 +547,10 @@ const retailerAliases:Record<string,string>={
   meesho:"meesho","meesho.com":"meesho",nykaa:"nykaa","nykaa.com":"nykaa",
   jiomart:"jiomart","jiomart.com":"jiomart"
 };
+function validFlipkartLogin(value:string){
+  const login=value.trim();
+  return /^\d{10}$/.test(login)||/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login);
+}
 function retailerFromImport(value:string){
   const raw=value.trim().toLowerCase();
   if(!raw)return null;
@@ -632,6 +635,7 @@ app.post("/api/address-books/import",async(req,reply)=>{
       const postal=value(row,"postal_code").replace(/\D/g,"");
       if(phone.length<10||postal.length!==6)throw new Error("Invalid phone or postal code in address file");
       const flipkartLogin=(value(row,"flipkart_user_id")||value(row,"flipkart_account")||value(row,"flipkart_login")||value(row,"flipkart_username")).trim();
+      if(flipkartLogin&&!validFlipkartLogin(flipkartLogin))throw new Error("Flipkart login must be a 10-digit mobile number or email address");
       let externalReference=value(row,"reference").trim();
       if(flipkartLogin){
         const existing=await client.query(
@@ -671,13 +675,15 @@ app.post("/api/address-books/import",async(req,reply)=>{
       for(const [column,retailer] of Object.entries(retailerAccountColumns)){
         const accountReference=value(row,column).trim();
         if(!accountReference||importedAccounts.has(retailer))continue;
-        const password=(retailerPasswordColumns[retailer]||[]).map(name=>value(row,name).trim()).find(Boolean)||"";
+        const password=retailer==="flipkart"?"":(retailerPasswordColumns[retailer]||[]).map(name=>value(row,name).trim()).find(Boolean)||"";
+        if(retailer==="flipkart"&&!validFlipkartLogin(accountReference))throw new Error("Flipkart login must be a 10-digit mobile number or email address");
         importedAccounts.set(retailer,{accountReference,password,maxConcurrentOrders:rowMaxConcurrentOrders});
       }
       const genericRetailer=retailerFromImport(value(row,"retailer"));
       const genericLogin=(value(row,"retailer_login")||value(row,"retailer_user_id")||value(row,"retailer_username")).trim();
       if(genericRetailer&&genericLogin&&!importedAccounts.has(genericRetailer)){
-        importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:value(row,"retailer_password").trim(),maxConcurrentOrders:rowMaxConcurrentOrders});
+        if(genericRetailer==="flipkart"&&!validFlipkartLogin(genericLogin))throw new Error("Flipkart login must be a 10-digit mobile number or email address");
+        importedAccounts.set(genericRetailer,{accountReference:genericLogin,password:genericRetailer==="flipkart"?"":value(row,"retailer_password").trim(),maxConcurrentOrders:rowMaxConcurrentOrders});
       }
       for(const [retailer,credential] of importedAccounts){
         const login=credential.accountReference.slice(0,240);
@@ -721,7 +727,11 @@ app.post("/api/address-books/import",async(req,reply)=>{
         }
         retailerAccountsBound++;
         retailerAccountIds.push(String(account.rows[0].id));
-        if(credential.password){
+        if(retailer==="flipkart"){
+          await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,account.rows[0].id]);
+          await client.query("update retailer_accounts set credential_status='MISSING',last_credential_update_at=null,updated_at=now() where id=$1 and tenant_id=$2",[account.rows[0].id,p.tenantId]);
+        }
+        if(credential.password&&retailer!=="flipkart"){
           const encrypted=encryptJson({password:credential.password},config.DATA_ENCRYPTION_KEY_BASE64);
           await client.query(
             `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
@@ -768,6 +778,7 @@ app.post("/api/retailer-users",async(req,reply)=>{
   const phone=body.phone.replace(/\D/g,""),postal=body.postalCode.replace(/\D/g,"");
   if(phone.length<10||phone.length>15)return reply.code(400).send({error:"invalid_phone"});
   if(body.country.toUpperCase()==="IN"&&postal.length!==6)return reply.code(400).send({error:"invalid_postal_code"});
+  if(body.retailer==="flipkart"&&!validFlipkartLogin(body.accountReference))return reply.code(400).send({error:"invalid_flipkart_login",message:"Use the Flipkart account's 10-digit mobile number or email address."});
   const client=await db.connect();
   try{
     await client.query("begin");
@@ -855,7 +866,7 @@ app.post("/api/retailer-users",async(req,reply)=>{
         account=inserted.rows[0];
       }
     }
-    if(body.password){
+    if(body.password&&body.retailer!=="flipkart"){
       const encrypted=encryptJson({password:body.password},config.DATA_ENCRYPTION_KEY_BASE64);
       await client.query(
         `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
@@ -871,11 +882,14 @@ app.post("/api/retailer-users",async(req,reply)=>{
       account.credential_status=credential.rows[0]?.credential_status||"STORED";
     }
     if(body.retailer==="flipkart"){
+      await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,account.id]);
+      account.credential_status="MISSING";
       const queued=await client.query(
         `update retailer_accounts set
            session_status='VERIFYING',session_challenge_code=null,session_target_days=15,
            session_check_requested_at=now(),session_check_claimed_at=null,session_worker_id=null,
            auth_status=case when auth_status='READY' then auth_status else 'AUTH_REQUIRED' end,
+           credential_status='MISSING',last_credential_update_at=null,
            updated_at=now()
          where id=$1 and tenant_id=$2
          returning session_status,session_target_days,session_check_requested_at`,
@@ -989,6 +1003,10 @@ app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
       maxConcurrentOrders:z.number().int().min(1).max(100).default(1)
     })).min(1).max(1000)
   }).parse(req.body);
+  if(body.retailer==="flipkart"){
+    const invalid=body.accounts.find(account=>!validFlipkartLogin(account.accountReference));
+    if(invalid)return reply.code(400).send({error:"invalid_flipkart_login",message:"Use a 10-digit mobile number or email address for every Flipkart account."});
+  }
   const client=await db.connect(),created:any[]=[];
   try{
     await client.query("begin");
@@ -1005,7 +1023,7 @@ app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
         [p.tenantId,body.retailer,account.accountReference,account.label??null,account.maxConcurrentOrders,p.id]
       );
       const row=saved.rows[0];
-      if(account.password){
+      if(account.password&&body.retailer!=="flipkart"){
         const encrypted=encryptJson({password:account.password},config.DATA_ENCRYPTION_KEY_BASE64);
         await client.query(
           `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
@@ -1019,6 +1037,11 @@ app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
           [row.id,p.tenantId]
         );
         row.credential_status="STORED";
+      }
+      if(body.retailer==="flipkart"){
+        await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
+        await client.query("update retailer_accounts set credential_status='MISSING',last_credential_update_at=null,updated_at=now() where id=$1 and tenant_id=$2",[row.id,p.tenantId]);
+        row.credential_status="MISSING";
       }
       created.push(row);
     }
@@ -1064,6 +1087,7 @@ app.post("/api/retailer-accounts/:id/credential",async(req,reply)=>{
     [id,p.tenantId]
   );
   if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  if(account.rows[0].retailer==="flipkart")return reply.code(409).send({error:"flipkart_uses_otp",message:"Flipkart accounts connect with OTP using the saved mobile number or email address."});
   const encrypted=encryptJson({password:body.password},config.DATA_ENCRYPTION_KEY_BASE64);
   const client=await db.connect();
   try{
