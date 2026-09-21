@@ -347,7 +347,7 @@ app.get("/api/dashboard",async(req)=>{const p=req.principal!;const [b,o]=await P
 app.get("/api/automation",async(req)=>{
   const p=req.principal!,policy=await getAutomationPolicy(p.tenantId),localPolicy=await readAutomationPolicy(p.tenantId);
   const [accounts,orders,cards,batches]=await Promise.all([
-    db.query("select count(*)::int total,count(*) filter(where credential_status in ('STORED','READY'))::int credentials_ready,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where auth_status in ('AUTH_REQUIRED','CHALLENGE','LOCKED'))::int needs_attention from retailer_accounts where tenant_id=$1",[p.tenantId]),
+    db.query("select count(*)::int total,count(*) filter(where session_status='READY' or credential_status in ('STORED','READY'))::int credentials_ready,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where auth_status in ('AUTH_REQUIRED','CHALLENGE','LOCKED'))::int needs_attention from retailer_accounts where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int total,count(*) filter(where status in ('READY','CLAIMED'))::int ready,count(*) filter(where status='OPENED')::int in_progress,count(*) filter(where status in ('REQUIRES_ACTION','FAILED'))::int needs_attention,count(*) filter(where status='CONFIRMED')::int confirmed,count(*) filter(where virtual_card_id is not null)::int cards_assigned,count(*) filter(where commercial_status='APPROVED')::int price_approved,count(*) filter(where commercial_status='REVIEW_REQUIRED')::int price_review from checkout_baskets where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int total,count(*) filter(where status='ACTIVE')::int active from virtual_cards where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int total,count(*) filter(where status in ('APPROVED','PARTIAL'))::int active,count(*) filter(where status='COMPLETE')::int complete from order_batches where tenant_id=$1",[p.tenantId])
@@ -398,7 +398,7 @@ app.get("/api/automation/preflight",async(req)=>{
       left join purchase_orders po on po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id
       where cb.tenant_id=$1
     `,[p.tenantId]),
-    db.query("select count(*)::int total,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where credential_status in ('STORED','READY'))::int credentials_ready from retailer_accounts where tenant_id=$1",[p.tenantId]),
+    db.query("select count(*)::int total,count(*) filter(where auth_status='READY')::int authenticated,count(*) filter(where session_status='READY' or credential_status in ('STORED','READY'))::int credentials_ready from retailer_accounts where tenant_id=$1",[p.tenantId]),
     db.query("select count(*)::int connected from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId])
   ]);
   const o=orders.rows[0]||{},a=accounts.rows[0]||{};
@@ -1406,7 +1406,16 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
         const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
         if(decrypted.password)credentials.password=String(decrypted.password);
       }
-      accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials});
+      let sessionState:null|{cookies:Record<string,unknown>[]} = null;
+      const savedSession=await db.query(
+        "select ciphertext,iv,auth_tag from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2 and expires_at>now() limit 1",
+        [p.tenantId,row.id]
+      );
+      if(savedSession.rows[0]){
+        const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
+        if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+      }
+      accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials,sessionState});
     }
     return {accounts};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
@@ -1418,7 +1427,8 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
   const body=z.object({
     status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
     code:z.string().max(100).optional(),
-    message:z.string().max(500).optional()
+    message:z.string().max(500).optional(),
+    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional()
   }).parse(req.body);
   const account=await db.query(
     "select id,created_by,retailer,account_reference,session_target_days from retailer_accounts where id=$1 and tenant_id=$2 and session_worker_id=$3 limit 1",
@@ -1427,6 +1437,20 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
   const row=account.rows[0];
   if(!row)return reply.code(409).send({error:"session_check_not_owned_by_worker"});
   const ready=body.status==="READY";
+  if(ready&&body.sessionState){
+    const serialized=JSON.stringify(body.sessionState);
+    if(Buffer.byteLength(serialized,"utf8")>200_000)return reply.code(413).send({error:"retailer_session_state_too_large"});
+    const encrypted=encryptJson(body.sessionState,config.DATA_ENCRYPTION_KEY_BASE64);
+    await db.query(
+      `insert into private.retailer_session_states(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,expires_at,updated_at)
+       values($1,$2,$3,$4,$5,now()+($6::text||' days')::interval,now())
+       on conflict(tenant_id,retailer_account_id) do update
+       set ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,expires_at=excluded.expires_at,updated_at=now()`,
+      [p.tenantId,retailerAccountId,encrypted.ciphertext,encrypted.iv,encrypted.authTag,Number(row.session_target_days||15)]
+    );
+  }else if(body.status==="REAUTH_REQUIRED"){
+    await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,retailerAccountId]);
+  }
   const {rows}=await db.query(
     `update retailer_accounts set
        session_status=$1,session_challenge_code=case when $1='READY' then null else $4 end,session_checked_at=now(),
