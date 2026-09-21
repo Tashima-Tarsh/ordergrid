@@ -20,14 +20,14 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
-    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid managed execution is reconnecting. The account remains queued.';
+    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Secure Browser is reconnecting. The account remains queued.';
     return message;
   }
   function renderSecureBrowserStatus(){
     const status=$('#secureBrowserStatus');
     if(status){
       status.dataset.ready=secureBrowserReady?'true':'false';
-      status.textContent=secureBrowserReady?'MANAGED EXECUTION ONLINE':'MANAGED EXECUTION STARTING';
+      status.textContent=secureBrowserReady?'SECURE BROWSER ONLINE':'SECURE BROWSER STARTING';
     }
   }
   function parseCsv(text){
@@ -75,7 +75,10 @@
     $('#settledRefunds').textContent=moneyMinor(summary.settled_refund_minor||0);
     $('#accountPoolTitle').textContent=retailerName(retailer)+' users & connections';
     const bound=accounts.filter(a=>a.customer_id).length;
-    $('#accountPoolMeta').textContent=`${accounts.length} accounts · ${bound} user/address profiles · ${active} active`;
+    const connected=accounts.filter(a=>a.active&&String(a.session_status||'')==='READY').length;
+    const otpWaiting=accounts.filter(a=>a.active&&String(a.session_status||'')==='REAUTH_REQUIRED'&&String(a.session_challenge_code||'')==='OTP_REQUIRED').length;
+    const queued=accounts.filter(a=>a.active&&String(a.session_status||'')==='VERIFYING').length;
+    $('#accountPoolMeta').textContent=`${accounts.length} accounts · ${connected} connected · ${otpWaiting} waiting OTP · ${queued} queued · ${bound} bound users`;
     if($('#rewardCount'))$('#rewardCount').textContent=String(summary.available_rewards||0);
     renderSecureBrowserStatus();
 
@@ -99,7 +102,7 @@
           ?(challenge==='OTP_REQUIRED'?'Flipkart sent an OTP. Enter it below to connect this account.':challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification':'Retailer verification required')
           :sessionStatus==='VERIFYING'
             ?'OrderGrid is connecting this account…'
-            :'Waiting for managed connection';
+            :'Waiting for Secure Browser';
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
@@ -178,8 +181,8 @@
       secureBrowserReady=(secureState.workers||[]).length>0;
       renderSecureBrowserStatus();
       toast(secureBrowserReady
-        ?result.count+' account(s) queued for managed connection.'
-        :result.count+' account(s) queued. Managed execution will pick them up automatically.');
+        ?result.count+' account(s) queued. Authentication will proceed one account at a time.'
+        :result.count+' account(s) queued. Secure Browser is starting and will process them one at a time.');
       await load();
     }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
@@ -229,7 +232,7 @@
       if(queued&&secureBrowserReady){
         toast('User saved. Flipkart OTP connection is starting; enter OTP here when requested.');
       }else if(queued){
-        toast('User saved. Flipkart OTP connection is queued and will continue automatically.');
+        toast('User saved. Flipkart OTP connection is queued for the local Secure Browser.');
       }else{
         toast('User saved. Choose Connect account to retry verification.');
       }
@@ -273,7 +276,7 @@
       if(queued&&secureBrowserReady){
         toast(result.count+' users imported · '+queued+' account connection(s) queued.');
       }else if(queued){
-        toast(result.count+' users imported. Managed execution will connect the queued accounts automatically.');
+        toast(result.count+' users imported. Secure Browser will authenticate the queued accounts one at a time.');
       }else{
         toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
       }
@@ -388,8 +391,8 @@
         renderSecureBrowserStatus();
         await load();
         toast(secureBrowserReady
-          ?'Account queued. OrderGrid managed execution is verifying the retailer login.'
-          :'Account queued. Managed execution will pick it up automatically.');
+          ?'Account queued. OrderGrid Secure Browser is verifying the retailer login.'
+          :'Account queued. Secure Browser will pick it up when it comes online.');
       }catch(error){alert(customerError(error))}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
       return;
