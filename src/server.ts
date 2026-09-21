@@ -1481,7 +1481,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     `update retailer_accounts set
        session_status=$1,session_challenge_code=case when $1='READY' then null else $4 end,session_checked_at=now(),
        session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
-       session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end,session_check_claimed_at=null,
+       session_check_requested_at=null,session_check_claimed_at=null,
        auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
        credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
                               when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
