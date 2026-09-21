@@ -522,7 +522,18 @@ function retailerLoginDiagnosticScript(){
         label:clean(x.innerText||x.value||x.getAttribute('aria-label')),
         type:clean(x.type),role:clean(x.getAttribute('role'))
       }));
-    return {url:location.origin+location.pathname,inputs,controls};
+    const frames=[...document.querySelectorAll('iframe')].slice(0,8).map(x=>{try{return new URL(x.src,location.href).origin}catch{return ''}}).filter(Boolean);
+    return {
+      url:location.origin+location.pathname,
+      title:clean(document.title),
+      readyState:document.readyState,
+      htmlLength:document.documentElement?.innerHTML?.length||0,
+      textLength:document.body?.innerText?.length||0,
+      bodyChildren:document.body?.children?.length||0,
+      scriptCount:document.scripts?.length||0,
+      frameOrigins:[...new Set(frames)],
+      inputs,controls
+    };
   })()`;
 }
 function otpSubmitScript(otp){
