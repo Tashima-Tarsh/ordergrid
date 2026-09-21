@@ -224,7 +224,9 @@ must(allocation.includes("remainingQuantity"),"flipkart allocation contract: all
 must(allocationMigration.includes("add column if not exists retailer_account_id"),"flipkart allocation contract: batch-item account migration missing");
 must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];`),"retailer session contract: OTP-only accounts must be eligible for preparation");
 must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
-must(server.includes(`session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end`),"retailer session contract: OTP challenge must stay queued until authenticated");
+must(server.includes("session_check_requested_at=null,session_check_claimed_at=null"),"retailer session contract: completed authentication challenges must pause until explicit action");
+must(server.includes(`if(commandType==="SUBMIT_OTP"&&body.ok&&commandPayload?.retailerAccountId)`),"retailer session contract: successful OTP submission must schedule an authentication recheck");
+must(server.includes("set session_status='VERIFYING',session_check_requested_at=now(),session_check_claimed_at=null"),"retailer session contract: OTP completion must requeue session verification");
 must(cdp.includes('submitRetailerOtp'),"retailer session contract: managed retailer OTP submission missing");
 must(cdp.includes('ORDERGRID_HEADLESS'),"retailer session contract: managed headless browser mode missing");
 must(agent.includes('command.command==="SUBMIT_OTP"'),"retailer session contract: managed OTP command missing from worker");
@@ -239,9 +241,8 @@ must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart tex
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
 must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
 must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
-must(cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: sanitized Flipkart login diagnostic missing");
-must(!cdp.includes("value:clean(x.value)"),"retailer session contract: login diagnostic must never log field values");
-must(agent.includes("Flipkart login diagnostic"),"retailer session contract: worker diagnostic log missing");
+must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
+must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
 must(server.includes("validFlipkartLogin"),"retailer session contract: Flipkart email/mobile validation missing");
 must(server.includes("flipkart_uses_otp"),"retailer session contract: Flipkart password endpoint must reject password authentication");
