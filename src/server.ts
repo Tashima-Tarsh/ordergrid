@@ -584,13 +584,12 @@ app.get("/api/retailer-users/template.xlsx",async(req,reply)=>{
     {header:"city",key:"city",width:16},
     {header:"state",key:"state",width:18},
     {header:"postal_code",key:"postal_code",width:13},
-    {header:"max_concurrent_orders",key:"max_concurrent_orders",width:22},
-    {header:"flipkart_password",key:"flipkart_password",width:22}
+    {header:"max_concurrent_orders",key:"max_concurrent_orders",width:22}
   ];
   sheet.addRow({
     recipient:"Amit Sharma",phone:"9876543210",
     flipkart_user_id:"9876543210",line1:"House 12, Example Road",line2:"Near Landmark",
-    city:"Ludhiana",state:"Punjab",postal_code:"141001",max_concurrent_orders:1,flipkart_password:""
+    city:"Ludhiana",state:"Punjab",postal_code:"141001",max_concurrent_orders:1
   });
   sheet.getRow(1).font={bold:true};
   sheet.views=[{state:"frozen",ySplit:1}];
@@ -871,8 +870,21 @@ app.post("/api/retailer-users",async(req,reply)=>{
       );
       account.credential_status=credential.rows[0]?.credential_status||"STORED";
     }
+    if(body.retailer==="flipkart"){
+      const queued=await client.query(
+        `update retailer_accounts set
+           session_status='VERIFYING',session_challenge_code=null,session_target_days=15,
+           session_check_requested_at=now(),session_check_claimed_at=null,session_worker_id=null,
+           auth_status=case when auth_status='READY' then auth_status else 'AUTH_REQUIRED' end,
+           updated_at=now()
+         where id=$1 and tenant_id=$2
+         returning session_status,session_target_days,session_check_requested_at`,
+        [account.id,p.tenantId]
+      );
+      account={...account,...(queued.rows[0]||{})};
+    }
     await client.query("commit");
-    await audit(db,p.tenantId,p.id,"retailer_user.saved","retailer_account",account.id,{retailer:body.retailer,customerReference:externalReference});
+    await audit(db,p.tenantId,p.id,"retailer_user.saved","retailer_account",account.id,{retailer:body.retailer,customerReference:externalReference,connectionMode:body.retailer==="flipkart"?"OTP":"CREDENTIAL_OR_OTP",targetDays:body.retailer==="flipkart"?15:null});
     return reply.code(201).send({customer:customer.rows[0],address:address.rows[0],account});
   }catch(error){
     await client.query("rollback");throw error;
@@ -1084,7 +1096,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   const body=z.object({
     retailer:z.enum(["amazon-in","flipkart"]).optional(),
     accountIds:z.array(z.string().uuid()).max(1000).optional(),
-    targetDays:z.number().int().min(1).max(90).default(20)
+    targetDays:z.number().int().min(1).max(90).default(15)
   }).parse(req.body??{});
   const params:any[]=[p.tenantId,body.targetDays];
   const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
@@ -1385,14 +1397,14 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
     await client.query("commit");
     const accounts:any[]=[];
     for(const row of picked.rows){
-      let credentials:null|{login:string;password:string}=null;
+      const credentials:{login:string;password?:string}={login:String(row.account_reference)};
       const stored=await db.query(
         "select ciphertext,iv,auth_tag from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2 limit 1",
         [p.tenantId,row.id]
       );
       if(stored.rows[0]){
         const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
-        if(decrypted.password)credentials={login:String(row.account_reference),password:String(decrypted.password)};
+        if(decrypted.password)credentials.password=String(decrypted.password);
       }
       accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials});
     }
@@ -1433,7 +1445,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
     title:ready?"Retailer account ready":"Retailer verification required",
     message:ready
-      ?`${row.retailer} account ${row.account_reference} is session-ready. The 20-day window is a target and may be shortened by retailer security checks.`
+      ?`${row.retailer} account ${row.account_reference} is session-ready. The ${Number(row.session_target_days||15)}-day session window is a target and may be shortened by retailer security checks.`
       :(body.message??`${row.retailer} account ${row.account_reference} needs verification before automated checkout.`),
     idempotencyKey:`session:${retailerAccountId}:${body.status}:${new Date().toISOString().slice(0,13)}`,
     payload:{retailerAccountId,retailer:row.retailer,code:body.code??null}
