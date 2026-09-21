@@ -164,9 +164,13 @@ try {
   & $npmExe run build:local
   if ($LASTEXITCODE -ne 0) { throw "OrderGrid build failed." }
 
-  Write-Host "Applying database migrations..." -ForegroundColor DarkGray
-  & $nodeExe (Join-Path $repoRoot "dist\migrate.js")
-  if ($LASTEXITCODE -ne 0) { throw "Database migration failed." }
+  if ($env:ORDERGRID_LOCAL_MIGRATE -eq "true") {
+    Write-Host "Applying database migrations..." -ForegroundColor DarkGray
+    & $nodeExe (Join-Path $repoRoot "dist\migrate.js")
+    if ($LASTEXITCODE -ne 0) { throw "Database migration failed." }
+  } else {
+    Write-Host "Using the existing shared database schema." -ForegroundColor DarkGray
+  }
 
   if (Test-Path $logPath) { Remove-Item $logPath -Force }
   $process = Start-Process -FilePath $nodeExe -ArgumentList (Join-Path $repoRoot "dist\server.js") -WorkingDirectory $repoRoot -RedirectStandardOutput $logPath -RedirectStandardError $logPath -WindowStyle Hidden -PassThru
