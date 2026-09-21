@@ -171,9 +171,28 @@ function retailerAuthScript(credentials){
     const otp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
     if(otp)return {acted:false,challenge:'OTP_REQUIRED'};
     const password=inputs.find(x=>x.type==='password');
-    const user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs.find(x=>x.type==='tel');
     const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
+    const fieldMeta=x=>String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'').trim();
+    const nonSearchText=inputs.filter(x=>{
+      const type=String(x.type||'text').toLowerCase(),meta=fieldMeta(x),role=String(x.getAttribute('role')||'');
+      if(x===password||otp)return false;
+      if(!['text','email','tel','number'].includes(type))return false;
+      if(/search|find products|products brands and more/i.test(meta)||role==='searchbox')return false;
+      return true;
+    });
+    let user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(fieldMeta(x)))||inputs.find(x=>x.type==='tel');
+    if(!user){
+      user=nonSearchText.find(x=>{
+        let node=x;
+        for(let depth=0;node&&depth<4;depth++,node=node.parentElement){
+          if(/email|mobile|phone|login|sign in|request otp|otp/i.test(String(node.innerText||'')))return true;
+        }
+        return false;
+      })||null;
+    }
+    if(!user&&password?.form)user=nonSearchText.find(x=>x.form===password.form)||null;
+    if(!user&&nonSearchText.length===1)user=nonSearchText[0];
     if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
       if(!String(password.value||''))setValue(password,credentials.password);
@@ -189,7 +208,11 @@ function retailerAuthScript(credentials){
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
       if(requestOtp&&visible(requestOtp)){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
     }
-    if(password&&!credentials.password)return {acted:false,challenge:'LOGIN_REQUIRED'};
+    if(password&&!credentials.password){
+      const safeInputs=inputs.slice(0,8).map(x=>({type:String(x.type||''),name:String(x.name||'').slice(0,40),placeholder:String(x.placeholder||'').slice(0,80),aria:String(x.getAttribute('aria-label')||'').slice(0,80)}));
+      const safeControls=controls.slice(0,12).map(x=>label(x).slice(0,80)).filter(Boolean);
+      return {acted:false,challenge:'LOGIN_REQUIRED',debug:{inputs:safeInputs,controls:safeControls}};
+    }
     return {acted:false};
   })()`;
 }
