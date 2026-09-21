@@ -121,26 +121,29 @@ function addToCartScript(quantity){
 }
 function retailerAuthScript(credentials){
   return `(()=>{const credentials=${JSON.stringify(credentials||null)};
-    if(!credentials?.login||!credentials?.password)return {acted:false};
+    if(!credentials?.login)return {acted:false};
     const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,50000);
     const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
+    const otp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+    if(otp)return {acted:false,challenge:'OTP_REQUIRED'};
     const password=inputs.find(x=>x.type==='password');
     const user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs.find(x=>x.type==='tel');
     const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
-    if(password){
+    if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
       if(!String(password.value||''))setValue(password,credentials.password);
       const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
       if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
-    if(user&&!String(user.value||'').trim()&&/(sign in|signin|log in|login|email|mobile|account)/i.test(text)){
-      setValue(user,credentials.login);
-      const next=controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)));
-      if(next){next.click();return {acted:true,action:'ACCOUNT_IDENTIFIER_SUBMITTED'};}
+    if(user){
+      if(!String(user.value||'').trim())setValue(user,credentials.login);
+      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue|next|sign in|signin|log in|login)/i.test(label(x)));
+      if(requestOtp){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
     }
+    if(password&&!credentials.password)return {acted:false,challenge:'LOGIN_REQUIRED'};
     return {acted:false};
   })()`;
 }
