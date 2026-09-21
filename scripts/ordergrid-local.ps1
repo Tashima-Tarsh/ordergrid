@@ -8,7 +8,11 @@ $envPath = Join-Path $repoRoot ".env.local"
 $pidPath = Join-Path $stateRoot "server.pid"
 $logPath = Join-Path $stateRoot "server.log"
 $errorLogPath = Join-Path $stateRoot "server-error.log"
+$workerPidPath = Join-Path $stateRoot "worker.pid"
+$workerLogPath = Join-Path $stateRoot "worker.log"
+$workerErrorLogPath = Join-Path $stateRoot "worker-error.log"
 $localUrl = "http://127.0.0.1:3000"
+$profileRoot = Join-Path $env:LOCALAPPDATA "OrderGrid\profiles"
 
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
@@ -84,10 +88,10 @@ function Ensure-LocalConfig {
   $databaseUrl = Read-Host "DATABASE_URL (Supabase/Postgres connection string)"
   if ([string]::IsNullOrWhiteSpace($databaseUrl)) { throw "DATABASE_URL is required." }
 
-  $adminEmail = Read-Host "OrderGrid admin email"
+  $adminEmail = Read-Host "Existing OrderGrid login email (or first admin email for a new database)"
   if ([string]::IsNullOrWhiteSpace($adminEmail)) { throw "Admin email is required." }
 
-  $securePassword = Read-Host "OrderGrid admin password (14+ characters)" -AsSecureString
+  $securePassword = Read-Host "Existing OrderGrid password (14+ characters)" -AsSecureString
   $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
   try { $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -132,6 +136,104 @@ function Test-OrderGridHealth {
     $response = Invoke-WebRequest -UseBasicParsing -Uri "$localUrl/api/health" -TimeoutSec 2
     return $response.StatusCode -eq 200
   } catch { return $false }
+}
+
+function Test-PidAlive([string]$Path) {
+  if (-not (Test-Path $Path)) { return $false }
+  $raw = (Get-Content $Path -Raw).Trim()
+  if ($raw -notmatch '^\d+
+Write-Host ""
+Write-Host "OrderGrid Local" -ForegroundColor Cyan
+Write-Host "Local web app + local Secure Browser + shared Supabase data"
+Write-Host ""
+
+Ensure-LocalConfig
+Import-LocalEnv
+
+$runtime = Resolve-LocalNode
+$nodeExe = [string]$runtime.node
+$npmExe = [string]$runtime.npm
+
+if (Test-OrderGridHealth) {
+  Start-LocalWorker $nodeExe
+  Write-Host "OrderGrid is already running locally." -ForegroundColor Green
+  Start-Process $localUrl
+  exit 0
+}
+
+Push-Location $repoRoot
+try {
+  if (-not (Test-Path (Join-Path $repoRoot "node_modules"))) {
+    Write-Host "Installing application dependencies..." -ForegroundColor DarkGray
+    & $npmExe ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed." }
+  }
+
+  Write-Host "Building OrderGrid..." -ForegroundColor DarkGray
+  & $npmExe run build:local
+  if ($LASTEXITCODE -ne 0) { throw "OrderGrid build failed." }
+
+  if ($env:ORDERGRID_LOCAL_MIGRATE -eq "true") {
+    Write-Host "Applying database migrations..." -ForegroundColor DarkGray
+    & $nodeExe (Join-Path $repoRoot "dist\migrate.js")
+    if ($LASTEXITCODE -ne 0) { throw "Database migration failed." }
+  } else {
+    Write-Host "Using the existing shared database schema." -ForegroundColor DarkGray
+  }
+
+  if (Test-Path $logPath) { Remove-Item $logPath -Force }
+  $process = Start-Process -FilePath $nodeExe -ArgumentList (Join-Path $repoRoot "dist\server.js") -WorkingDirectory $repoRoot -RedirectStandardOutput $logPath -RedirectStandardError $logPath -WindowStyle Hidden -PassThru
+  Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
+
+  $deadline = (Get-Date).AddSeconds(30)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-OrderGridHealth) { break }
+    if ($process.HasExited) { throw "OrderGrid server exited during startup. See .ordergrid-local\server.log" }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not (Test-OrderGridHealth)) { throw "OrderGrid did not become healthy. See .ordergrid-local\server.log" }
+
+  Start-LocalWorker $nodeExe
+
+  Write-Host ""
+  Write-Host "OrderGrid is running locally." -ForegroundColor Green
+  Write-Host "Open: $localUrl"
+  Write-Host "Retailer browser execution stays on this Windows PC; Render is not used."
+  Write-Host "Open Retailer Accounts and choose Connect all accounts. OrderGrid authenticates one account at a time." -ForegroundColor Yellow
+  Write-Host ""
+  Start-Process $localUrl
+} finally {
+  Pop-Location
+}
+) { return $false }
+  return $null -ne (Get-Process -Id ([int]$raw) -ErrorAction SilentlyContinue)
+}
+
+function Start-LocalWorker([string]$NodeExe) {
+  if (Test-PidAlive $workerPidPath) {
+    Write-Host "Retailer authentication worker is already running." -ForegroundColor Green
+    return
+  }
+
+  $env:ORDERGRID_URL = $localUrl
+  $env:ORDERGRID_EMAIL = $env:BOOTSTRAP_ADMIN_EMAIL
+  $env:ORDERGRID_PASSWORD = $env:BOOTSTRAP_ADMIN_PASSWORD
+  $env:ORDERGRID_PROFILE_ROOT = $profileRoot
+  $env:ORDERGRID_SESSION_CLAIM = "1"
+  $env:ORDERGRID_PARALLEL = "4"
+  $env:ORDERGRID_PRODUCT_CHECK_PARALLEL = "2"
+  $env:ORDERGRID_BASKETS = "25"
+  $env:ORDERGRID_DAEMON = "1"
+  $env:ORDERGRID_HEADLESS = ""
+
+  New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
+  if (Test-Path $workerLogPath) { Remove-Item $workerLogPath -Force }
+  if (Test-Path $workerErrorLogPath) { Remove-Item $workerErrorLogPath -Force }
+  $worker = Start-Process -FilePath $NodeExe -ArgumentList (Join-Path $repoRoot "agent\index.mjs") -WorkingDirectory $repoRoot -RedirectStandardOutput $workerLogPath -RedirectStandardError $workerErrorLogPath -WindowStyle Hidden -PassThru
+  Set-Content -Path $workerPidPath -Value $worker.Id -Encoding ASCII
+  Start-Sleep -Milliseconds 800
+  if ($worker.HasExited) { throw "Retailer authentication worker exited during startup. See .ordergrid-local\worker-error.log" }
+  Write-Host "Retailer authentication worker is running." -ForegroundColor Green
 }
 
 Write-Host ""
