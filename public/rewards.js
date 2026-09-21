@@ -20,32 +20,15 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
-    if(/worker.*offline|execution worker|session worker/i.test(message))return 'Secure Browser is not connected on this computer.';
+    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid managed execution is reconnecting. The account remains queued.';
     return message;
   }
   function renderSecureBrowserStatus(){
-    const status=$('#secureBrowserStatus'),setup=$('#downloadOrderGridWorker');
+    const status=$('#secureBrowserStatus');
     if(status){
       status.dataset.ready=secureBrowserReady?'true':'false';
-      status.textContent=secureBrowserReady?'SECURE BROWSER READY':'SETUP REQUIRED';
+      status.textContent=secureBrowserReady?'MANAGED EXECUTION ONLINE':'MANAGED EXECUTION STARTING';
     }
-    if(setup){
-      setup.textContent=secureBrowserReady?'Secure Browser ready':'Install Secure Browser';
-      setup.classList.toggle('is-ready',secureBrowserReady);
-      setup.setAttribute('aria-label',secureBrowserReady?'Secure Browser is connected':'Install OrderGrid Secure Browser');
-    }
-  }
-  function startSecureBrowserSetup(){
-    if(secureBrowserReady){
-      toast('Secure Browser is already ready on this computer.');
-      return;
-    }
-    const anchor=document.createElement('a');
-    anchor.href='/api/secure-browser/setup.cmd';
-    anchor.style.display='none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
   }
   function parseCsv(text){
     const rows=[];let row=[],cell='',quoted=false;
@@ -109,18 +92,19 @@
         :sessionStatus==='REAUTH_REQUIRED'?'SIGN-IN REQUIRED'
         :sessionStatus==='VERIFYING'?'CONNECTING'
         :'NOT CONNECTED';
+      const challenge=String(account.session_challenge_code||'');
       const sessionMeta=sessionStatus==='READY'
         ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?'Sign-in required · open the secure retailer login'
+          ?(challenge==='OTP_REQUIRED'?'OTP required to finish retailer verification':challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification':'Retailer verification required')
           :sessionStatus==='VERIFYING'
-            ?'Connecting securely…'
-            :'Not connected';
-      const sessionAction=account.session_worker_id&&sessionStatus!=='READY'
-        ?'<button type="button" class="secondary" data-open-session>Open login</button>'
+            ?'OrderGrid is connecting this account…'
+            :'Waiting for managed connection';
+      const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
+        ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
       const verifyAction=sessionStatus!=='READY'
-        ?`<button type="button" class="secondary" data-verify-session>${secureBrowserReady?'Connect account':'Install Secure Browser'}</button>`
+        ?`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`
         :'<span class="session-connected-chip">✓ Connected</span>';
       const identity=account.customer_id
         ?esc(account.display_name||account.label||account.account_reference)+' · '+esc(account.customer_reference||'BOUND USER')
@@ -139,7 +123,7 @@
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
           <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
-          <div class="account-actions">${verifyAction}${sessionAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
+          <div class="account-actions">${verifyAction}${otpAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and secure login.</span></div>';
   }
@@ -176,15 +160,6 @@
   $('#retailerPoolSelector')?.addEventListener('change',event=>{
     retailer=event.target.value;load();
   });
-  $('#downloadOrderGridWorker')?.addEventListener('click',event=>{
-    event.preventDefault();
-    if(secureBrowserReady){
-      toast('Secure Browser is already ready on this computer.');
-      return;
-    }
-    startSecureBrowserSetup();
-    toast('Open the downloaded OrderGrid Secure Browser Setup once. OrderGrid will continue automatically.');
-  });
   $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
     const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Connecting…';
     try{
@@ -195,12 +170,9 @@
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
       secureBrowserReady=(secureState.workers||[]).length>0;
       renderSecureBrowserStatus();
-      if(secureBrowserReady){
-        toast(result.count+' account(s) ready to connect. Complete retailer sign-in in the Secure Browser.');
-      }else{
-        startSecureBrowserSetup();
-        toast(result.count+' account(s) queued. Open the one-time Secure Browser setup; OrderGrid will continue automatically.');
-      }
+      toast(secureBrowserReady
+        ?result.count+' account(s) queued for managed connection.'
+        :result.count+' account(s) queued. Managed execution will pick them up automatically.');
       await load();
     }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
@@ -249,12 +221,11 @@
       formElement.reset();$('#retailerUserDialog').close();
       await load();
       if(queued&&secureBrowserReady){
-        toast('User saved. Secure Flipkart login is opening; complete sign-in or OTP in the retailer window.');
+        toast('User saved. OrderGrid is connecting the Flipkart account in managed execution.');
       }else if(queued){
-        startSecureBrowserSetup();
-        toast('User saved. Open the one-time Secure Browser setup; Flipkart login will open automatically.');
+        toast('User saved. Managed execution will connect this account automatically.');
       }else{
-        toast('User saved. Choose Connect account to continue.');
+        toast('User saved. Choose Connect account to retry verification.');
       }
     }catch(error){$('#retailerUserError').textContent=customerError(error)}
     finally{button.disabled=false;button.textContent='Save user & connect login'}
@@ -294,10 +265,9 @@
       $('#retailerUserDialog').close();
       await load();
       if(queued&&secureBrowserReady){
-        toast(result.count+' users imported · '+queued+' secure login(s) ready to connect.');
+        toast(result.count+' users imported · '+queued+' account connection(s) queued.');
       }else if(queued){
-        startSecureBrowserSetup();
-        toast(result.count+' users imported. Open the one-time Secure Browser setup; login verification will continue automatically.');
+        toast(result.count+' users imported. Managed execution will connect the queued accounts automatically.');
       }else{
         toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
       }
@@ -365,9 +335,26 @@
   $('#retailerAccountPool')?.addEventListener('click',async event=>{
     const row=event.target.closest('[data-account-id]');if(!row)return;
     const account=accounts.find(x=>x.id===row.dataset.accountId);if(!account)return;
+    const submitOtp=event.target.closest('[data-submit-account-otp]');
+    if(submitOtp){
+      const input=row.querySelector('[data-account-otp-input]');
+      const otp=String(input?.value||'').trim();
+      if(!/^\d{4,8}$/.test(otp)){alert('Enter the 4–8 digit retailer OTP.');return}
+      submitOtp.disabled=true;const previous=submitOtp.textContent;submitOtp.textContent='Verifying…';
+      try{
+        await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/otp',{
+          method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({otp})
+        });
+        if(input)input.value='';
+        toast('OTP sent securely to the managed retailer session. OrderGrid is re-checking the account.');
+        setTimeout(()=>load().catch(()=>{}),1800);
+      }catch(error){alert(customerError(error))}
+      finally{submitOtp.textContent=previous;setTimeout(()=>{submitOtp.disabled=false},1200)}
+      return;
+    }
     const verify=event.target.closest('[data-verify-session]');
     if(verify){
-      verify.disabled=true;const previous=verify.textContent;verify.textContent='Starting…';
+      verify.disabled=true;const previous=verify.textContent;verify.textContent='Queuing…';
       try{
         await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
@@ -375,33 +362,13 @@
         });
         const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
         secureBrowserReady=(secureState.workers||[]).length>0;
-        if(secureBrowserReady){
-          await load();
-          toast('Secure login is opening. Complete Flipkart sign-in or OTP in the retailer window.');
-        }else{
-          renderSecureBrowserStatus();
-          startSecureBrowserSetup();
-          toast('Open the one-time Secure Browser setup. OrderGrid will then open this Flipkart account automatically.');
-        }
+        renderSecureBrowserStatus();
+        await load();
+        toast(secureBrowserReady
+          ?'Account queued. OrderGrid managed execution is verifying the retailer login.'
+          :'Account queued. Managed execution will pick it up automatically.');
       }catch(error){alert(customerError(error))}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
-      return;
-    }
-    const open=event.target.closest('[data-open-session]');
-    if(open){
-      open.disabled=true;const previous=open.textContent;open.textContent='Opening…';
-      try{
-        await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/focus-session',{method:'POST'});
-        toast('Opening secure retailer login');
-      }catch(error){
-        if(/secure browser is not connected|worker.*offline|session worker/i.test(customerError(error))){
-          secureBrowserReady=false;renderSecureBrowserStatus();startSecureBrowserSetup();
-          toast('Open the one-time Secure Browser setup, then choose Open login again.');
-        }else{
-          alert(customerError(error));
-        }
-      }
-      finally{open.textContent=previous;setTimeout(()=>{open.disabled=false},1200)}
       return;
     }
     const button=event.target.closest('[data-toggle-account]');if(!button)return;
