@@ -38,6 +38,10 @@ must(files["public/control-center.js"].includes("'/api/users'"),"user contract: 
 const retailerUi=files["public/index.html"]+"\n"+files["public/rewards.js"];
 must(retailerUi.includes("MANAGED EXECUTION ONLINE"),"managed execution contract: customer status missing");
 must(retailerUi.includes("data-submit-account-otp"),"managed execution contract: account OTP control missing");
+must(retailerUi.includes("OTP sign-in"),"managed execution contract: Flipkart OTP-first onboarding copy missing");
+must(!retailerUi.includes("Flipkart password <small>"),"managed execution contract: Flipkart password field must not appear in normal onboarding");
+must(files["public/rewards.js"].includes("targetDays:15"),"managed execution contract: Flipkart session target must be 15 days");
+must(server.includes("const credentials:{login:string;password?:string}"),"managed execution contract: OTP-only Flipkart login identity missing");
 must(!retailerUi.includes("Install Secure Browser"),"managed execution contract: customer installer must be removed");
 must(!retailerUi.includes("Install / start worker"),"managed execution contract: worker install jargon remains");
 must(!retailerUi.includes("start the secure browser worker"),"managed execution contract: worker startup instruction remains");
