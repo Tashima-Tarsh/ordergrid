@@ -14,6 +14,16 @@ create table if not exists private.retailer_session_states (
 create index if not exists retailer_session_states_expiry_idx
   on private.retailer_session_states(expires_at);
 
+-- The production web service runs as a restricted database role. Grant only the
+-- private schema visibility and CRUD required for encrypted session checkpoints.
+do $
+begin
+  if exists(select 1 from pg_roles where rolname='ordergrid_app') then
+    execute 'grant usage on schema private to ordergrid_app';
+    execute 'grant select, insert, update, delete on table private.retailer_session_states to ordergrid_app';
+  end if;
+end $;
+
 update public.retailer_accounts
 set session_target_days=15,
     session_target_expires_at=case
