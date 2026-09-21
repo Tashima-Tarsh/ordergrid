@@ -233,6 +233,8 @@ must(managedOtpMigration.includes("'SUBMIT_OTP'"),"retailer session contract: ma
 must(managedOtpMigration.includes("session_challenge_code"),"retailer session contract: session challenge tracking missing");
 must(cdp.includes("OTP_REQUESTED"),"retailer session contract: Flipkart login identifier must request OTP without a password");
 must(server.includes("const credentials:{login:string;password?:string}"),"retailer session contract: OTP-only account identity must reach managed execution");
+must(server.includes('if(String(row.retailer)!=="flipkart")'),"retailer session contract: saved Flipkart passwords must not be used for managed login");
+must(server.includes('rows[0].retailer==="flipkart"'),"retailer session contract: checkout must retain Flipkart login identity for OTP reauthentication");
 must(server.includes("targetDays:z.number().int().min(1).max(90).default(15)"),"retailer session contract: default session target must be 15 days");
 must(files["public/rewards.js"].includes("targetDays:15"),"retailer session contract: customer connection flow must request 15 days");
 must(!html.includes("Flipkart password <small>"),"retailer session contract: normal Flipkart onboarding must not ask for a password");
