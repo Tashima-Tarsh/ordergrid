@@ -640,6 +640,7 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null}){
   if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
   const port=await ensureChrome(chrome,directory);
+  const flipkartLoginUrl="https://www.flipkart.com/account/login?ret=%2Faccount%2Forders";
   const url=retailer==="flipkart"
     ?"https://www.flipkart.com/account/orders"
     :retailer==="amazon-in"
@@ -658,9 +659,23 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await waitReady(connection);await sleep(round?1100:1600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(acted?.acted){await sleep(1500);continue}
-      if(acted?.challenge)return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url};
+      if(acted?.challenge){
+        if(retailer==="flipkart"&&acted.challenge==="LOGIN_REQUIRED"&&round<5){
+          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await sleep(1200);
+          continue;
+        }
+        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url};
+      }
       const challenge=await evaluate(connection,authChallengeScript());
-      if(challenge)return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url};
+      if(challenge){
+        if(retailer==="flipkart"&&challenge.code==="LOGIN_REQUIRED"&&round<5){
+          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await sleep(1200);
+          continue;
+        }
+        return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url};
+      }
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href))return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};

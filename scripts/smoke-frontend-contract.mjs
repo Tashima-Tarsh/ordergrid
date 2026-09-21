@@ -237,6 +237,8 @@ must(cdp.includes("LOGIN_IDENTIFIER_ENTERED"),"retailer session contract: Flipka
 must(cdp.includes('[role="button"]'),"retailer session contract: Flipkart role-button login controls must be supported");
 must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart text login field fallback missing");
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
+must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
+must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
 must(server.includes("validFlipkartLogin"),"retailer session contract: Flipkart email/mobile validation missing");
 must(server.includes("flipkart_uses_otp"),"retailer session contract: Flipkart password endpoint must reject password authentication");
