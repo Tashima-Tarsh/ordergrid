@@ -26,6 +26,7 @@ import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } f
 import { startManagedExecutionSupervisor } from "./managed-execution.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
 type AutomationPolicy={
   automation_enabled:boolean;
   auto_assign_virtual_card:boolean;
@@ -290,7 +291,7 @@ app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async
   if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"});
   const token=randomBytes(32).toString("base64url");
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
-  reply.setCookie("session",token,{httpOnly:true,secure:config.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});
+  reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
   const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
   return {user:{id:u.id,role:u.role},workspace:tenant.rows[0]};
 });
@@ -1125,7 +1126,8 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   const params:any[]=[p.tenantId,body.targetDays];
   const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
-  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
+  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any(${params.length}::uuid[])`)}
+  clauses.push("(session_status<>'READY' or session_target_expires_at is null or session_target_expires_at<=now())");
   const {rows}=await db.query(
     `update retailer_accounts set
        session_status='VERIFYING',session_challenge_code=null,session_target_days=$2,session_check_requested_at=now(),
@@ -1396,6 +1398,19 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId,workerId,p.id]
     );
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    const waiting=await client.query(
+      `select id,session_challenge_code
+       from retailer_accounts
+       where tenant_id=$1 and session_worker_id=$2 and session_status='REAUTH_REQUIRED'
+         and session_challenge_code in ('OTP_REQUIRED','CAPTCHA_REQUIRED','LOGIN_REQUIRED')
+       order by updated_at,id
+       limit 1`,
+      [p.tenantId,workerId]
+    );
+    if(waiting.rows[0]){
+      await client.query("commit");
+      return {accounts:[],waitingFor:{retailerAccountId:String(waiting.rows[0].id),code:String(waiting.rows[0].session_challenge_code)}};
+    }
     await client.query(
       `update retailer_accounts set session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING'
        where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '15 minutes'`,
@@ -1438,8 +1453,12 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
         [p.tenantId,row.id]
       );
       if(savedSession.rows[0]){
-        const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
-        if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+        try{
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
+          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+        }catch{
+          await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
+        }
       }
       accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials,sessionState});
     }
@@ -1481,7 +1500,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     `update retailer_accounts set
        session_status=$1,session_challenge_code=case when $1='READY' then null else $4 end,session_checked_at=now(),
        session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
-       session_check_requested_at=case when $1='REAUTH_REQUIRED' then now() else null end,session_check_claimed_at=null,
+       session_check_requested_at=null,session_check_claimed_at=null,
        auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
        credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
                               when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
