@@ -193,6 +193,10 @@ function retailerAuthScript(credentials){
     }
     if(!user&&password?.form)user=nonSearchText.find(x=>x.form===password.form)||null;
     if(!user&&nonSearchText.length===1)user=nonSearchText[0];
+    if(!user){
+      const openLogin=controls.find(x=>/^(login|log in|sign in|signin)$/i.test(label(x)));
+      if(openLogin){openLogin.click();return {acted:true,action:'LOGIN_SURFACE_OPENED'};}
+    }
     if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
       if(!String(password.value||''))setValue(password,credentials.password);
