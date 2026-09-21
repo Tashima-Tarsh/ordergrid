@@ -180,9 +180,6 @@ async function main(){
             const result=await prepareRetailerSession({
               chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
             });
-            if(account.retailer==="flipkart"&&result.diagnostic){
-              output.write(`Flipkart login diagnostic · ${JSON.stringify(result.diagnostic)}\n`);
-            }
             const sessionState=result.status==="READY"
               ?await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null)
               :null;
