@@ -239,6 +239,9 @@ must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart tex
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
 must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
 must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
+must(cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: sanitized Flipkart login diagnostic missing");
+must(!cdp.includes("value:clean(x.value)"),"retailer session contract: login diagnostic must never log field values");
+must(agent.includes("Flipkart login diagnostic"),"retailer session contract: worker diagnostic log missing");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
 must(server.includes("validFlipkartLogin"),"retailer session contract: Flipkart email/mobile validation missing");
 must(server.includes("flipkart_uses_otp"),"retailer session contract: Flipkart password endpoint must reject password authentication");
