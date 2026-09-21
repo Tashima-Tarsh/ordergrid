@@ -727,7 +727,11 @@ app.post("/api/address-books/import",async(req,reply)=>{
         }
         retailerAccountsBound++;
         retailerAccountIds.push(String(account.rows[0].id));
-        if(credential.password){
+        if(retailer==="flipkart"){
+          await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,account.rows[0].id]);
+          await client.query("update retailer_accounts set credential_status='MISSING',last_credential_update_at=null,updated_at=now() where id=$1 and tenant_id=$2",[account.rows[0].id,p.tenantId]);
+        }
+        if(credential.password&&retailer!=="flipkart"){
           const encrypted=encryptJson({password:credential.password},config.DATA_ENCRYPTION_KEY_BASE64);
           await client.query(
             `insert into private.retailer_credentials(tenant_id,retailer_account_id,ciphertext,iv,auth_tag,created_by,updated_at)
@@ -885,6 +889,7 @@ app.post("/api/retailer-users",async(req,reply)=>{
            session_status='VERIFYING',session_challenge_code=null,session_target_days=15,
            session_check_requested_at=now(),session_check_claimed_at=null,session_worker_id=null,
            auth_status=case when auth_status='READY' then auth_status else 'AUTH_REQUIRED' end,
+           credential_status='MISSING',last_credential_update_at=null,
            updated_at=now()
          where id=$1 and tenant_id=$2
          returning session_status,session_target_days,session_check_requested_at`,
@@ -998,11 +1003,14 @@ app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
       maxConcurrentOrders:z.number().int().min(1).max(100).default(1)
     })).min(1).max(1000)
   }).parse(req.body);
+  if(body.retailer==="flipkart"){
+    const invalid=body.accounts.find(account=>!validFlipkartLogin(account.accountReference));
+    if(invalid)return reply.code(400).send({error:"invalid_flipkart_login",message:"Use a 10-digit mobile number or email address for every Flipkart account."});
+  }
   const client=await db.connect(),created:any[]=[];
   try{
     await client.query("begin");
     for(const account of body.accounts){
-      if(body.retailer==="flipkart"&&!validFlipkartLogin(account.accountReference))return reply.code(400).send({error:"invalid_flipkart_login",message:"Use a 10-digit mobile number or email address for every Flipkart account."});
       const saved=await client.query(
         `insert into retailer_accounts(
            tenant_id,customer_id,retailer,account_reference,label,auth_status,active,max_concurrent_orders,created_by,updated_at
