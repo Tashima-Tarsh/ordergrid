@@ -172,7 +172,7 @@ function retailerAuthScript(credentials){
     if(otp)return {acted:false,challenge:'OTP_REQUIRED'};
     const password=inputs.find(x=>x.type==='password');
     const user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs.find(x=>x.type==='tel');
-    const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
+    const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
     if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
@@ -181,9 +181,13 @@ function retailerAuthScript(credentials){
       if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
     if(user){
-      if(!String(user.value||'').trim())setValue(user,credentials.login);
-      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue|next|sign in|signin|log in|login)/i.test(label(x)));
-      if(requestOtp){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
+      if(!String(user.value||'').trim()){
+        setValue(user,credentials.login);
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
+      }
+      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
+        ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
+      if(requestOtp&&visible(requestOtp)){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
     }
     if(password&&!credentials.password)return {acted:false,challenge:'LOGIN_REQUIRED'};
     return {acted:false};
