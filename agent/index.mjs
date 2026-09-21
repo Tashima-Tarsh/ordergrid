@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount } from "./cdp.mjs";
+import { executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount, submitRetailerOtp } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -136,6 +136,13 @@ async function main(){
             const focused=await focusRetailerSession({chrome,directory,retailer:command.retailer});
             if(!focused.ok)throw new Error(focused.reason||"Could not focus retailer session");
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
+            continue;
+          }
+          if(command.command==="SUBMIT_OTP"){
+            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
+            const result=await submitRetailerOtp({chrome,directory,retailer:command.retailer,otp:String(command.payload?.otp||"")});
+            if(!result?.ok)throw new Error(result?.reason||"Retailer OTP submission failed");
+            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
             continue;
           }
           throw new Error("Unsupported worker command");
