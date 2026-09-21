@@ -111,6 +111,8 @@ async function main(){
   const productCheckState={current:Math.min(4,productCheckMax),max:productCheckMax,cleanWaves:0,cooldownMs:0};
   const claimRequested=Number(process.env.ORDERGRID_BASKETS||"25");
   const claimLimit=Number.isInteger(claimRequested)&&claimRequested>=1&&claimRequested<=25?claimRequested:25;
+  const sessionClaimRequested=Number(process.env.ORDERGRID_SESSION_CLAIM||((process.env.ORDERGRID_HEADLESS==="1")?"10":"1"));
+  const sessionClaimLimit=Number.isInteger(sessionClaimRequested)&&sessionClaimRequested>=1&&sessionClaimRequested<=25?sessionClaimRequested:1;
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
   const started=new Set();
@@ -174,15 +176,12 @@ async function main(){
       if(Date.now()-lastSessionCheckAt>=30_000){
         lastSessionCheckAt=Date.now();
         try{
-          const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:10})})).body;
+          const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:sessionClaimLimit})})).body;
           for(const account of sessionClaim.accounts||[]){
             const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
             const result=await prepareRetailerSession({
               chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
             });
-            if(account.retailer==="flipkart"&&result.diagnostic){
-              output.write(`Flipkart login diagnostic · ${JSON.stringify(result.diagnostic)}\n`);
-            }
             const sessionState=result.status==="READY"
               ?await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null)
               :null;

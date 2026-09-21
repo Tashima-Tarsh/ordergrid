@@ -509,33 +509,6 @@ function authChallengeScript(){
   })()`;
 }
 
-function retailerLoginDiagnosticScript(){
-  return `(()=>{const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
-    const clean=value=>String(value||'').replace(/\\s+/g,' ').trim().slice(0,100);
-    const inputs=[...document.querySelectorAll('input')].filter(visible).slice(0,12).map(x=>({
-      type:clean(x.type),name:clean(x.name),id:clean(x.id),placeholder:clean(x.placeholder),
-      aria:clean(x.getAttribute('aria-label')),autocomplete:clean(x.autocomplete),role:clean(x.getAttribute('role'))
-    }));
-    const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a')]
-      .filter(visible).slice(0,16).map(x=>({
-        tag:String(x.tagName||'').toLowerCase(),
-        label:clean(x.innerText||x.value||x.getAttribute('aria-label')),
-        type:clean(x.type),role:clean(x.getAttribute('role'))
-      }));
-    const frames=[...document.querySelectorAll('iframe')].slice(0,8).map(x=>{try{return new URL(x.src,location.href).origin}catch{return ''}}).filter(Boolean);
-    return {
-      url:location.origin+location.pathname,
-      title:clean(document.title),
-      readyState:document.readyState,
-      htmlLength:document.documentElement?.innerHTML?.length||0,
-      textLength:document.body?.innerText?.length||0,
-      bodyChildren:document.body?.children?.length||0,
-      scriptCount:document.scripts?.length||0,
-      frameOrigins:[...new Set(frames)],
-      inputs,controls
-    };
-  })()`;
-}
 function otpSubmitScript(otp){
   return `(()=>{const otp=${JSON.stringify(String(otp||""))};
     if(!/^\\d{4,8}$/.test(otp))return {ok:false,reason:'INVALID_OTP'};
@@ -692,8 +665,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           await sleep(1200);
           continue;
         }
-        const diagnostic=retailer==="flipkart"?await evaluate(connection,retailerLoginDiagnosticScript()).catch(()=>null):null;
-        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,diagnostic};
+        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url};
       }
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){
@@ -702,19 +674,16 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           await sleep(1200);
           continue;
         }
-        const diagnostic=retailer==="flipkart"?await evaluate(connection,retailerLoginDiagnosticScript()).catch(()=>null):null;
-        return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url,diagnostic};
+        return {status:"REAUTH_REQUIRED",code:challenge.code,message:"Retailer verification is required in the preserved account session.",url:target.url||url};
       }
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href)){
-        const diagnostic=retailer==="flipkart"?await evaluate(connection,retailerLoginDiagnosticScript()).catch(()=>null):null;
-        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,diagnostic};
+        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
       }
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
     }
-    const diagnostic=retailer==="flipkart"?await evaluate(connection,retailerLoginDiagnosticScript()).catch(()=>null):null;
-    return {status:"REAUTH_REQUIRED",code:"SESSION_VERIFY_TIMEOUT",message:"Retailer session needs manual verification.",url,diagnostic};
+    return {status:"REAUTH_REQUIRED",code:"SESSION_VERIFY_TIMEOUT",message:"Retailer session needs manual verification.",url};
   }catch(error){
     return {status:"ERROR",code:"SESSION_CHECK_ERROR",message:String(error.message).slice(0,300),url};
   }finally{connection.close()}

@@ -36,7 +36,8 @@ must(files["public/control-center.js"].includes("USERS & PERMISSIONS"),"user con
 must(files["public/control-center.js"].includes("'/api/users'"),"user contract: user API not wired");
 
 const retailerUi=files["public/index.html"]+"\n"+files["public/rewards.js"];
-must(retailerUi.includes("MANAGED EXECUTION ONLINE"),"managed execution contract: customer status missing");
+must(retailerUi.includes("SECURE BROWSER ONLINE"),"local execution contract: customer Secure Browser status missing");
+must(retailerUi.includes("waiting OTP"),"local execution contract: multi-account authentication progress missing");
 must(retailerUi.includes("data-submit-account-otp"),"managed execution contract: account OTP control missing");
 must(retailerUi.includes("OTP sign-in"),"managed execution contract: Flipkart OTP-first onboarding copy missing");
 must(retailerUi.includes("Email or mobile OTP sign-in"),"managed execution contract: Flipkart email/mobile OTP copy missing");

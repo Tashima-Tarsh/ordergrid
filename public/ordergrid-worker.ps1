@@ -182,6 +182,7 @@ try {
   $env:ORDERGRID_PARALLEL = "4"
   $env:ORDERGRID_PRODUCT_CHECK_PARALLEL = "4"
   $env:ORDERGRID_BASKETS = "25"
+  $env:ORDERGRID_SESSION_CLAIM = "1"
   $env:ORDERGRID_DAEMON = "1"
 
   $nodeExe = [string]$cfg.nodeExe
