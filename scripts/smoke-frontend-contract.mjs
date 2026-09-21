@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","render.yaml","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","render.yaml","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -41,6 +41,7 @@ const agent=files["agent/index.mjs"];
 const cdp=files["agent/cdp.mjs"];
 const managedExecution=files["src/managed-execution.ts"];
 const managedOtpMigration=files["src/migrations/024_managed_retailer_otp.sql"];
+const flipkartOtpSessionMigration=files["src/migrations/025_flipkart_otp_15_day_sessions.sql"];
 const managedChromeInstaller=files["scripts/install-managed-chrome.mjs"];
 const renderConfig=files["render.yaml"];
 const packageSource=files["package.json"];
@@ -230,6 +231,17 @@ must(server.includes('app.post("/api/retailer-accounts/:id/otp"'),"retailer sess
 must(server.includes('app.post("/api/human-actions/:id/otp"'),"retailer session contract: order OTP endpoint missing");
 must(managedOtpMigration.includes("'SUBMIT_OTP'"),"retailer session contract: managed OTP migration missing");
 must(managedOtpMigration.includes("session_challenge_code"),"retailer session contract: session challenge tracking missing");
+must(cdp.includes("OTP_REQUESTED"),"retailer session contract: Flipkart login identifier must request OTP without a password");
+must(server.includes("const credentials:{login:string;password?:string}"),"retailer session contract: OTP-only account identity must reach managed execution");
+must(server.includes('if(String(row.retailer)!=="flipkart")'),"retailer session contract: saved Flipkart passwords must not be used for managed login");
+must(server.includes('rows[0].retailer==="flipkart"'),"retailer session contract: checkout must retain Flipkart login identity for OTP reauthentication");
+must(server.includes("targetDays:z.number().int().min(1).max(90).default(15)"),"retailer session contract: default session target must be 15 days");
+must(files["public/rewards.js"].includes("targetDays:15"),"retailer session contract: customer connection flow must request 15 days");
+must(!html.includes("Flipkart password <small>"),"retailer session contract: normal Flipkart onboarding must not ask for a password");
+must(flipkartOtpSessionMigration.includes("private.retailer_session_states"),"retailer session contract: encrypted persistent session checkpoint table missing");
+must(server.includes("private.retailer_session_states"),"retailer session contract: persistent session checkpoint API missing");
+must(agent.includes("exportRetailerSessionState"),"retailer session contract: managed worker must checkpoint authenticated retailer state");
+must(managedExecution.includes("retailer='flipkart' or credential_status"),"retailer session contract: OTP-only Flipkart accounts must recover after worker restart");
 must(managedExecution.includes("startManagedExecutionSupervisor"),"managed execution contract: supervisor missing");
 must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution contract: tenant worker session handoff missing");
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");

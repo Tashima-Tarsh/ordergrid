@@ -96,7 +96,7 @@
       const sessionMeta=sessionStatus==='READY'
         ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?(challenge==='OTP_REQUIRED'?'OTP required to finish retailer verification':challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification':'Retailer verification required')
+          ?(challenge==='OTP_REQUIRED'?'Flipkart sent an OTP. Enter it below to connect this account.':challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification':'Retailer verification required')
           :sessionStatus==='VERIFYING'
             ?'OrderGrid is connecting this account…'
             :'Waiting for managed connection';
@@ -104,10 +104,11 @@
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
       const credentialMissing=String(account.credential_status||'MISSING')==='MISSING';
-      const credentialAction=credentialMissing
+      const otpFirst=String(account.retailer||'')==='flipkart';
+      const credentialAction=credentialMissing&&!otpFirst
         ?'<div class="managed-credential"><input type="password" autocomplete="current-password" maxlength="1000" placeholder="Retailer password" data-account-password-input><button type="button" data-save-account-password>Save & connect</button></div>'
         :'';
-      const verifyAction=sessionStatus!=='READY'&&!credentialMissing
+      const verifyAction=sessionStatus!=='READY'&&(!credentialMissing||otpFirst)
         ?`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span>'
@@ -171,7 +172,7 @@
     try{
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({retailer,targetDays:20})
+        body:JSON.stringify({retailer,targetDays:15})
       });
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
       secureBrowserReady=(secureState.workers||[]).length>0;
@@ -210,7 +211,6 @@
           state:String(form.get('state')||'').trim(),
           postalCode:String(form.get('postalCode')||'').trim(),
           country:'IN',
-          password:String(form.get('password')||'')||undefined,
           maxConcurrentOrders:Math.max(1,Math.min(100,Number(form.get('maxConcurrentOrders')||1)))
         })
       });
@@ -218,7 +218,7 @@
       try{
         const prepared=await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
-          body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:20})
+          body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:15})
         });
         queued=Number(prepared.count||0)>0;
       }catch{}
@@ -227,9 +227,9 @@
       formElement.reset();$('#retailerUserDialog').close();
       await load();
       if(queued&&secureBrowserReady){
-        toast('User saved. OrderGrid is connecting the Flipkart account in managed execution.');
+        toast('User saved. Flipkart OTP connection is starting; enter OTP here when requested.');
       }else if(queued){
-        toast('User saved. Managed execution will connect this account automatically.');
+        toast('User saved. Flipkart OTP connection is queued and will continue automatically.');
       }else{
         toast('User saved. Choose Connect account to retry verification.');
       }
@@ -259,7 +259,7 @@
         if(ids.length){
           const prepared=await request('/api/retailer-accounts/prepare',{
             method:'POST',headers:{'content-type':'application/json'},
-            body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:20})
+            body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:15})
           });
           queued=Number(prepared.count||0);
         }
@@ -381,7 +381,7 @@
       try{
         await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
-          body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:20})
+          body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:15})
         });
         const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
         secureBrowserReady=(secureState.workers||[]).length>0;

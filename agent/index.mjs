@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { allowedRetailerUrl, findChrome, profileKey, profileRoot } from "./lib.mjs";
-import { closeProfileBrowser, executeBasket, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount, submitRetailerOtp } from "./cdp.mjs";
+import { closeProfileBrowser, executeBasket, exportRetailerSessionState, focusRetailerSession, inspectFlipkartMobile, prepareRetailerSession, reconcileRetailerAccount, submitRetailerOtp } from "./cdp.mjs";
 
 const baseUrl=(process.env.ORDERGRID_URL||"http://localhost:3000").replace(/\/$/,"");
 const rl=createInterface({input,output});
@@ -178,11 +178,14 @@ async function main(){
           for(const account of sessionClaim.accounts||[]){
             const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
             const result=await prepareRetailerSession({
-              chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null
+              chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
             });
+            const sessionState=result.status==="READY"
+              ?await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null)
+              :null;
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
               method:"POST",
-              body:JSON.stringify({status:result.status,code:result.code,message:result.message})
+              body:JSON.stringify({status:result.status,code:result.code,message:result.message,sessionState})
             }).catch(()=>{});
             if(result.status!=="REAUTH_REQUIRED")await closeProfileBrowser({directory}).catch(()=>{});
           }

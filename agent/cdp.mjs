@@ -65,6 +65,48 @@ export async function closeProfileBrowser({directory}){
   }catch{return false}
 }
 
+function safeCookie(cookie){
+  const result={
+    name:String(cookie.name||""),
+    value:String(cookie.value||""),
+    domain:String(cookie.domain||""),
+    path:String(cookie.path||"/"),
+    secure:Boolean(cookie.secure),
+    httpOnly:Boolean(cookie.httpOnly)
+  };
+  if(cookie.sameSite==="Strict"||cookie.sameSite==="Lax"||cookie.sameSite==="None")result.sameSite=cookie.sameSite;
+  if(Number.isFinite(Number(cookie.expires))&&Number(cookie.expires)>0)result.expires=Number(cookie.expires);
+  return result;
+}
+export async function exportRetailerSessionState({chrome,directory,retailer}){
+  const host=retailerHost(retailer);if(!host)return {cookies:[]};
+  const port=await ensureChrome(chrome,directory);
+  const target=await createTarget(port,`https://www.${host}/`);
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Network.enable");
+    const result=await connection.send("Network.getAllCookies");
+    const cookies=(result.cookies||[])
+      .filter(cookie=>String(cookie.domain||"").replace(/^\./,"").endsWith(host))
+      .map(safeCookie)
+      .filter(cookie=>cookie.name&&cookie.domain);
+    return {cookies};
+  }finally{connection.close();await closeTarget(port,target)}
+}
+export async function restoreRetailerSessionState({chrome,directory,retailer,sessionState}){
+  const cookies=Array.isArray(sessionState?.cookies)?sessionState.cookies.map(safeCookie).filter(cookie=>cookie.name&&cookie.domain):[];
+  if(!cookies.length)return false;
+  const host=retailerHost(retailer);if(!host)return false;
+  const port=await ensureChrome(chrome,directory);
+  const target=await createTarget(port,`https://www.${host}/`);
+  const connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Network.enable");
+    await connection.send("Network.setCookies",{cookies});
+    return true;
+  }finally{connection.close();await closeTarget(port,target)}
+}
+
 async function createTarget(port,url){
   const response=await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
@@ -121,26 +163,29 @@ function addToCartScript(quantity){
 }
 function retailerAuthScript(credentials){
   return `(()=>{const credentials=${JSON.stringify(credentials||null)};
-    if(!credentials?.login||!credentials?.password)return {acted:false};
+    if(!credentials?.login)return {acted:false};
     const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,50000);
     const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
+    const otp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+    if(otp)return {acted:false,challenge:'OTP_REQUIRED'};
     const password=inputs.find(x=>x.type==='password');
     const user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs.find(x=>x.type==='tel');
     const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
-    if(password){
+    if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
       if(!String(password.value||''))setValue(password,credentials.password);
       const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
       if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
-    if(user&&!String(user.value||'').trim()&&/(sign in|signin|log in|login|email|mobile|account)/i.test(text)){
-      setValue(user,credentials.login);
-      const next=controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)));
-      if(next){next.click();return {acted:true,action:'ACCOUNT_IDENTIFIER_SUBMITTED'};}
+    if(user){
+      if(!String(user.value||'').trim())setValue(user,credentials.login);
+      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue|next|sign in|signin|log in|login)/i.test(label(x)));
+      if(requestOtp){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
     }
+    if(password&&!credentials.password)return {acted:false,challenge:'LOGIN_REQUIRED'};
     return {acted:false};
   })()`;
 }
@@ -561,7 +606,8 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 }
 
 
-export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials}){
+export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null}){
+  if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
   const port=await ensureChrome(chrome,directory);
   const url=retailer==="flipkart"
     ?"https://www.flipkart.com/account/orders"
