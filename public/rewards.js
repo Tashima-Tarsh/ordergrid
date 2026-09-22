@@ -182,7 +182,7 @@
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:sessionTargetDays()})
       });
-      const loginUrl=result?.loginUrl||(retailer==='flipkart'?'https://www.flipkart.com/account/login':null);
+      const loginUrl=result?.loginUrl||(retailer==='flipkart'?'https://www.flipkart.com/':null);
       if(loginUrl)window.open(loginUrl,'_blank','noopener,noreferrer');
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
       secureBrowserReady=(secureState.workers||[]).length>0;
@@ -395,7 +395,7 @@
           method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:sessionTargetDays()})
         });
-        const loginUrl=result?.loginUrl||(account.retailer==='flipkart'?'https://www.flipkart.com/account/login':null);
+        const loginUrl=result?.loginUrl||(account.retailer==='flipkart'?'https://www.flipkart.com/':null);
         if(loginUrl)window.open(loginUrl,'_blank','noopener,noreferrer');
         const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
         secureBrowserReady=(secureState.workers||[]).length>0;

@@ -1429,7 +1429,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
     params
   );
   await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
-  const flipkartFallbackUrl="https://www.flipkart.com/account/login";
+  const flipkartFallbackUrl="https://www.flipkart.com/";
   const hasFlipkart=body.retailer==="flipkart"||(!body.retailer&&rows.some(r=>r.retailer==="flipkart"));
   return {count:rows.length,accounts:rows,loginUrl:hasFlipkart?flipkartFallbackUrl:undefined};
 });
