@@ -640,7 +640,7 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null}){
   if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
   const port=await ensureChrome(chrome,directory);
-  const flipkartLoginUrl="https://www.flipkart.com/account/login?ret=%2Faccount%2Forders";
+  const flipkartLoginUrl="https://www.flipkart.com/";
   const url=retailer==="flipkart"
     ?"https://www.flipkart.com/account/orders"
     :retailer==="amazon-in"
@@ -679,6 +679,11 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href)){
+        if(retailer==="flipkart"&&round<5){
+          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await sleep(1500);
+          continue;
+        }
         return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
       }
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
