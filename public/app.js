@@ -15,8 +15,54 @@ function render(){const pending=state.tasks.filter(t=>t.status==='REQUIRES_ACTIO
 }
 function openBatch(){recipientsFile=null;$('#batchForm').reset();$('#recipientPreview').textContent='';$('#formError').textContent='';$('#batchDialog').showModal()}
 $('#loginForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);$('#loginError').textContent='';try{await api('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});$('#login').classList.add('hidden');await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Signed in')}catch(err){$('#loginError').textContent=err.message}};
-$('#showSignup').onclick=()=>{$('#loginForm').hidden=true;$('#signupForm').hidden=false;$('#signupError').textContent=''};
-$('#showLogin').onclick=()=>{$('#signupForm').hidden=true;$('#loginForm').hidden=false;$('#loginError').textContent=''};
+let googleAuthMode='login';
+async function finishGoogleSignin(response){
+  const signupMode=googleAuthMode==='signup'&&!$('#signupForm').hidden;
+  const setupCode=signupMode?String(new FormData($('#signupForm')).get('setupCode')||''):undefined;
+  const errorTarget=signupMode?$('#signupError'):$('#loginError');
+  errorTarget.textContent='';
+  try{
+    await api('/api/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+      credential:response.credential,
+      setupCode:setupCode||undefined,
+      replaceBootstrapOwner:true
+    })});
+    $('#login').classList.add('hidden');
+    $('#signupForm').hidden=true;
+    $('#loginForm').hidden=false;
+    await refresh();
+    window.dispatchEvent(new Event('ordergrid:auth-ready'));
+    toast('Signed in with Google');
+  }catch(err){errorTarget.textContent=err.message}
+}
+window.ordergridGoogleCredential=finishGoogleSignin;
+async function initGoogleSignin(){
+  let cfg;
+  try{cfg=await fetch('/api/auth/google/config',{headers:{accept:'application/json'}}).then(async r=>r.ok?r.json():null)}catch{return}
+  if(!cfg?.enabled||!cfg.clientId)return;
+  const ready=()=>new Promise((resolve,reject)=>{
+    if(window.google?.accounts?.id)return resolve();
+    const script=document.createElement('script');
+    script.src='https://accounts.google.com/gsi/client';
+    script.async=true;script.defer=true;
+    script.onload=resolve;script.onerror=reject;
+    document.head.appendChild(script);
+  });
+  try{
+    await ready();
+    google.accounts.id.initialize({client_id:cfg.clientId,callback:finishGoogleSignin});
+    const options={type:'standard',theme:'outline',size:'large',text:'continue_with',shape:'rectangular',width:320};
+    google.accounts.id.renderButton($('#googleLoginButton'),options);
+    google.accounts.id.renderButton($('#googleSignupButton'),options);
+    $('#googleLoginWrap').hidden=false;
+    $('#googleSignupWrap').hidden=false;
+    $('#googleLoginButton').addEventListener('click',()=>{googleAuthMode='login'},{capture:true});
+    $('#googleSignupButton').addEventListener('click',()=>{googleAuthMode='signup'},{capture:true});
+  }catch{}
+}
+initGoogleSignin();
+$('#showSignup').onclick=()=>{googleAuthMode='signup';$('#loginForm').hidden=true;$('#signupForm').hidden=false;$('#signupError').textContent=''};
+$('#showLogin').onclick=()=>{googleAuthMode='login';$('#signupForm').hidden=true;$('#loginForm').hidden=false;$('#loginError').textContent=''};
 $('#signupForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),password=String(f.get('password')||''),confirmPassword=String(f.get('confirmPassword')||'');$('#signupError').textContent='';if(password!==confirmPassword){$('#signupError').textContent='Passwords do not match';return}try{await api('/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password,setupCode:f.get('setupCode'),replaceBootstrapOwner:f.get('replaceBootstrapOwner')==='on'})});$('#login').classList.add('hidden');$('#signupForm').hidden=true;$('#loginForm').hidden=false;await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Owner account ready')}catch(err){$('#signupError').textContent=err.message}};
 async function finishSignedIn(message){
   $('#login').classList.add('hidden');
@@ -74,7 +120,7 @@ async function setupGoogleSignIn(){
   });
 }
 setupGoogleSignIn().catch(err=>{if($('#googleLoginError'))$('#googleLoginError').textContent=err.message});
-$('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}$('#login').classList.remove('hidden')};
+$('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}try{google.accounts.id.disableAutoSelect()}catch{}$('#login').classList.remove('hidden')};
 $('#newBatch').onclick=openBatch;$('#emptyNew').onclick=openBatch;$('#close').onclick=()=>$('#batchDialog').close();$('#cancel').onclick=()=>$('#batchDialog').close();
 $('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};
 $('#sample').onclick=()=>{const csv='recipient,phone,flipkart_user_id,line1,line2,city,state,postal_code,max_concurrent_orders\nAarav Sharma,9876543210,9876543210,12 MG Road,,Bengaluru,Karnataka,560001,1\nMeera Iyer,9876543211,9876543211,18 Linking Road,,Mumbai,Maharashtra,400052,1\nKabir Singh,9876543212,9876543212,22 Connaught Place,,New Delhi,Delhi,110001,1\n';recipientsFile=new File([csv],'sample-flipkart-users.csv',{type:'text/csv'});$('#recipientPreview').textContent='3 Flipkart user/address records ready'};
