@@ -23,6 +23,10 @@
     if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Secure Browser is reconnecting. The account remains queued.';
     return message;
   }
+  function sessionTargetDays(){
+    const value=Number($('#sessionTargetDays')?.value||15);
+    return value===30?30:15;
+  }
   function renderSecureBrowserStatus(){
     const status=$('#secureBrowserStatus');
     if(status){
@@ -175,7 +179,7 @@
     try{
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({retailer,targetDays:15})
+        body:JSON.stringify({retailer,targetDays:sessionTargetDays()})
       });
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
       secureBrowserReady=(secureState.workers||[]).length>0;
@@ -221,7 +225,7 @@
       try{
         const prepared=await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
-          body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:15})
+          body:JSON.stringify({accountIds:[result.account.id],retailer:'flipkart',targetDays:sessionTargetDays()})
         });
         queued=Number(prepared.count||0)>0;
       }catch{}
@@ -262,7 +266,7 @@
         if(ids.length){
           const prepared=await request('/api/retailer-accounts/prepare',{
             method:'POST',headers:{'content-type':'application/json'},
-            body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:15})
+            body:JSON.stringify({accountIds:ids,retailer:'flipkart',targetDays:sessionTargetDays()})
           });
           queued=Number(prepared.count||0);
         }
@@ -384,7 +388,7 @@
       try{
         await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
-          body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:15})
+          body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:sessionTargetDays()})
         });
         const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
         secureBrowserReady=(secureState.workers||[]).length>0;
