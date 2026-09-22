@@ -13,11 +13,10 @@ export class DirectCardVirtualCardIssuer implements VirtualCardIssuer {
   configured() {
     return Boolean(this.metadata.fundingCardholderName && this.metadata.fundingCardLast4);
   }
-  async testConnection() {
+  async testConnection(): Promise<void> {
     if (!this.metadata.fundingCardLast4) throw new Error("Card last 4 digits required");
-    return true;
   }
-  async createCard(input: { label: string; amountMinor: number; cardholder?: any }): Promise<IssuedCard> {
+  async createCard(input: { cardholder?: any; label?: string; amountMinor?: number }): Promise<IssuedCard> {
     const cardId = `vcard_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const last4 = this.metadata.fundingCardLast4 || "8888";
     return {
@@ -26,15 +25,14 @@ export class DirectCardVirtualCardIssuer implements VirtualCardIssuer {
       providerAccountId: `acc_${last4}`,
       maskedNumber: `•••• •••• •••• ${last4}`,
       status: "ACTIVE",
-      balanceMinor: input.amountMinor,
-      raw: { cardId, label: input.label, cardholder: input.cardholder }
+      balanceMinor: Number(input.amountMinor || 0)
     };
   }
-  async configureCard() {
-    return "APPLIED" as const;
+  async configureCard(): Promise<"APPLIED" | "NOT_SUPPORTED"> {
+    return "APPLIED";
   }
-  async loadCard(input: { amountMinor: number }) {
-    return { balanceMinor: input.amountMinor };
+  async loadCard(): Promise<void> {
+    // Direct card loads instantly
   }
 }
 
