@@ -10,6 +10,7 @@ import { tokenHash } from "./security.js";
 type ManagedWorker={
   process:ChildProcess;
   sessionHash:string;
+  startedAt:number;
 };
 
 export function startManagedExecutionSupervisor(db:Db,config:Config){
@@ -50,7 +51,7 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
 
     for(const tenantId of [...workers.keys()]){
       const entry=workers.get(tenantId);
-      if(!activeTenants.has(tenantId)||!entry||entry.process.exitCode!==null)await stopWorker(tenantId);
+      if(!activeTenants.has(tenantId)||!entry||entry.process.exitCode!==null||Date.now()-entry.startedAt>12*60*60*1000)await stopWorker(tenantId);
     }
 
     for(const row of rows){
@@ -110,7 +111,7 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
         },
         stdio:"inherit"
       });
-      workers.set(tenantId,{process:child,sessionHash});
+      workers.set(tenantId,{process:child,sessionHash,startedAt:Date.now()});
       child.once("exit",()=>{
         const current=workers.get(tenantId);
         if(current?.process===child)workers.delete(tenantId);
