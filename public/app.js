@@ -89,10 +89,10 @@ $('#batchForm').onsubmit=async e=>{
       quantity:Number(row.querySelector('[name="quantity"]').value),
       estimatedUnitPriceMinor:Math.round(Number(row.querySelector('[name="price"]').value)*100),
       productCheckId:String(row.querySelector('[name="productCheckId"]')?.value||''),
-      hsnSac:String(row.querySelector('[name="hsnSac"]').value).trim(),
-      gstRate:Number(row.querySelector('[name="gstRate"]').value),
-      cessRate:Number(row.querySelector('[name="cessRate"]').value||0),
-      priceIncludesGst:Boolean(row.querySelector('[name="priceIncludesGst"]').checked),
+      hsnSac:String(row.querySelector('[name="hsnSac"]')?.value||'8517').trim(),
+      gstRate:Number(row.querySelector('[name="gstRate"]')?.value||18),
+      cessRate:Number(row.querySelector('[name="cessRate"]')?.value||0),
+      priceIncludesGst:Boolean(row.querySelector('[name="priceIncludesGst"]')?.checked??true),
       allocationPlan
     };
   });
