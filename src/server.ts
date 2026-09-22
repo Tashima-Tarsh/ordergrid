@@ -192,7 +192,7 @@ function workerMachineRoute(req:any){
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
 }
 app.addHook("preHandler",async(req,reply)=>{
-  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/secure-browser/bootstrap")return;
+  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
     select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
@@ -284,6 +284,100 @@ app.post("/api/secure-browser/bootstrap",{config:{rateLimit:{max:20,timeWindow:"
     autoStartSupported:true
   };
 });
+app.get("/api/signup-status",async()=>({
+  enabled:Boolean(config.ORDERGRID_SIGNUP_CODE),
+  protected:true
+}));
+app.post("/api/signup",{config:{rateLimit:{max:5,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  if(!config.ORDERGRID_SIGNUP_CODE)return reply.code(403).send({
+    error:"signup_disabled",
+    message:"Owner signup is disabled until ORDERGRID_SIGNUP_CODE is configured in the server environment."
+  });
+  const body=z.object({
+    email:z.string().email(),
+    password:z.string().min(14).max(200),
+    setupCode:z.string().min(1).max(512),
+    replaceBootstrapOwner:z.boolean().default(true)
+  }).parse(req.body);
+  if(!secretEqual(body.setupCode,config.ORDERGRID_SIGNUP_CODE))return reply.code(403).send({
+    error:"invalid_signup_code",
+    message:"The owner setup code is incorrect."
+  });
+
+  const passwordHash=await hashPassword(body.password);
+  const token=randomBytes(32).toString("base64url");
+  const client=await db.connect();
+  let user:any=null,workspace:any=null;
+  let created=false;
+  try{
+    await client.query("begin");
+    const bootstrapWorkspace=await client.query(
+      `select t.id,t.name
+       from users u join tenants t on t.id=u.tenant_id
+       where lower(u.email::text)=lower($1)
+       order by u.created_at asc
+       limit 1`,
+      [config.BOOTSTRAP_ADMIN_EMAIL]
+    );
+    if(bootstrapWorkspace.rows[0])workspace=bootstrapWorkspace.rows[0];
+    else{
+      const createdWorkspace=await client.query("insert into tenants(name) values('OrderGrid') returning id,name");
+      workspace=createdWorkspace.rows[0];
+    }
+
+    const existing=await client.query(
+      "select id,tenant_id,email from users where lower(email::text)=lower($1) limit 1",
+      [body.email]
+    );
+    if(existing.rows[0]&&String(existing.rows[0].tenant_id)!==String(workspace.id)){
+      await client.query("rollback");
+      return reply.code(409).send({error:"email_in_use_in_another_workspace",message:"That email already belongs to another OrderGrid workspace."});
+    }
+
+    if(existing.rows[0]){
+      const updated=await client.query(
+        "update users set password_hash=$1,role='OWNER',active=true where id=$2 and tenant_id=$3 returning id,email,role::text role,active",
+        [passwordHash,existing.rows[0].id,workspace.id]
+      );
+      user=updated.rows[0];
+      await client.query("delete from sessions where user_id=$1",[user.id]);
+    }else{
+      const inserted=await client.query(
+        "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,email,role::text role,active",
+        [workspace.id,body.email.toLowerCase(),passwordHash]
+      );
+      user=inserted.rows[0];
+      created=true;
+    }
+
+    if(body.replaceBootstrapOwner&&body.email.toLowerCase()!==config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase()){
+      await client.query(
+        "delete from sessions where user_id in (select id from users where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3)",
+        [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+      );
+      await client.query(
+        "update users set active=false where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3",
+        [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+      );
+    }
+
+    await client.query(
+      "insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",
+      [tokenHash(token),user.id,workspace.id]
+    );
+    await client.query("commit");
+  }catch(error){
+    await client.query("rollback").catch(()=>{});
+    throw error;
+  }finally{client.release()}
+
+  await audit(db,workspace.id,user.id,created?"user.owner_signup":"user.owner_recovered","user",user.id,{
+    replacedBootstrapOwner:Boolean(body.replaceBootstrapOwner)
+  }).catch(()=>{});
+  reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
+  return reply.code(created?201:200).send({user,workspace,created});
+});
+
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
   const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);
