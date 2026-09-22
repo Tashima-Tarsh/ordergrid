@@ -1538,9 +1538,15 @@ app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
   let accountFilter="";
   if(body.retailerAccountId){params.push(body.retailerAccountId);accountFilter=` and ra.id=$${params.length}`;}
   const account=await db.query(
-    `select ra.id,ra.account_reference,ra.label,ra.profile_key,ra.session_status,ra.session_worker_id,ew.last_seen
+    `select ra.id,ra.account_reference,ra.label,ra.profile_key,ra.session_status,ra.session_worker_id,ew.last_seen,addr.postal_code
      from retailer_accounts ra
      left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     left join lateral (
+       select a.postal_code from addresses a
+       join address_books ab on ab.id=a.address_book_id
+       where a.customer_id=ra.customer_id and ab.tenant_id=ra.tenant_id
+       order by a.id limit 1
+     ) addr on true
      where ra.tenant_id=$1 and ra.retailer='flipkart' and ra.active${accountFilter}
      order by
        case when ra.session_status='READY' and ew.last_seen>now()-interval '30 seconds' then 0 else 1 end,
@@ -1569,7 +1575,8 @@ app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
      returning id,status,requested_at`,
     [p.tenantId,row.session_worker_id,{
       retailer:"flipkart",retailerAccountId:String(row.id),profileKey:String(row.profile_key),
-      accountReference:String(row.account_reference),accountLabel:row.label??null,productUrl
+      accountReference:String(row.account_reference),accountLabel:row.label??null,productUrl,
+      postalCode:row.postal_code?String(row.postal_code):null
     },p.id]
   );
   await audit(db,p.tenantId,p.id,"flipkart_mobile.check_requested","retailer_account",String(row.id),{productUrl});

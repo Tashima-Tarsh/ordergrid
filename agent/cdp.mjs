@@ -589,7 +589,28 @@ async function readFlipkartCartState(port,productUrl){
   finally{connection.close();await closeTarget(port,target)}
 }
 
-export async function inspectFlipkartMobile({chrome,directory,productUrl}){
+function flipkartPincodeScript(postalCode){
+  return `(()=>{const pin=${JSON.stringify(String(postalCode||""))};
+    if(!/^\\d{6}$/.test(pin))return {acted:false};
+    const inputs=[...document.querySelectorAll('input')];
+    const pinInput=inputs.find(x=>x.maxLength===6||/pincode|delivery.?pincode|enter.{0,10}pincode/i.test(String(x.placeholder||x.name||x.id||x.getAttribute('aria-label')||'')));
+    if(!pinInput)return {acted:false};
+    try{pinInput.focus();}catch{}
+    const proto=Object.getPrototypeOf(pinInput);
+    const descriptor=Object.getOwnPropertyDescriptor(proto,'value');
+    if(descriptor?.set)descriptor.set.call(pinInput,pin);
+    else pinInput.value=pin;
+    pinInput.dispatchEvent(new InputEvent('input',{bubbles:true,data:pin,inputType:'insertText'}));
+    pinInput.dispatchEvent(new Event('input',{bubbles:true}));
+    pinInput.dispatchEvent(new Event('change',{bubbles:true}));
+    pinInput.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
+    const checkBtn=[...document.querySelectorAll('button,[role="button"],span')].find(x=>/^(check|submit|change)$/i.test(String(x.innerText||'').trim()));
+    if(checkBtn)try{checkBtn.click();}catch{}
+    return {acted:true};
+  })()`;
+}
+
+export async function inspectFlipkartMobile({chrome,directory,productUrl,postalCode=""}){
   const port=await ensureChrome(chrome,directory);
   const target=await createTarget(port,"about:blank"),connection=new CdpConnection(target.webSocketDebuggerUrl);
   let snapshot=null;
@@ -597,6 +618,11 @@ export async function inspectFlipkartMobile({chrome,directory,productUrl}){
     await connection.send("Page.enable");
     await connection.send("Page.navigate",{url:productUrl});
     await waitReady(connection);
+    
+    if(postalCode&&/^\d{6}$/.test(postalCode)){
+      await evaluate(connection,flipkartPincodeScript(postalCode)).catch(()=>null);
+      await sleep(1000);
+    }
     
     for(let attempt=0;attempt<7;attempt++){
       await sleep(attempt===0?2000:1000);

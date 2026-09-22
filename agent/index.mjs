@@ -183,7 +183,12 @@ async function main(){
           try{
             if(command.retailer!=="flipkart")throw new Error("PRODUCT_CHECK currently supports Flipkart only");
             const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
-            result=await inspectFlipkartMobile({chrome,directory,productUrl:String(command.payload?.productUrl||"")});
+            result=await inspectFlipkartMobile({
+              chrome,
+              directory,
+              productUrl:String(command.payload?.productUrl||""),
+              postalCode:String(command.payload?.postalCode||"")
+            });
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
             await closeProfileBrowser({directory}).catch(()=>{});
             output.write(`Product check ${command.payload?.accountReference||command.retailerAccountId} · ${result.state} · ${result.title||command.payload?.productUrl||""}\n`);
