@@ -5,6 +5,13 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 
 const db=createDb(loadConfig()),here=dirname(fileURLToPath(import.meta.url)),dir=join(here,"migrations");
+await db.query(`
+  do $$ begin
+    if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+    if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+    if not exists (select 1 from pg_roles where rolname = 'ordergrid_app') then create role ordergrid_app; end if;
+  end $$;
+`);
 await db.query("create table if not exists schema_migrations(name text primary key, applied_at timestamptz not null default now())");
 const legacy=await db.query("select to_regclass('public.tenants') present");
 if(legacy.rows[0]?.present)await db.query("insert into schema_migrations(name) values('001_init.sql') on conflict do nothing");
