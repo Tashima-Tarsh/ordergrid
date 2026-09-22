@@ -659,7 +659,30 @@ function otpSubmitScript(otp){
   return `(()=>{const otp=${JSON.stringify(String(otp||""))};
     if(!/^\\d{4,8}$/.test(otp))return {ok:false,reason:'INVALID_OTP'};
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
-    const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+    const setValue=(el,value)=>{
+      if(!el)return;
+      try{el.focus();}catch{}
+      const tracker=el._valueTracker;
+      if(tracker)tracker.setValue('');
+      const descriptor=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+      if(descriptor?.set)descriptor.set.call(el,value);
+      else el.value=value;
+      try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:value,inputType:'insertText'}));}catch{}
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+      el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:value,code:'Digit'+value}));
+      el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:value,code:'Digit'+value}));
+    };
+    const clickElement=(el)=>{
+      if(!el)return;
+      try{el.disabled=false;el.removeAttribute('disabled');}catch{}
+      try{el.focus();}catch{}
+      el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
+      try{el.click();}catch{}
+    };
     const inputs=[...document.querySelectorAll('input')].filter(visible);
     
     const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
@@ -673,10 +696,10 @@ function otpSubmitScript(otp){
       return {ok:false,reason:'OTP_FIELD_NOT_FOUND'};
     }
     
-    const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
+    const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a,[role="button"]')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
     const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||field?.form?.querySelector('button[type="submit"],input[type="submit"]');
-    if(submit){submit.click();return {ok:true,submitted:true};}
+    if(submit){clickElement(submit);return {ok:true,submitted:true};}
     return {ok:true,submitted:false};
   })()`;
 }

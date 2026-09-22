@@ -160,6 +160,14 @@ async function main(){
             const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
             const result=await submitRetailerOtp({chrome,directory,retailer:command.retailer,otp:String(command.payload?.otp||"")});
             if(!result?.ok)throw new Error(result?.reason||"Retailer OTP submission failed");
+            const sessionState=await exportRetailerSessionState({chrome,directory,retailer:command.retailer}).catch(()=>null);
+            if(command.retailerAccountId){
+              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(command.retailerAccountId)}`,{
+                method:"POST",
+                body:JSON.stringify({status:"READY",code:"SESSION_READY",message:"Flipkart session verified via OTP and saved.",sessionState})
+              }).catch(()=>{});
+            }
+            await closeProfileBrowser({directory}).catch(()=>{});
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
             continue;
           }
