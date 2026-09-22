@@ -3,6 +3,28 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const chromeProcesses=new Map();
+function processAlive(pid){
+  if(!pid)return false;
+  try{process.kill(pid,0);return true}catch{return false}
+}
+async function waitProcessExit(pid,timeoutMs=1200){
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+    if(!processAlive(pid))return true;
+    await sleep(80);
+  }
+  return !processAlive(pid);
+}
+function signalChromeProcess(pid,signal){
+  if(!pid)return false;
+  try{
+    process.kill(process.platform==="win32"?pid:-pid,signal);
+    return true;
+  }catch{
+    try{process.kill(pid,signal);return true}catch{return false}
+  }
+}
 async function fetchWithTimeout(url,options={},timeoutMs=12000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{return await fetch(url,{...options,signal:controller.signal})}
@@ -70,24 +92,48 @@ async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
   const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--new-window"];
-  if(process.env.ORDERGRID_HEADLESS==="1")args.push("--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu");
+  if(process.env.ORDERGRID_HEADLESS==="1")args.push(
+    "--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+    "--disable-extensions","--disable-background-networking","--disable-sync",
+    "--metrics-recording-only","--renderer-process-limit=2"
+  );
   args.push("about:blank");
   const child=spawn(chrome,args,{detached:true,stdio:"ignore"});
+  chromeProcesses.set(directory,{pid:child.pid,child});
+  child.once("exit",()=>{
+    if(chromeProcesses.get(directory)?.pid===child.pid)chromeProcesses.delete(directory);
+  });
   child.unref();
   return devtoolsPort(directory);
 }
 export async function closeProfileBrowser({directory}){
-  let port;
-  try{port=await devtoolsPort(directory,1200)}catch{return false}
+  let graceful=false;
   try{
+    const port=await devtoolsPort(directory,1200);
     const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/version`,{},1500).catch(()=>null);
-    if(!response?.ok)return false;
-    const version=await response.json();
-    if(!version?.webSocketDebuggerUrl)return false;
-    const connection=new CdpConnection(version.webSocketDebuggerUrl);
-    try{await connection.send("Browser.close");return true}
-    finally{connection.close()}
-  }catch{return false}
+    if(response?.ok){
+      const version=await response.json();
+      if(version?.webSocketDebuggerUrl){
+        const connection=new CdpConnection(version.webSocketDebuggerUrl);
+        try{await connection.send("Browser.close",{},2500);graceful=true}
+        finally{connection.close()}
+      }
+    }
+  }catch{}
+  const tracked=chromeProcesses.get(directory);
+  if(!tracked?.pid)return graceful;
+  await waitProcessExit(tracked.pid,700);
+  if(processAlive(tracked.pid)){
+    signalChromeProcess(tracked.pid,"SIGTERM");
+    await waitProcessExit(tracked.pid,700);
+  }
+  if(processAlive(tracked.pid)){
+    signalChromeProcess(tracked.pid,"SIGKILL");
+    await waitProcessExit(tracked.pid,500);
+  }
+  const stopped=!processAlive(tracked.pid);
+  if(stopped)chromeProcesses.delete(directory);
+  return graceful||stopped;
 }
 
 function safeCookie(cookie){
