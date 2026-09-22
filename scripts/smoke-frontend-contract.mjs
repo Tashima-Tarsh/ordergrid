@@ -242,8 +242,9 @@ must(cdp.includes("LOGIN_IDENTIFIER_ENTERED"),"retailer session contract: Flipka
 must(cdp.includes('[role="button"]'),"retailer session contract: Flipkart role-button login controls must be supported");
 must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart text login field fallback missing");
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
-must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
+must(cdp.includes('const flipkartLoginUrl="https://www.flipkart.com/"'),"retailer session contract: Flipkart LOGIN_REQUIRED must use the storefront login surface");
 must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
+must(cdp.includes('if(retailer==="flipkart"&&round<5)'),"retailer session contract: Flipkart login-page fallback must return to storefront");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
@@ -273,10 +274,10 @@ must(managedExecution.includes("startManagedExecutionSupervisor"),"managed execu
 must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution contract: tenant worker session handoff missing");
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
-must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "false"'),"local execution contract: Render must not own retailer browser sessions");
+must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "true"'),"cloud execution contract: Render must run hosted retailer browser sessions");
 must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
 must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
-must(files["public/rewards.js"].includes("SECURE BROWSER ONLINE"),"retailer session contract: local Secure Browser customer status missing");
+must(files["public/rewards.js"].includes("CLOUD BROWSER ONLINE"),"retailer session contract: hosted Cloud Browser customer status missing");
 must(files["public/rewards.js"].includes("waiting OTP"),"retailer session contract: account authentication progress counts missing");
 must(agent.includes("ORDERGRID_SESSION_CLAIM"),"retailer session contract: local worker must support sequential auth claims");
 must(workerInstaller.includes('ORDERGRID_SESSION_CLAIM = "1"'),"retailer session contract: Windows Secure Browser must authenticate one account at a time");
@@ -320,6 +321,8 @@ must(server.includes("workerToken:config.WORKER_API_TOKEN"),"worker bootstrap co
 must(workerInstaller.includes("ConvertFrom-SecureString"),"worker installer contract: optional legacy local credentials must remain protected");
 must(!files["public/rewards.js"].includes("start the secure browser worker"),"retailer session contract: worker startup jargon must stay out of customer UI");
 must(!files["public/human-actions.js"].includes("Start the native OrderGrid worker"),"human action contract: customer must not be asked to run a worker");
-must(files["public/rewards.js"].includes("Secure Browser will pick"),"retailer session contract: local Secure Browser offline queue guidance missing");
+must(files["public/rewards.js"].includes("Cloud Secure Browser is starting automatically"),"retailer session contract: hosted browser startup guidance missing");
 
 console.log("Frontend/card connector contract OK");
+
+must(managedExecution.includes("Date.now()-entry.startedAt>12*60*60*1000"),"cloud execution contract: managed worker session rotation missing");

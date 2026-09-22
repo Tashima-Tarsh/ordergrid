@@ -20,7 +20,7 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
-    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Secure Browser is reconnecting. The account remains queued.';
+    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Cloud Secure Browser is starting or temporarily unavailable. Retry shortly; no local worker installation is required.';
     return message;
   }
   function sessionTargetDays(){
@@ -31,7 +31,7 @@
     const status=$('#secureBrowserStatus');
     if(status){
       status.dataset.ready=secureBrowserReady?'true':'false';
-      status.textContent=secureBrowserReady?'SECURE BROWSER ONLINE':'SECURE BROWSER STARTING';
+      status.textContent=secureBrowserReady?'CLOUD BROWSER ONLINE':'CLOUD BROWSER STARTING';
     }
   }
   function parseCsv(text){
@@ -105,8 +105,8 @@
         :sessionStatus==='REAUTH_REQUIRED'
           ?(challenge==='OTP_REQUIRED'?'Flipkart sent an OTP. Enter it below to connect this account.':challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification':'Retailer verification required')
           :sessionStatus==='VERIFYING'
-            ?'OrderGrid is connecting this account…'
-            :'Waiting for Secure Browser';
+            ?(secureBrowserReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
+            :(secureBrowserReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
@@ -175,7 +175,8 @@
     retailer=event.target.value;load();
   });
   $('#prepareRetailerAccounts')?.addEventListener('click',async()=>{
-    const button=$('#prepareRetailerAccounts');button.disabled=true;const previous=button.textContent;button.textContent='Connecting…';
+    const button=$('#prepareRetailerAccounts');
+    button.disabled=true;const previous=button.textContent;button.textContent='Connecting…';
     try{
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
@@ -236,7 +237,7 @@
       if(queued&&secureBrowserReady){
         toast('User saved. Flipkart OTP connection is starting; enter OTP here when requested.');
       }else if(queued){
-        toast('User saved. Flipkart OTP connection is queued for the local Secure Browser.');
+        toast('User saved. Cloud Secure Browser is starting automatically; Flipkart OTP connection will begin when it is online.');
       }else{
         toast('User saved. Choose Connect account to retry verification.');
       }
@@ -395,8 +396,8 @@
         renderSecureBrowserStatus();
         await load();
         toast(secureBrowserReady
-          ?'Account queued. OrderGrid Secure Browser is verifying the retailer login.'
-          :'Account queued. Secure Browser will pick it up when it comes online.');
+          ?'Account queued. OrderGrid Cloud Secure Browser is verifying the retailer login.'
+          :'Account queued. Cloud Secure Browser is starting automatically.');
       }catch(error){alert(customerError(error))}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
       return;
