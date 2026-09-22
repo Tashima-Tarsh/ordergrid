@@ -182,12 +182,16 @@
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:sessionTargetDays()})
       });
+      const loginUrl=result?.loginUrl||(retailer==='flipkart'?'https://www.flipkart.com/account/login':null);
+      if(loginUrl)window.open(loginUrl,'_blank','noopener,noreferrer');
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
       secureBrowserReady=(secureState.workers||[]).length>0;
       renderSecureBrowserStatus();
-      toast(secureBrowserReady
-        ?result.count+' account(s) queued. Authentication will proceed one account at a time.'
-        :result.count+' account(s) queued. Secure Browser is starting and will process them one at a time.');
+      toast(loginUrl
+        ?'Flipkart login opened in a new tab. Enter your mobile/email and OTP there to connect.'
+        :(secureBrowserReady
+          ?result.count+' account(s) queued. Authentication will proceed one account at a time.'
+          :result.count+' account(s) queued. Secure Browser is starting and will process them one at a time.'));
       await load();
     }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
@@ -385,19 +389,23 @@
     }
     const verify=event.target.closest('[data-verify-session]');
     if(verify){
-      verify.disabled=true;const previous=verify.textContent;verify.textContent='Queuing…';
+      verify.disabled=true;const previous=verify.textContent;verify.textContent='Connecting…';
       try{
-        await request('/api/retailer-accounts/prepare',{
+        const result=await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({accountIds:[account.id],retailer:account.retailer,targetDays:sessionTargetDays()})
         });
+        const loginUrl=result?.loginUrl||(account.retailer==='flipkart'?'https://www.flipkart.com/account/login':null);
+        if(loginUrl)window.open(loginUrl,'_blank','noopener,noreferrer');
         const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
         secureBrowserReady=(secureState.workers||[]).length>0;
         renderSecureBrowserStatus();
         await load();
-        toast(secureBrowserReady
-          ?'Account queued. OrderGrid Cloud Secure Browser is verifying the retailer login.'
-          :'Account queued. Cloud Secure Browser is starting automatically.');
+        toast(loginUrl
+          ?'Flipkart login opened in a new tab. Enter your mobile/email and OTP there to connect.'
+          :(secureBrowserReady
+            ?'Account queued. OrderGrid Cloud Secure Browser is verifying the retailer login.'
+            :'Account queued. Cloud Secure Browser is starting automatically.'));
       }catch(error){alert(customerError(error))}
       finally{verify.textContent=previous;setTimeout(()=>{verify.disabled=false},1200)}
       return;
