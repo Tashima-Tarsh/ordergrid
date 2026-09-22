@@ -32,6 +32,7 @@ must(server.includes("user.owner_signup")&&server.includes("user.owner_recovered
 must(files["public/index.html"].includes('id="signupForm"'),"owner signup contract: signup form missing");
 must(files["public/index.html"].includes("Create / recover owner account"),"owner signup contract: login-to-signup action missing");
 must(server.includes('app.get("/api/auth-config"'),"google auth contract: public auth config route missing");
+must(server.includes("googleAuth:Boolean(config.GOOGLE_CLIENT_ID)"),"google auth contract: health endpoint must report configuration state");
 must(server.includes('app.post("/api/login/google"'),"google auth contract: Google login route missing");
 must(server.includes("createRemoteJWKSet")&&server.includes("jwtVerify"),"google auth contract: Google ID tokens must be cryptographically verified");
 must(server.includes("private.user_external_identities"),"google auth contract: stable Google subject identity mapping missing");
