@@ -91,7 +91,7 @@ async function devtoolsPort(directory,timeoutMs=15000){
 async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
-  const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--new-window"];
+  const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--disable-blink-features=AutomationControlled","--new-window"];
   if(process.env.ORDERGRID_HEADLESS==="1")args.push(
     "--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
     "--disable-extensions","--disable-background-networking","--disable-sync",
@@ -785,10 +785,32 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const existing=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
   let target=existing.find(t=>/(account\/orders|order-history|login|signin|verify|otp)/i.test(String(t.url||"")))||existing[0]||await createTarget(port,url);
   let connection=new CdpConnection(target.webSocketDebuggerUrl);
+  const stealthScript=`
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = window.chrome || { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-GB', 'en-US', 'en', 'hi'] });
+    } catch(e){}
+  `;
   const primeConnection=async()=>{
     await connection.send("Page.enable");
+    await connection.send("Network.enable").catch(()=>null);
+    await connection.send("Network.setUserAgentOverride",{
+      userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      acceptLanguage:"en-IN,en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7",
+      platform:"Win32"
+    }).catch(()=>null);
+    await connection.send("Page.addScriptToEvaluateOnNewDocument",{source:stealthScript}).catch(()=>null);
+    await connection.send("Runtime.evaluate",{expression:stealthScript,returnByValue:true}).catch(()=>null);
     await connection.send("Page.bringToFront").catch(()=>null);
     await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
+  };
+  const captureScreen=async()=>{
+    try{
+      const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:65});
+      return shot?.data?`data:image/jpeg;base64,${shot.data}`:null;
+    }catch{return null}
   };
   try{
     await primeConnection();
@@ -801,7 +823,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(acted?.acted){await sleep(1800);continue}
       if(acted?.challenge){
-        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url};
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
       }
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){
@@ -809,12 +832,14 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           await resetFlipkartToStorefront();
           continue;
         }
-        return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url};
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url,screenshot};
       }
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href)){
-        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,screenshot};
       }
       if(retailer==="flipkart"&&/^https:\/\/(?:www\.)?flipkart\.com\/?(?:[?#].*)?$/i.test(href)){
         if(retailer==="flipkart"&&round<5){
@@ -822,11 +847,13 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           await sleep(1500);
           continue;
         }
-        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart sign-in required.",url:href};
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart sign-in required.",url:href,screenshot};
       }
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
     }
-    return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url};
+    const screenshot=await captureScreen();
+    return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url,screenshot};
   }catch(error){
     return {status:"ERROR",code:"SESSION_CHECK_ERROR",message:String(error.message).slice(0,300),url};
   }finally{connection.close()}

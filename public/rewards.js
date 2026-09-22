@@ -256,6 +256,7 @@
       }
     }
 
+    if($('#connectLivePreview'))$('#connectLivePreview').hidden=true;
     if(typeof dialog.showModal==='function')dialog.showModal();
     else dialog.setAttribute('open','');
 
@@ -263,10 +264,17 @@
     connectPollTimer=setInterval(async()=>{
       pollCount++;
       try{
-        const resp=await request('/api/retailer-accounts?retailer='+encodeURIComponent(account.retailer||'flipkart')+'&limit=1000');
-        const updatedAccounts=resp.accounts||[];
-        accounts=updatedAccounts;
+        const [resp,screenResp]=await Promise.allSettled([
+          request('/api/retailer-accounts?retailer='+encodeURIComponent(account.retailer||'flipkart')+'&limit=1000'),
+          request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount?.id||account.id)+'/screen')
+        ]);
+        const updatedAccounts=resp.status==='fulfilled'?(resp.value.accounts||[]):[];
+        if(updatedAccounts.length)accounts=updatedAccounts;
         const target=updatedAccounts.find(x=>x.id===(activeConnectingAccount?.id||account.id));
+        if(screenResp.status==='fulfilled'&&screenResp.value?.screenshot){
+          const img=$('#connectLiveImage'),prev=$('#connectLivePreview');
+          if(img&&prev){img.src=screenResp.value.screenshot;prev.hidden=false}
+        }
         if(!target)return;
         activeConnectingAccount=target;
 

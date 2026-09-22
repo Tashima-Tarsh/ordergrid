@@ -71,5 +71,7 @@
 #retailerConnectDialog .connect-otp-form{margin-top:16px}
 #retailerConnectDialog .connect-otp-input{font-size:1.4rem;letter-spacing:.35em;text-align:center;font-weight:800;padding:.85rem;border:2px solid #2874f0;border-radius:10px;background:#fff}
 #retailerConnectDialog .connect-verify-btn{background:#2874f0;color:#fff;font-size:.95rem;padding:.85rem 1.4rem}
-#retailerConnectDialog .connect-verify-btn:hover{background:#1a5dc4}
+#retailerConnectDialog .connect-live-preview{position:relative;margin:14px 0;border-radius:12px;overflow:hidden;border:1px solid #cfd8e3;background:#0f172a;box-shadow:0 6px 20px rgba(0,0,0,0.12)}
+#retailerConnectDialog .live-preview-badge{position:absolute;top:8px;left:8px;background:rgba(15,23,42,0.85);color:#34d399;font-size:0.68rem;font-weight:900;letter-spacing:0.08em;padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);z-index:2}
+#retailerConnectDialog .connect-live-image{display:block;width:100%;height:auto;max-height:260px;object-fit:contain;background:#f8fafc}
 

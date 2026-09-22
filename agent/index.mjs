@@ -209,7 +209,7 @@ async function main(){
               :null;
             const reported=await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
               method:"POST",
-              body:JSON.stringify({status:result.status,code:result.code,message:result.message,sessionState})
+              body:JSON.stringify({status:result.status,code:result.code,message:result.message,sessionState,screenshot:result.screenshot||null})
             }).then(()=>true).catch(error=>{
               output.write(`Session result report failed ${account.retailerAccountId} · ${String(error.message||error).slice(0,180)}\n`);
               return false;

@@ -60,6 +60,7 @@ async function readAutomationPolicy(tenantId:string){
   );
   return rows[0] as AutomationPolicy;
 }
+const latestAccountScreenshots = new Map<string, string>();
 function minCap(a:number,b:number){
   if(a<=0)return b;
   if(b<=0)return a;
@@ -1851,7 +1852,8 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
     code:z.string().max(100).optional(),
     message:z.string().max(500).optional(),
-    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional()
+    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional(),
+    screenshot:z.string().max(1_000_000).nullable().optional()
   }).parse(req.body);
   const account=await db.query(
     "select id,created_by,retailer,account_reference,session_target_days from retailer_accounts where id=$1 and tenant_id=$2 and session_worker_id=$3 limit 1",
@@ -1859,6 +1861,8 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
   );
   const row=account.rows[0];
   if(!row)return reply.code(409).send({error:"session_check_not_owned_by_worker"});
+  if(body.screenshot)latestAccountScreenshots.set(retailerAccountId,body.screenshot);
+  else if(body.status==="READY")latestAccountScreenshots.delete(retailerAccountId);
   const ready=body.status==="READY";
   if(ready&&body.sessionState){
     const serialized=JSON.stringify(body.sessionState);
@@ -1898,6 +1902,14 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     payload:{retailerAccountId,retailer:row.retailer,code:body.code??null}
   });
   return rows[0];
+});
+
+app.get("/api/retailer-accounts/:id/screen",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const screenshot=latestAccountScreenshots.get(id)||null;
+  return {id,screenshot};
 });
 
 app.put("/api/customers/:customerId/retailer-accounts/:retailer",async(req,reply)=>{
