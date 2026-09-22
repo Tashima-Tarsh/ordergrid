@@ -303,13 +303,26 @@ function retailerAuthScript(credentials){
     }
     
     // For Flipkart (OTP-first flow): fill username and trigger Request OTP
+    const explicitOtp=controls.find(x=>/(request otp|send otp|get otp|login with otp|log in with otp|use otp|continue with otp)/i.test(label(x)));
+    if(!credentials.password&&explicitOtp){
+      if(user&&!String(user.value||'').trim()){
+        setValue(user,credentials.login);
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
+      }
+      clickElement(explicitOtp);
+      return {acted:true,action:'OTP_REQUESTED'};
+    }
     if(user){
-      setValue(user,credentials.login);
-      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue with otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
+      if(!String(user.value||'').trim()){
+        setValue(user,credentials.login);
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
+      }
+      const requestOtp=explicitOtp
+        ||controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
       if(requestOtp){
         clickElement(requestOtp);
-        return {acted:true,action:'REQUEST_OTP_CLICKED'};
+        return {acted:true,action:'OTP_REQUESTED'};
       }
       return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
     }
@@ -779,6 +792,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   try{
     await primeConnection();
+    const resetFlipkartToStorefront=async()=>{
+      await connection.send("Page.navigate",{url:flipkartLoginUrl});
+      await sleep(1500);
+    };
     for(let round=0;round<8;round++){
       await waitReady(connection);await sleep(round?1200:1800);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
@@ -788,6 +805,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       }
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){
+        if(challenge.code==="LOGIN_REQUIRED"&&retailer==="flipkart"&&round<5){
+          await resetFlipkartToStorefront();
+          continue;
+        }
         return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url};
       }
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
@@ -796,7 +817,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
       }
       if(retailer==="flipkart"&&/^https:\/\/(?:www\.)?flipkart\.com\/?(?:[?#].*)?$/i.test(href)){
-        if(round<3){
+        if(retailer==="flipkart"&&round<5){
           await connection.send("Page.navigate",{url});
           await sleep(1500);
           continue;

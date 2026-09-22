@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
   "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","src/migrations/027_purge_flipkart_password_credentials.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","scripts/ordergrid-local.ps1","scripts/ordergrid-local-stop.ps1","package.json"
-].map(async path=>[path,await readFile(path,"utf8")])));
+].map(async path=>[path,(await readFile(path,"utf8")).replace(/\r\n/g,"\n")])));
 
 function must(condition,message){
   if(!condition)throw new Error(message);
