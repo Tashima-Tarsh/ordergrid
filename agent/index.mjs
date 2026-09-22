@@ -179,17 +179,34 @@ async function main(){
           const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:sessionClaimLimit})})).body;
           for(const account of sessionClaim.accounts||[]){
             const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
-            const result=await prepareRetailerSession({
-              chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
-            });
+            let result=null;
+            for(let attempt=0;attempt<2;attempt++){
+              try{
+                result=await prepareRetailerSession({
+                  chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
+                });
+              }catch(error){
+                result={status:"ERROR",code:"SESSION_WORKER_ERROR",message:String(error.message||error).slice(0,300)};
+              }
+              const transient=result?.status==="ERROR"&&/Chrome DevTools|automation port|readiness timed out|Could not open retailer tab|Could not inspect retailer session/i.test(String(result.message||""));
+              if(!transient||attempt===1)break;
+              output.write(`Session browser retry ${account.retailerAccountId} · ${String(result.message||"browser error").slice(0,180)}\n`);
+              await closeProfileBrowser({directory}).catch(()=>{});
+              await sleep(800);
+            }
+            result=result||{status:"ERROR",code:"SESSION_WORKER_ERROR",message:"Hosted retailer browser did not return a session result."};
             const sessionState=result.status==="READY"
               ?await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null)
               :null;
-            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
+            const reported=await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
               method:"POST",
               body:JSON.stringify({status:result.status,code:result.code,message:result.message,sessionState})
-            }).catch(()=>{});
-            if(result.status!=="REAUTH_REQUIRED")await closeProfileBrowser({directory}).catch(()=>{});
+            }).then(()=>true).catch(error=>{
+              output.write(`Session result report failed ${account.retailerAccountId} · ${String(error.message||error).slice(0,180)}\n`);
+              return false;
+            });
+            if(!reported)await closeProfileBrowser({directory}).catch(()=>{});
+            else if(result.status!=="REAUTH_REQUIRED")await closeProfileBrowser({directory}).catch(()=>{});
           }
         }catch(error){output.write(`Session readiness cycle error: ${error.message}\n`)}
       }
