@@ -1773,10 +1773,20 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
   try{
     await client.query("begin");
     const live=await client.query(
-      "select 1 from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
+      "select mode from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
       [p.tenantId,workerId,p.id]
     );
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    if(live.rows[0].mode==="MANAGED"){
+      const desktopWorker=await client.query(
+        "select 1 from execution_workers where tenant_id=$1 and id<>$2 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",
+        [p.tenantId,workerId]
+      );
+      if(desktopWorker.rows.length>0){
+        await client.query("commit");
+        return {accounts:[]};
+      }
+    }
     const waiting=await client.query(
       `select id,session_challenge_code
        from retailer_accounts
@@ -2062,7 +2072,7 @@ app.patch("/api/retailer-refunds/:id/status",async(req,reply)=>{
 
 app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select po.id,po.status,po.amount_minor,po.failure_message,bi.product_url,bi.title,bi.requested_quantity,a.id address_id,a.recipient,a.city,a.postal_code from purchase_orders po join batch_items bi on bi.id=po.batch_item_id left join addresses a on a.id=bi.address_id where po.tenant_id=$1 order by po.created_at desc limit 250`,[p.tenantId]);return {tasks:rows};});
 
-app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
+app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK","INTERACTIVE","MANUAL","MANAGED","DESKTOP"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
 app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,last_seen from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId]);return {workers:rows};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 

@@ -104,6 +104,7 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
           ORDERGRID_PROFILE_ROOT:profileRoot,
           ORDERGRID_CHROME_PATH:browserPath,
           ORDERGRID_HEADLESS:"1",
+          ORDERGRID_MANAGED_WORKER:"1",
           ORDERGRID_PARALLEL:process.env.ORDERGRID_MANAGED_PARALLEL||"2",
           ORDERGRID_PRODUCT_CHECK_PARALLEL:process.env.ORDERGRID_PRODUCT_CHECK_PARALLEL||"2",
           ORDERGRID_BASKETS:process.env.ORDERGRID_MANAGED_BASKETS||"10",

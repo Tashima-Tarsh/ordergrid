@@ -48,7 +48,8 @@ async function login(){
   }
 }
 async function heartbeat(workerId){
-  await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode:"BULK"})});
+  const mode=process.env.ORDERGRID_MANAGED_WORKER==="1"?"MANAGED":"DESKTOP";
+  await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode})});
 }
 async function postProgress(workerId,basketId,state,code,message){
   await api(`/api/bulk-queue/${basketId}/progress`,{method:"POST",body:JSON.stringify({workerId,state,code,message})});
