@@ -1507,7 +1507,7 @@ app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
   catch(error){return reply.code(400).send({error:"invalid_flipkart_product_url",message:error instanceof Error?error.message:"Invalid Flipkart product URL"})}
   const params:any[]=[p.tenantId];
   let accountFilter="";
-  if(body.retailerAccountId){params.push(body.retailerAccountId);accountFilter=` and ra.id=${params.length}`;}
+  if(body.retailerAccountId){params.push(body.retailerAccountId);accountFilter=` and ra.id=$${params.length}`;}
   const account=await db.query(
     `select ra.id,ra.account_reference,ra.label,ra.profile_key,ra.session_status,ra.session_worker_id,ew.last_seen
      from retailer_accounts ra
