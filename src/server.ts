@@ -729,7 +729,6 @@ app.post("/api/address-books/import",async(req,reply)=>{
         retailerAccountsBound++;
         retailerAccountIds.push(String(account.rows[0].id));
         if(retailer==="flipkart"){
-          await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,account.rows[0].id]);
           await client.query("update retailer_accounts set credential_status='MISSING',last_credential_update_at=null,updated_at=now() where id=$1 and tenant_id=$2",[account.rows[0].id,p.tenantId]);
         }
         if(credential.password&&retailer!=="flipkart"){
@@ -883,7 +882,6 @@ app.post("/api/retailer-users",async(req,reply)=>{
       account.credential_status=credential.rows[0]?.credential_status||"STORED";
     }
     if(body.retailer==="flipkart"){
-      await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,account.id]);
       account.credential_status="MISSING";
       const queued=await client.query(
         `update retailer_accounts set
@@ -1040,7 +1038,6 @@ app.post("/api/retailer-accounts/bulk",async(req,reply)=>{
         row.credential_status="STORED";
       }
       if(body.retailer==="flipkart"){
-        await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
         await client.query("update retailer_accounts set credential_status='MISSING',last_credential_update_at=null,updated_at=now() where id=$1 and tenant_id=$2",[row.id,p.tenantId]);
         row.credential_status="MISSING";
       }
@@ -1126,7 +1123,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   const params:any[]=[p.tenantId,body.targetDays];
   const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
-  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any(${params.length}::uuid[])`)}
+  if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
   clauses.push("(session_status<>'READY' or session_target_expires_at is null or session_target_expires_at<=now())");
   const {rows}=await db.query(
     `update retailer_accounts set
