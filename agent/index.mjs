@@ -11,7 +11,7 @@ const rl=createInterface({input,output});
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const workerSessionToken=process.env.ORDERGRID_SESSION_TOKEN||"";
 let cookie=workerSessionToken?`session=${workerSessionToken}`:"";
-const workerToken=process.env.ORDERGRID_WORKER_TOKEN||"";
+let workerToken=process.env.ORDERGRID_WORKER_TOKEN||"";
 
 async function ask(label){return(await rl.question(label)).trim()}
 async function readSecret(label){
@@ -40,6 +40,12 @@ async function login(){
   const sessionCookie=setCookies.find(Boolean);
   if(!sessionCookie)throw new Error("The server did not return a session cookie.");
   cookie=sessionCookie.split(";")[0];
+  if(!workerToken){
+    try{
+      const bootstrap=(await api("/api/worker-bootstrap")).body;
+      if(bootstrap?.workerToken)workerToken=String(bootstrap.workerToken);
+    }catch{}
+  }
 }
 async function heartbeat(workerId){
   await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode:"BULK"})});
@@ -85,7 +91,7 @@ async function runAdaptiveProductCheckPool(commands,state,handler){
     }else{
       state.cooldownMs=Math.max(0,Math.floor(state.cooldownMs/2));
       state.cleanWaves++;
-      if(state.cleanWaves>=2&&state.current<state.max){
+      if(state.cleanWaves>=3&&state.current<state.max){
         const previous=state.current;
         state.current++;
         state.cleanWaves=0;
@@ -101,8 +107,8 @@ async function main(){
   output.write("It does not bypass OTP, CAPTCHA, 3DS, passwords or retailer security controls.\n\n");
   const chrome=findChrome();
   if(!chrome)throw new Error("Google Chrome was not found. Install Chrome and run again.");
-  if(!workerToken)throw new Error("ORDERGRID_WORKER_TOKEN is required. Configure the machine token issued for this deployment.");
   await login();
+  if(!workerToken)throw new Error("ORDERGRID_WORKER_TOKEN is required. Configure the machine token issued for this deployment.");
 
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");
   const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=8?parallelRequested:4;
