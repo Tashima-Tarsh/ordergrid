@@ -305,20 +305,18 @@ function retailerAuthScript(credentials){
     // For Flipkart (OTP-first flow): fill username and trigger Request OTP
     const explicitOtp=controls.find(x=>/(request otp|send otp|get otp|login with otp|log in with otp|use otp|continue with otp)/i.test(label(x)));
     if(!credentials.password&&explicitOtp){
-      if(user&&!String(user.value||'').trim()){
+      if(user&&String(user.value||'').trim()!==String(credentials.login).trim()){
         setValue(user,credentials.login);
-        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
       }
       clickElement(explicitOtp);
       return {acted:true,action:'OTP_REQUESTED'};
     }
     if(user){
-      if(!String(user.value||'').trim()){
+      if(String(user.value||'').trim()!==String(credentials.login).trim()){
         setValue(user,credentials.login);
-        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
       }
       const requestOtp=explicitOtp
-        ||controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)))
+        ||controls.find(x=>/(request otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
       if(requestOtp){
         clickElement(requestOtp);
@@ -830,9 +828,17 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await sleep(round?400:600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(acted?.acted){
+        if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){
+          await sleep(800);
+          continue;
+        }
+        if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
+          await sleep(1500);
+          const screenshot=await captureScreen();
+          return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
+        }
         await sleep(600);
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:acted.challenge||"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
+        continue;
       }
       if(acted?.challenge){
         const screenshot=await captureScreen();
