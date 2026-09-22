@@ -1410,7 +1410,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
     }
     await client.query(
       `update retailer_accounts set session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING'
-       where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '15 minutes'`,
+       where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '2 minutes'`,
       [p.tenantId]
     );
     const picked=await client.query(
