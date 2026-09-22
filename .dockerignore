@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.github
+.ordergrid
+.ordergrid-local
+.env
+.env.*
+*.log
+coverage
