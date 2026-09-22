@@ -21,6 +21,7 @@ const schema = z.object({
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),
   BOOTSTRAP_ADMIN_SECRET: z.string().min(14).optional(),
   ORDERGRID_SIGNUP_CODE: z.string().min(12).max(512).optional(),
+  GOOGLE_CLIENT_ID: z.string().min(20).max(512).optional(),
   SHOPIFY_STOREFRONT_TOKEN: z.string().optional(),
   CARD_PROVIDER: z.enum(["disabled", "m2p", "enkash", "custom"]).default("disabled"),
   CARD_PROVIDER_API_KEY: z.string().optional(),
