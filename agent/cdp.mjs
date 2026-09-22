@@ -462,14 +462,20 @@ function flipkartProductSnapshotScript(){
     let mrpMinor=null;for(const selector of ['.yRaY8j','._3I9_wc','[class*="yRaY8j"]']){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(el.textContent);if(amount&&(!sellingPriceMinor||amount>=sellingPriceMinor)){mrpMinor=amount;break}}if(mrpMinor!==null)break}
     if(mrpMinor===null){const m=text.match(/(?:M\\.?R\\.?P\\.?|Maximum Retail Price)[^₹0-9]{0,35}(?:₹|Rs\\.?|INR)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)/i);if(m)mrpMinor=Math.round(Number(m[1].replace(/,/g,''))*100)}
     const seller=selectorText(['#sellerName span','#sellerName','a[href*="/sellers"]','[class*="seller"] a'])||null;
-    const crumb=[...document.querySelectorAll('a')].filter(a=>/\\/mobiles(?:[/?]|$)|mobile-phones-store|mobiles-accessories/i.test(String(a.getAttribute('href')||''))).map(a=>clean(a.textContent)).filter(Boolean).join(' > ');
+    const crumb=[...document.querySelectorAll('a, [class*="breadcrumb"], [class*="_2whKao"]')].filter(a=>/\\/mobiles(?:[/?]|$)|mobile-phones|mobiles-accessories|smartphones/i.test(String(a.getAttribute('href')||'')+' '+clean(a.textContent))).map(a=>clean(a.textContent)).filter(Boolean).join(' > ');
     const structuredCategory=clean(product?.category),categoryText=[crumb,structuredCategory].filter(Boolean).join(' > ');
-    const mobileSignal=/\\bmobiles?\\b/i.test(categoryText),accessorySignal=/cases|covers|screen guard|charger|cable|headset|earphone|power bank|mobile holder|mobile accessory/i.test(title+' '+categoryText);
+    const pid=new URL(location.href).searchParams.get('pid')||'';
+    const isMobPid=Boolean(/^MOB/i.test(pid));
+    const titleMobileSignal=/\\b(mobiles?|smartphones?|phones?|handsets?)\\b/i.test(title)||/\\b(realme|redmi|xiaomi|poco|oneplus|iqoo|vivo|oppo|samsung|motorola|moto|apple|iphone|pixel|infinix|tecno|nothing|cmf|narzo|nord)\\b.*\\b(\\d+\\s*(?:gb|tb)|5g|4g)\\b/i.test(title);
+    const categoryMobileSignal=/\\b(mobiles?|smartphones?|handsets?)\\b/i.test(categoryText);
+    const specMobileSignal=/\\b(internal storage|ram|battery capacity|primary camera|operating system|network type|sim type)\\b/i.test(text);
+    const mobileSignal=Boolean(categoryMobileSignal||titleMobileSignal||isMobPid||specMobileSignal);
+    const accessorySignal=/\\b(cases?|covers?|screen guard|tempered glass|charger|charging cable|data cable|usb cable|headset|earphone|neckband|earbuds|airpods|power bank|mobile holder|mobile stand|mobile accessory|skins?|adapter|stylus|replacement display|back cover|back case|pouch|docking station)\\b/i.test(title+' '+categoryText);
     const isMobile=Boolean(mobileSignal&&!accessorySignal);
     const explicitOos=/(currently unavailable|out of stock|sold out|temporarily unavailable|notify me when available|coming soon)/i.test(lower);
     const offerAvailability=clean(offers?.availability).toLowerCase(),available=explicitOos?false:offerAvailability?(!/outofstock|soldout|discontinued/.test(offerAvailability)):true;
-    const canonical=document.querySelector('link[rel="canonical"]')?.href||location.href,pid=new URL(location.href).searchParams.get('pid');
-    return {title,category:categoryText||null,isMobile,seller,sellingPriceMinor,mrpMinor,priceSource:priceSource||null,available,canonicalUrl:canonical,pid,href:location.href};
+    const canonical=document.querySelector('link[rel="canonical"]')?.href||location.href;
+    return {title,category:categoryText||null,isMobile,seller,sellingPriceMinor,mrpMinor,priceSource:priceSource||null,available,canonicalUrl:canonical,pid:pid||null,href:location.href};
   })()`;
 }
 
