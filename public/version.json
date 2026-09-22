@@ -1,7 +1,7 @@
 {
-  "release": "cloudflare-workers-free-2026-09-22",
-  "feature": "free-worker-api",
-  "plan": "workers-free",
+  "release": "production-login-supabase-edge-2026-09-22",
+  "feature": "authenticated-production-preview",
+  "platform": "cloudflare-workers-free+supabase-edge",
   "renderDependency": false,
   "containers": false
 }

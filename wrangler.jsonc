@@ -9,10 +9,6 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api", "/api/*"]
   },
-  "vars": {
-    "APP_ORIGIN": "https://ordergrid.nkumar906099.workers.dev",
-    "DB_SSL_REJECT_UNAUTHORIZED": "true"
-  },
   "observability": {
     "enabled": true
   }
