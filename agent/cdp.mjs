@@ -276,12 +276,22 @@ function retailerAuthScript(credentials){
       const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
       if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
+    const explicitOtp=controls.find(x=>/(request otp|send otp|get otp|login with otp|log in with otp|use otp|continue with otp)/i.test(label(x)));
+    if(!credentials.password&&explicitOtp&&visible(explicitOtp)){
+      if(user&&!String(user.value||'').trim()){
+        setValue(user,credentials.login);
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
+      }
+      explicitOtp.click();
+      return {acted:true,action:'OTP_REQUESTED'};
+    }
     if(user){
       if(!String(user.value||'').trim()){
         setValue(user,credentials.login);
         return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
       }
-      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
+      const requestOtp=explicitOtp
+        ||controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
       if(requestOtp&&visible(requestOtp)){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
     }
