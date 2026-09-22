@@ -100,14 +100,29 @@
       const stockMeta=watching
         ?'<div class="stock-watch-note"><b>AUTO-BUY '+(b.stock_watch_auto_order?'ON':'OFF')+'</b><span>Next '+(b.stock_next_check_at?new Date(b.stock_next_check_at).toLocaleString('en-IN'):'pending')+' · ceiling '+money(b.stock_watch_max_amount_minor||0)+'</span></div>'
         :'';
+      const cardInfo=b.card_masked
+        ?`<span class="bulk-card-badge">💳 ${esc(b.card_masked)} · ${esc(b.card_status||'ACTIVE')}</span>`
+        :(b.payment_route==='Cash on Delivery'?'<span class="bulk-card-badge">💵 Cash on Delivery</span>':'<span class="bulk-card-badge">💳 Card pending</span>');
+      const orderIdBadge=b.retailer_order_id
+        ?`<div class="bulk-order-id-badge"><strong>ORDER ID</strong><span>${esc(b.retailer_order_id)}</span></div>`
+        :'';
+      const timeStr=b.created_at?new Date(b.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'';
+      const healthBadge=b.health_score!==undefined&&b.health_score!==null
+        ?`<span class="bulk-health-badge">Health: ${b.health_score}%</span>`
+        :'';
       return `
         <article class="bulk-order-card" data-basket="${esc(b.id)}">
           <div class="bulk-order-main">
             <div class="bulk-order-avatar">${esc(String(b.retailer||'R').slice(0,1).toUpperCase())}</div>
             <div class="bulk-order-copy">
-              <strong>${esc(b.customer_reference||b.recipient||'Customer order')}</strong>
-              <span>${esc(b.retailer)} · ${esc(b.account_reference||'Account not added')}</span>
-              <small>${esc(b.recipient)} · ${esc(b.city)} ${esc(b.postal_code)} · ${esc(b.payment_route)}</small>
+              <div class="bulk-order-title-row">
+                <strong>${esc(b.customer_reference||b.recipient||'Customer order')}</strong>
+                ${healthBadge}
+                ${timeStr?`<small class="bulk-order-time">${esc(timeStr)}</small>`:''}
+              </div>
+              <span>${esc(b.retailer)} · ${esc(b.account_label||b.account_reference||'Account not added')}</span>
+              <small>${esc(b.recipient)} · ${esc(b.city)} ${esc(b.postal_code)} · ${cardInfo}</small>
+              ${orderIdBadge}
               ${stockMeta}
               ${note?'<div class="bulk-exception"><b>Needs attention</b><span>'+esc(note)+'</span></div>':''}
             </div>

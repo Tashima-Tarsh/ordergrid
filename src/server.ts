@@ -1251,6 +1251,7 @@ app.get("/api/retailer-accounts",async(req)=>{
       addr.city address_city,addr.state address_state,addr.postal_code address_postal_code,addr.country address_country,
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
       ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
+      ra.health_score,ra.cooldown_until,
       ra.session_status,ra.session_challenge_code,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
       coalesce((select sum(case
@@ -1606,6 +1607,7 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
        and ra.auth_status not in ('LOCKED','DISABLED')
        and ra.session_status='READY'
        and (ra.session_target_expires_at is null or ra.session_target_expires_at>now())
+       and (ra.cooldown_until is null or ra.cooldown_until<=now())
        and ew.last_seen>now()-interval '30 seconds'
      order by ra.last_assigned_at nulls first,ra.created_at,ra.id`,
     [p.tenantId,productUrl]
@@ -1677,6 +1679,90 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
     unavailable,
     priceRangeMinor:prices.length?{min:Math.min(...prices),max:Math.max(...prices)}:null
   };
+});
+
+app.get("/api/batches/:id/baskets",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const batchId=z.string().uuid().parse((req.params as any).id);
+  const batch=await db.query(
+    "select id,name,status,payment_route,estimated_total_minor,approved_total_minor,created_at from order_batches where id=$1 and tenant_id=$2 limit 1",
+    [batchId,p.tenantId]
+  );
+  if(!batch.rows[0])return reply.code(404).send({error:"batch_not_found"});
+  const {rows}=await db.query(`
+    select
+      cb.id basket_id,
+      cb.status basket_status,
+      cb.retailer_order_id,
+      cb.failure_code,
+      cb.failure_message,
+      cb.opened_at,
+      cb.confirmed_at,
+      cb.updated_at basket_updated_at,
+      cb.account_reference,
+      cb.retailer,
+      ra.id retailer_account_id,
+      ra.label account_label,
+      ra.session_status,
+      ra.health_score,
+      ra.cooldown_until,
+      c.id customer_id,
+      c.external_reference customer_reference,
+      c.display_name customer_name,
+      a.recipient,
+      a.line1 address_line1,
+      a.city address_city,
+      a.state address_state,
+      a.postal_code,
+      a.country address_country,
+      vc.id card_id,
+      vc.masked_number card_masked,
+      vc.status card_status,
+      vc.balance_minor card_balance_minor,
+      bi.product_url,
+      bi.title product_title,
+      bi.unit_price_minor,
+      bi.requested_quantity,
+      po.id purchase_order_id,
+      po.status order_status,
+      po.amount_minor order_amount_minor,
+      po.retailer_order_id po_retailer_order_id,
+      po.failure_code order_failure_code,
+      po.failure_message order_failure_message,
+      (cb.status='REQUIRES_ACTION') as needs_action,
+      coalesce(
+        (select ewc.id from execution_worker_commands ewc
+         where ewc.checkout_basket_id=cb.id and ewc.status='PENDING'
+         order by ewc.requested_at desc limit 1),
+        null
+      ) pending_command_id
+    from checkout_baskets cb
+    join order_batches ob on ob.id=cb.batch_id
+    left join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join customers c on c.id=cb.customer_id
+    left join addresses a on a.customer_id=cb.customer_id and a.id=(
+      select aa.id from addresses aa where aa.customer_id=cb.customer_id limit 1
+    )
+    left join virtual_cards vc on vc.id=cb.virtual_card_id
+    left join batch_items bi on bi.batch_id=cb.batch_id and bi.address_id=(
+      select aa.id from addresses aa where aa.customer_id=cb.customer_id limit 1
+    )
+    left join purchase_orders po on po.checkout_basket_id=cb.id
+    where cb.batch_id=$1 and cb.tenant_id=$2
+    order by cb.created_at,cb.id
+  `,[batchId,p.tenantId]);
+  const counts={
+    total:rows.length,
+    ready:rows.filter(r=>r.basket_status==="READY").length,
+    claimed:rows.filter(r=>r.basket_status==="CLAIMED").length,
+    opened:rows.filter(r=>r.basket_status==="OPENED").length,
+    requiresAction:rows.filter(r=>r.basket_status==="REQUIRES_ACTION").length,
+    confirmed:rows.filter(r=>r.basket_status==="CONFIRMED").length,
+    failed:rows.filter(r=>r.basket_status==="FAILED").length,
+    waitingStock:rows.filter(r=>r.basket_status==="WAITING_STOCK").length
+  };
+  return {batch:batch.rows[0],baskets:rows,counts};
 });
 
 app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)=>{
@@ -2668,12 +2754,14 @@ app.get("/api/bulk-baskets",async(req)=>{
   const p=req.principal!;
   await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where tenant_id=$1 and status in ('CLAIMED','OPENED') and expires_at<=now()",[p.tenantId]);
   const {rows}=await db.query(`
-    select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.expires_at,cb.failure_code,cb.failure_message,
+    select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.retailer_order_id,cb.expires_at,cb.failure_code,cb.failure_message,
            cb.customer_id,cb.retailer_account_id,cb.issuer_connection_id,cb.virtual_card_id,cb.payment_status,
            cb.stock_watch_enabled,cb.stock_watch_auto_order,cb.stock_watch_max_amount_minor,
            cb.stock_watch_started_at,cb.stock_watch_expires_at,cb.stock_last_checked_at,cb.stock_next_check_at,cb.stock_available_at,cb.stock_last_message,
+           cb.created_at,cb.updated_at,
            c.external_reference customer_reference,
-           ra.profile_key,ra.auth_status,ra.credential_status,
+           ra.profile_key,ra.auth_status,ra.credential_status,ra.label account_label,ra.health_score,ra.cooldown_until,
+           vc.masked_number card_masked,vc.status card_status,
            a.recipient,a.city,a.postal_code,b.name batch_name,b.payment_route,
            count(po.id)::int item_count,coalesce(sum(po.amount_minor),0)::bigint amount_minor
     from checkout_baskets cb
@@ -2681,9 +2769,10 @@ app.get("/api/bulk-baskets",async(req)=>{
     join addresses a on a.id=cb.address_id
     join customers c on c.id=cb.customer_id
     join retailer_accounts ra on ra.id=cb.retailer_account_id
+    left join virtual_cards vc on vc.id=cb.virtual_card_id
     left join purchase_orders po on po.checkout_basket_id=cb.id
     where cb.tenant_id=$1
-    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,ra.credential_status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
+    group by cb.id,c.external_reference,ra.profile_key,ra.auth_status,ra.credential_status,ra.label,ra.health_score,ra.cooldown_until,vc.masked_number,vc.status,a.recipient,a.city,a.postal_code,b.name,b.payment_route
     order by cb.created_at desc limit 500
   `,[p.tenantId]);
   return {baskets:rows};
@@ -3059,6 +3148,17 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
     });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    // Apply cooldown and deduct health score on the retailer account that failed
+    if(rows[0].retailer_account_id){
+      await db.query(
+        `update retailer_accounts
+         set cooldown_until=now()+interval '30 minutes',
+             health_score=greatest(0,coalesce(health_score,100)-10),
+             updated_at=now()
+         where id=$1 and tenant_id=$2`,
+        [rows[0].retailer_account_id,p.tenantId]
+      );
+    }
     const policy=await getAutomationPolicy(p.tenantId);
     const batch=await db.query("select batch_id from checkout_baskets where id=$1 and tenant_id=$2",[id,p.tenantId]);
     if(batch.rows[0]&&Number(policy.failure_pause_percent)<100){

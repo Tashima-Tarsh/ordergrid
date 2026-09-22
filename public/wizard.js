@@ -331,7 +331,15 @@
   }
   next.onclick=()=>{
     if(current===1&&!validateProducts())return;
-    if(current===2&&!preview.textContent.trim()){formError.textContent='Upload a recipient CSV/XLSX, use sample recipients, or complete multi-account allocation.';return}
+    if(current===2){
+      // Pool-mode batches carry addresses inside the allocation plan — no CSV needed
+      const rows=[...productRows.querySelectorAll('.product-entry')];
+      const allPooled=rows.length>0&&rows.every(row=>parseAllocation(row)?.complete);
+      if(!allPooled&&!preview.textContent.trim()){
+        formError.textContent='Upload a recipient CSV/XLSX, use sample recipients, or complete multi-account allocation.';
+        return;
+      }
+    }
     if(current===3&&!document.querySelector('#wizardApproval').checked){formError.textContent='Confirm the batch details to continue.';return}
     formError.textContent='';show(Math.min(4,current+1));
   };

@@ -22,6 +22,7 @@ async function assignRetailerAccount(
        and ra.active
        and ra.auth_status not in ('LOCKED','DISABLED')
        and (ra.customer_id=$3 or ra.customer_id is null)
+       and (ra.cooldown_until is null or ra.cooldown_until<=now())
        and usage.active_orders < ra.max_concurrent_orders
      order by
        case when ra.customer_id=$3 then 0 else 1 end,

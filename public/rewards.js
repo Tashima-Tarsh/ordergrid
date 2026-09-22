@@ -126,11 +126,14 @@
       const addressMeta=account.customer_id
         ?[account.address_line1,account.address_line2,account.address_city,account.address_state,account.address_postal_code].filter(Boolean).map(esc).join(' · ')
         :'No delivery user/address bound';
+      const isCooling=account.cooldown_until&&new Date(account.cooldown_until)>new Date();
+      const cooldownMeta=isCooling?` · ⏳ Cooldown until ${new Date(account.cooldown_until).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`:'';
+      const healthMeta=account.health_score!==undefined&&account.health_score!==null?` · Health: ${account.health_score}%`:'';
       return `
         <article class="retailer-account-row" data-account-id="${esc(account.id)}">
           <div class="account-main">
             <strong>${identity}</strong>
-            <small>Flipkart login: ${esc(account.account_reference)} · ${esc(connectionStatus)}</small>
+            <small>Flipkart login: ${esc(account.account_reference)} · ${esc(connectionStatus)}${healthMeta}${cooldownMeta}</small>
             <small>${addressMeta}</small>
             <small class="session-line ${sessionStatus==='READY'?'ready':sessionStatus==='REAUTH_REQUIRED'?'attention':''}">${esc(sessionMeta)}</small>
           </div>
