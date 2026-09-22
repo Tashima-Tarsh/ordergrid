@@ -182,7 +182,7 @@ async function main(){
         });
       }
 
-      if(Date.now()-lastSessionCheckAt>=30_000){
+      if(Date.now()-lastSessionCheckAt>=3_000){
         lastSessionCheckAt=Date.now();
         try{
           const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:sessionClaimLimit})})).body;
