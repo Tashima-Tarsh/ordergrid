@@ -1,7 +1,8 @@
 {
-  "release": "production-login-supabase-edge-2026-09-22",
-  "feature": "authenticated-production-preview",
+  "release": "cloudflare-free-live-trigger-2026-09-22",
+  "feature": "authenticated-production",
   "platform": "cloudflare-workers-free+supabase-edge",
   "renderDependency": false,
-  "containers": false
+  "containers": false,
+  "expectedMainCommit": "c56937b6542464e2adf8279033b65cbd4a7b3930"
 }
