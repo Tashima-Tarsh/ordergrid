@@ -30,6 +30,14 @@ must(server.includes("ORDERGRID_SIGNUP_CODE"),"owner signup contract: setup code
 must(server.includes("user.owner_signup")&&server.includes("user.owner_recovered"),"owner signup contract: signup/recovery audit events missing");
 must(files["public/index.html"].includes('id="signupForm"'),"owner signup contract: signup form missing");
 must(files["public/index.html"].includes("Create / recover owner account"),"owner signup contract: login-to-signup action missing");
+must(server.includes('app.get("/api/auth-config"'),"google auth contract: public auth config route missing");
+must(server.includes('app.post("/api/login/google"'),"google auth contract: Google login route missing");
+must(server.includes("createRemoteJWKSet")&&server.includes("jwtVerify"),"google auth contract: Google ID tokens must be cryptographically verified");
+must(server.includes("private.user_external_identities"),"google auth contract: stable Google subject identity mapping missing");
+must(server.includes("google_owner_setup_required"),"google auth contract: unknown Google accounts must require owner setup code");
+must(files["public/index.html"].includes('id="googleSignIn"'),"google auth contract: Google sign-in mount missing");
+must(files["public/app.js"].includes("https://accounts.google.com/gsi/client"),"google auth contract: Google Identity Services client not loaded");
+must(files["public/app.js"].includes("credential:response.credential"),"google auth contract: Google credential not sent to backend");
 must(server.includes('app.delete("/api/users/:userId"'),"user contract: DELETE /api/users/:userId missing");
 must(!server.includes('app.get("/api/dealer-network"'),"user contract: dealer network route must not be active");
 must(!server.includes('app.post("/api/dealer-context"'),"user contract: dealer context switching must not be active");
