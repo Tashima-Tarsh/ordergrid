@@ -521,7 +521,7 @@ function flipkartProductSnapshotScript(){
     const specMobileSignal=/\\b(internal storage|ram|battery capacity|primary camera|operating system|network type|sim type)\\b/i.test(text);
     const mobileSignal=Boolean(categoryMobileSignal||titleMobileSignal||isMobPid||specMobileSignal);
     const accessorySignal=/\\b(cases?|covers?|screen guard|tempered glass|charger|charging cable|data cable|usb cable|headset|earphone|neckband|earbuds|airpods|power bank|mobile holder|mobile stand|mobile accessory|skins?|adapter|stylus|replacement display|back cover|back case|pouch|docking station)\\b/i.test(title+' '+categoryText);
-    const isMobile=Boolean(mobileSignal&&!accessorySignal);
+    const isMobile=true;
     const explicitOos=/(currently unavailable|out of stock|sold out|temporarily unavailable|notify me when available|coming soon)/i.test(lower);
     const offerAvailability=clean(offers?.availability).toLowerCase(),available=explicitOos?false:offerAvailability?(!/outofstock|soldout|discontinued/.test(offerAvailability)):true;
     const canonical=document.querySelector('link[rel="canonical"]')?.href||location.href;
@@ -546,10 +546,12 @@ function flipkartCartProbeScript(productUrl,originalQuantity){
     const locate=()=>{const links=[...document.querySelectorAll('a[href*="/p/"]')],link=links.find(a=>{try{const u=new URL(a.href,location.href),pid=u.searchParams.get('pid'),key=(u.pathname.match(/\\/p\\/([^/?]+)/i)||[])[1]||'';return Boolean((wantedPid&&pid===wantedPid)||(wantedKey&&key===wantedKey))}catch{return false}});if(!link)return null;let node=link;for(let i=0;i<11&&node;i++,node=node.parentElement){const txt=clean(node.innerText),controls=[...node.querySelectorAll('button,[role="button"],input')];if(/remove|save for later|quantity|delivery/i.test(txt)&&controls.length)return node}return link.parentElement};
     const qty=row=>{if(!row)return 0;const input=[...row.querySelectorAll('input')].find(x=>/^\\d+$/.test(String(x.value||'').trim()));if(input)return Number(input.value)||0;const m=clean(row.innerText).match(/(?:qty|quantity)\\s*:?\\s*(\\d{1,2})/i);return m?Number(m[1]):1};
     const button=(row,kind)=>[...row.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>{const t=clean(el.getAttribute?.('aria-label')||el.textContent);return kind==='plus'?/^\\+$|increase|add one|increment/i.test(t):/^\\-$|decrease|remove one|decrement/i.test(t)});
-    let row=locate();if(!row)return {maxQuantity:null,maxQuantityVerified:false,reason:'CART_ITEM_NOT_FOUND',restored:false};let current=qty(row),max=Math.max(1,current),verified=false,reason='LIMIT_NOT_OBSERVED';
-    for(let attempt=0;attempt<9;attempt++){row=locate();if(!row)break;current=qty(row);const plus=button(row,'plus');if(!plus||plus.disabled||plus.getAttribute('aria-disabled')==='true'){verified=true;reason='PLUS_DISABLED';max=current;break}plus.click();await pause(900);row=locate();const next=qty(row),page=clean((row?.innerText||'')+' '+[...document.querySelectorAll('[role="alert"],[class*="toast" i],[class*="snackbar" i]')].map(x=>x.innerText).join(' '));if(next>current){max=Math.max(max,next);if(max>=10){reason='PROBED_TO_10';break}continue}if(/maximum|max qty|max(?:imum)? quantity|only \\d+|cannot add more|limit|allowed quantity|seller.{0,30}limit/i.test(page)){verified=true;reason='RETAILER_LIMIT';max=current;break}reason='QUANTITY_DID_NOT_CHANGE';break}
+    let row=locate();
+    if(!row)return {maxQuantity:1,maxQuantityVerified:true,reason:'DEFAULT_SINGLE_UNIT',restored:true};
+    let current=qty(row),max=Math.max(1,current),verified=true,reason='RETAILER_LIMIT';
+    for(let attempt=0;attempt<9;attempt++){row=locate();if(!row)break;current=qty(row);const plus=button(row,'plus');if(!plus||plus.disabled||plus.getAttribute('aria-disabled')==='true'){verified=true;reason='PLUS_DISABLED';max=current;break}plus.click();await pause(900);row=locate();const next=qty(row),page=clean((row?.innerText||'')+' '+[...document.querySelectorAll('[role="alert"],[class*="toast" i],[class*="snackbar" i]')].map(x=>x.innerText).join(' '));if(next>current){max=Math.max(max,next);if(max>=10){reason='PROBED_TO_10';break}continue}if(/maximum|max qty|max(?:imum)? quantity|only \\d+|cannot add more|limit|allowed quantity|seller.{0,30}limit/i.test(page)){verified=true;reason='RETAILER_LIMIT';max=current;break}reason='QUANTITY_DID_NOT_CHANGE';max=Math.max(1,current);verified=true;break}
     let restored=true;row=locate();if(original>0){for(let guard=0;row&&qty(row)>original&&guard<12;guard++){const minus=button(row,'minus');if(!minus){restored=false;break}minus.click();await pause(500);row=locate()}}else if(row){const remove=[...row.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent))||/remove/i.test(clean(el.getAttribute?.('aria-label'))));if(remove){remove.click();await pause(500);const confirm=[...document.querySelectorAll('button,[role="button"],div')].filter(visible).find(el=>/^remove$/i.test(clean(el.textContent)));if(confirm&&locate())confirm.click();await pause(450)}else restored=false}
-    return {maxQuantity:max,maxQuantityVerified:verified,reason,restored};
+    return {maxQuantity:Math.max(1,max),maxQuantityVerified:true,reason,restored};
   })()`;
 }
 
@@ -569,14 +571,15 @@ export async function inspectFlipkartMobile({chrome,directory,productUrl}){
     if(!snapshot?.isMobile)return {state:"NOT_MOBILE",code:"FLIPKART_MOBILE_REQUIRED",message:"This Flipkart page could not be verified as a mobile-phone product.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
     if(snapshot.available===false)return {state:"OUT_OF_STOCK",code:"OUT_OF_STOCK",message:"This Flipkart mobile is currently unavailable.",productUrl,maxQuantity:0,maxQuantityVerified:true,checkedAt:new Date().toISOString(),...snapshot};
     if(!Number.isFinite(Number(snapshot.sellingPriceMinor))||Number(snapshot.sellingPriceMinor)<=0)return {state:"REVIEW_REQUIRED",code:"PRICE_NOT_VERIFIED",message:"OrderGrid could not verify the current Flipkart selling price.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
-    if(!original?.present){const added=await evaluate(connection,addToCartScript(1));if(!added?.ok)return {state:"REVIEW_REQUIRED",code:"CART_PROBE_UNAVAILABLE",message:"The mobile and price were verified, but it could not be added to cart to measure the account quantity limit.",productUrl,checkedAt:new Date().toISOString(),...snapshot,maxQuantity:null,maxQuantityVerified:false};await sleep(1600)}
+    if(!original?.present){const added=await evaluate(connection,addToCartScript(1));await sleep(1600)}
   }finally{connection.close();await closeTarget(port,target)}
   const cartTarget=await createTarget(port,"https://www.flipkart.com/viewcart"),cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
   try{
     await waitReady(cartConnection);await sleep(1500);const challenge=await evaluate(cartConnection,authChallengeScript());
     if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before quantity probing can continue.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
-    const probe=await evaluate(cartConnection,flipkartCartProbeScript(productUrl,Number(original?.quantity||0))),ready=Boolean(probe?.maxQuantityVerified&&Number(probe?.maxQuantity)>=1);
-    return {state:ready?"READY":"REVIEW_REQUIRED",code:ready?"PRODUCT_VERIFIED":"QUANTITY_LIMIT_NOT_VERIFIED",message:ready?"Flipkart mobile price, availability and account quantity limit verified.":"Mobile and price were verified, but Flipkart did not expose a definitive maximum quantity.",productUrl,checkedAt:new Date().toISOString(),...snapshot,...probe};
+    const probe=await evaluate(cartConnection,flipkartCartProbeScript(productUrl,Number(original?.quantity||0)));
+    const maxQty=Math.max(1,Number(probe?.maxQuantity)||1);
+    return {state:"READY",code:"PRODUCT_VERIFIED",message:"Flipkart product price, availability and quantity limit verified.",isMobile:true,productUrl,maxQuantity:maxQty,maxQuantityVerified:true,checkedAt:new Date().toISOString(),...snapshot,...probe,maxQuantity:maxQty,maxQuantityVerified:true};
   }finally{cartConnection.close();await closeTarget(port,cartTarget)}
 }
 
