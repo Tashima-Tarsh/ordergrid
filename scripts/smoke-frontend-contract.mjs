@@ -256,6 +256,11 @@ must(agent.includes("const heartbeatTimer=setInterval"),"cloud worker contract: 
 must(agent.includes("},10_000)"),"cloud worker contract: background heartbeat cadence must stay below the 30-second liveness window");
 must(agent.includes("Worker heartbeat failed"),"cloud worker contract: background heartbeat failures must be observable");
 must(agent.includes("clearInterval(heartbeatTimer)"),"cloud worker contract: background heartbeat timer must be released on worker exit");
+must(cdp.includes("const chromeProcesses=new Map()"),"cloud browser contract: launched Chrome processes must remain trackable for forced cleanup");
+must(cdp.includes('signalChromeProcess(tracked.pid,"SIGTERM")')&&cdp.includes('signalChromeProcess(tracked.pid,"SIGKILL")'),"cloud browser contract: failed DevTools shutdown must reap the Chrome process tree");
+must(cdp.includes('"--renderer-process-limit=2"'),"cloud browser contract: hosted Chrome must cap renderer process fanout");
+must(agent.includes('ORDERGRID_SESSION_CLAIM||"1"'),"cloud worker contract: hosted retailer session claims must default to one browser at a time");
+must(renderConfig.includes('key: ORDERGRID_MANAGED_PARALLEL')&&renderConfig.includes('key: ORDERGRID_SESSION_CLAIM'),"render contract: free hosted worker must explicitly limit browser concurrency");
 must(server.includes("session_check_claimed_at<now()-interval '2 minutes'"),"retailer session contract: abandoned hosted login claims must recover promptly");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");

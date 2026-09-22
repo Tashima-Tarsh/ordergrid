@@ -111,7 +111,7 @@ async function main(){
   const productCheckState={current:Math.min(4,productCheckMax),max:productCheckMax,cleanWaves:0,cooldownMs:0};
   const claimRequested=Number(process.env.ORDERGRID_BASKETS||"25");
   const claimLimit=Number.isInteger(claimRequested)&&claimRequested>=1&&claimRequested<=25?claimRequested:25;
-  const sessionClaimRequested=Number(process.env.ORDERGRID_SESSION_CLAIM||((process.env.ORDERGRID_HEADLESS==="1")?"10":"1"));
+  const sessionClaimRequested=Number(process.env.ORDERGRID_SESSION_CLAIM||"1");
   const sessionClaimLimit=Number.isInteger(sessionClaimRequested)&&sessionClaimRequested>=1&&sessionClaimRequested<=25?sessionClaimRequested:1;
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;

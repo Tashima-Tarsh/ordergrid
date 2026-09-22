@@ -25,7 +25,9 @@ services:
       - key: ORDERGRID_MANAGED_EXECUTION
         value: "true"
       - key: ORDERGRID_MANAGED_PARALLEL
-        value: "2"
+        value: "1"
+      - key: ORDERGRID_SESSION_CLAIM
+        value: "1"
       - key: ORDERGRID_MANAGED_BASKETS
         value: "10"
       - key: DB_SSL_REJECT_UNAUTHORIZED
