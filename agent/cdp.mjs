@@ -238,8 +238,26 @@ function retailerAuthScript(credentials){
   return `(()=>{const credentials=${JSON.stringify(credentials||null)};
     if(!credentials?.login)return {acted:false};
     const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,50000);
-    const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
-    const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const setValue=(el,value)=>{
+      if(!el)return;
+      const tracker=el._valueTracker;
+      if(tracker)tracker.setValue('');
+      const descriptor=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+      if(descriptor?.set)descriptor.set.call(el,value);
+      else el.value=value;
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+      el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
+      el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
+    };
+    const clickElement=(el)=>{
+      if(!el)return;
+      try{el.disabled=false;el.removeAttribute('disabled');}catch{}
+      el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+      el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));
+      el.click();
+    };
+    const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
     
     // Check if OTP input fields are already active on screen (e.g. multi-box or single otp input)
@@ -275,13 +293,13 @@ function retailerAuthScript(credentials){
     if(!user&&nonSearchText.length===1)user=nonSearchText[0];
     if(!user){
       const openLogin=controls.find(x=>/^(login|log in|sign in|signin)$/i.test(label(x)));
-      if(openLogin){openLogin.click();return {acted:true,action:'LOGIN_SURFACE_OPENED'};}
+      if(openLogin){clickElement(openLogin);return {acted:true,action:'LOGIN_SURFACE_OPENED'};}
     }
     if(password&&credentials.password){
       if(user&&!String(user.value||'').trim())setValue(user,credentials.login);
       if(!String(password.value||''))setValue(password,credentials.password);
       const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
-      if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
+      if(submit){clickElement(submit);return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
     
     // For Flipkart (OTP-first flow): fill username and trigger Request OTP
@@ -289,8 +307,8 @@ function retailerAuthScript(credentials){
       setValue(user,credentials.login);
       const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue with otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
-      if(requestOtp&&visible(requestOtp)){
-        requestOtp.click();
+      if(requestOtp){
+        clickElement(requestOtp);
         return {acted:true,action:'REQUEST_OTP_CLICKED'};
       }
       return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
