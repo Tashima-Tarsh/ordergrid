@@ -552,8 +552,16 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
 });
 
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
-  const input=z.object({email:z.string().email(),password:z.string().min(1)}).parse(req.body);
-  const {rows}=await db.query("select id,tenant_id,role,password_hash from users where lower(email::text)=lower($1) and active limit 1",[input.email]);
+  const input=z.object({
+    identifier:z.string().min(1).max(320).optional(),
+    email:z.string().min(1).max(320).optional(),
+    password:z.string().min(1).max(200)
+  }).refine(value=>Boolean(value.identifier||value.email),{message:"User ID or email is required"}).parse(req.body);
+  const identifier=String(input.identifier??input.email??"").trim();
+  const {rows}=await db.query(
+    "select id,tenant_id,role,password_hash from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
+    [identifier]
+  );
   const u=rows[0];
   if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"});
   const token=randomBytes(32).toString("base64url");
@@ -566,7 +574,7 @@ app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)a
 app.get("/api/users",async(req)=>{
   const p=req.principal!;
   const {rows}=await db.query(
-    "select id,email,role::text role,active,(id=$2) current_user from users where tenant_id=$1 order by active desc,email",
+    "select id,email,username,role::text role,active,(id=$2) current_user from users where tenant_id=$1 order by active desc,email",
     [p.tenantId,p.id]
   );
   return {users:rows};
