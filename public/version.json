@@ -1,0 +1,5 @@
+{
+  "release": "owner-signup-2026-09-22",
+  "feature": "protected-owner-signup",
+  "expectedMainCommit": "8a56be0efcb4756b6e0a6b00943678dc75ee9541"
+}
