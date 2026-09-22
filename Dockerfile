@@ -27,5 +27,5 @@ COPY --from=build /app/scripts ./scripts
 RUN mkdir -p /app/.ordergrid && chown -R node:node /app
 USER node
 EXPOSE 3000
-CMD ["node","dist/server.js"]
+CMD ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
 
