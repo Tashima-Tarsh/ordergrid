@@ -252,6 +252,10 @@ must(cdp.includes("Retailer page readiness timed out"),"cloud browser contract: 
 must(cdp.includes("this.ready.catch(()=>{})"),"cloud browser contract: early DevTools socket failures must not crash the hosted worker");
 must(agent.includes("Session browser retry"),"retailer session contract: hosted session checks must retry a transient browser failure");
 must(agent.includes("Session result report failed"),"retailer session contract: session result reporting failures must be observable");
+must(agent.includes("const heartbeatTimer=setInterval"),"cloud worker contract: heartbeat must run independently of browser automation");
+must(agent.includes("},10_000)"),"cloud worker contract: background heartbeat cadence must stay below the 30-second liveness window");
+must(agent.includes("Worker heartbeat failed"),"cloud worker contract: background heartbeat failures must be observable");
+must(agent.includes("clearInterval(heartbeatTimer)"),"cloud worker contract: background heartbeat timer must be released on worker exit");
 must(server.includes("session_check_claimed_at<now()-interval '2 minutes'"),"retailer session contract: abandoned hosted login claims must recover promptly");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
