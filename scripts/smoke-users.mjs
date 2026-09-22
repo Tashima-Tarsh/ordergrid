@@ -24,6 +24,12 @@ const frontend=[
 
 must(server.includes('app.get("/api/users"'),"user contract: GET /api/users missing");
 must(server.includes('app.post("/api/users"'),"user contract: POST /api/users missing");
+must(server.includes('app.get("/api/signup-status"'),"owner signup contract: public signup-status route missing");
+must(server.includes('app.post("/api/signup"'),"owner signup contract: protected signup route missing");
+must(server.includes("ORDERGRID_SIGNUP_CODE"),"owner signup contract: setup code protection missing");
+must(server.includes("user.owner_signup")&&server.includes("user.owner_recovered"),"owner signup contract: signup/recovery audit events missing");
+must(files["public/index.html"].includes('id="signupForm"'),"owner signup contract: signup form missing");
+must(files["public/index.html"].includes("Create / recover owner account"),"owner signup contract: login-to-signup action missing");
 must(server.includes('app.delete("/api/users/:userId"'),"user contract: DELETE /api/users/:userId missing");
 must(!server.includes('app.get("/api/dealer-network"'),"user contract: dealer network route must not be active");
 must(!server.includes('app.post("/api/dealer-context"'),"user contract: dealer context switching must not be active");
