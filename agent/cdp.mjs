@@ -16,6 +16,10 @@ class CdpConnection{
       this.socket.addEventListener("open",resolve,{once:true});
       this.socket.addEventListener("error",()=>reject(new Error("Chrome DevTools connection failed")),{once:true});
     });
+    // A socket may fail before the first command awaits readiness. Mark that
+    // rejection handled immediately so a transient Chrome restart cannot
+    // terminate the entire hosted worker process.
+    this.ready.catch(()=>{});
     this.socket.addEventListener("message",event=>{
       let message;try{message=JSON.parse(String(event.data))}catch{return}
       if(!message.id)return;const entry=this.pending.get(message.id);if(!entry)return;
