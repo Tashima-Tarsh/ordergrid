@@ -46,3 +46,19 @@ body.issuer-connect-open{overflow:hidden}
 .issuer-bank-shortcuts strong{font-size:12px}
 .issuer-bank-shortcuts span{font-size:10px;color:#64748b}
 @media(max-width:700px){.issuer-bank-shortcuts{grid-template-columns:1fr}}
+
+.interactive-card-showcase{display:flex;justify-content:center;align-items:center;padding:12px 0 20px}
+.live-credit-card{width:min(380px,100%);height:210px;border-radius:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 40%,#0369a1 100%);box-shadow:0 20px 40px -10px rgba(3,105,161,.45),0 0 0 1px rgba(255,255,255,.15) inset;padding:22px;color:#fff;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;transition:transform .3s ease,box-shadow .3s ease}
+.live-credit-card:hover{transform:translateY(-2px);box-shadow:0 24px 48px -10px rgba(3,105,161,.55)}
+.live-credit-card .card-top{display:flex;justify-content:space-between;align-items:center}
+.live-credit-card .card-chip{width:42px;height:30px;border-radius:6px;background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);box-shadow:0 2px 4px rgba(0,0,0,.2) inset}
+.live-credit-card .card-bank-name{font-size:13px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,.9)}
+.live-credit-card .card-number-display{font-family:'Courier New',Courier,monospace;font-size:19px;font-weight:700;letter-spacing:3px;color:#f8fafc;text-shadow:0 2px 4px rgba(0,0,0,.5);margin:8px 0}
+.live-credit-card .card-bottom{display:flex;justify-content:space-between;align-items:flex-end}
+.live-credit-card .card-holder-info small,.live-credit-card .card-expiry-info small{display:block;font-size:9px;letter-spacing:1px;color:rgba(255,255,255,.6)}
+.live-credit-card .card-holder-info strong,.live-credit-card .card-expiry-info strong{display:block;font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#fff}
+.live-credit-card .card-network-logo{font-size:16px;font-weight:900;letter-spacing:1.5px;font-style:italic;color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,.5)}
+.card-setup-tabs{display:flex;gap:10px;margin:12px 0 16px;border-bottom:1px solid #e2e8f0;padding-bottom:10px}
+.card-setup-tabs .tab-btn{padding:8px 16px;border-radius:8px;border:1px solid #dce6ef;background:#f8fafc;font-weight:700;font-size:13px;color:#475569;cursor:pointer;transition:all .2s}
+.card-setup-tabs .tab-btn.active{background:#0284c7;color:#fff;border-color:#0284c7;box-shadow:0 4px 12px rgba(2,132,199,.25)}
+

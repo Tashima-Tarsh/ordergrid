@@ -16,7 +16,7 @@ import { decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } fro
 import { createOrderQueue } from "./queue.js";
 import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
-import { disconnectTenantIssuer, loadTenantIssuer, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
+import { disconnectTenantIssuer, loadTenantIssuer, saveDirectCardConnection, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
 import { ensureBasketVirtualCard } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
@@ -2636,8 +2636,23 @@ app.post("/api/cards/provider/connect",async(req,reply)=>{
     if(Boolean(value.controlCardPath)!==Boolean(value.controlCardTemplate))ctx.addIssue({code:"custom",message:"Control API path and template must be supplied together"});
     if(Boolean(value.loadCardPath)!==Boolean(value.loadCardTemplate))ctx.addIssue({code:"custom",message:"Limit/load API path and template must be supplied together"});
   });
-  const body=z.union([enKash,generic]).parse(req.body);
+  const directCard=z.object({
+    provider:z.literal("direct_card"),...common,
+    fundingCardholderName:z.string().trim().min(2).max(120),
+    fundingCardLast4:z.string().regex(/^\d{4}$/),
+    fundingCardExpiryMonth:z.number().int().min(1).max(12),
+    fundingCardExpiryYear:z.number().int().min(2024).max(2100)
+  });
+  const body=z.union([enKash,generic,directCard]).parse(req.body);
   try{
+    if(body.provider==="direct_card"){
+      const saved=await saveDirectCardConnection(db,config,{
+        tenantId:p.tenantId,userId:p.id,
+        metadata:{bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardholderName:body.fundingCardholderName,fundingCardLast4:body.fundingCardLast4,fundingCardExpiryMonth:body.fundingCardExpiryMonth,fundingCardExpiryYear:body.fundingCardExpiryYear}
+      });
+      await audit(db,p.tenantId,p.id,"issuer.connected","issuer_connection",saved.connectionId,{provider:"direct_card",bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardLast4:body.fundingCardLast4});
+      return {provider:"direct_card",configured:true,source:"tenant",connectionId:saved.connectionId,bankName:body.bankName,programmeName:body.programmeName,cardNetwork:body.cardNetwork,fundingCardholderName:body.fundingCardholderName,fundingCardLast4:body.fundingCardLast4,fundingCardExpiryMonth:body.fundingCardExpiryMonth,fundingCardExpiryYear:body.fundingCardExpiryYear,capabilities:saved.capabilities};
+    }
     if(body.provider==="enkash"){
       const saved=await testAndSaveEnKashConnection(db,config,{
         tenantId:p.tenantId,userId:p.id,

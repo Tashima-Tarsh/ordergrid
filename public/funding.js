@@ -177,10 +177,59 @@
       }
     }).catch(error=>console.error(error));
   }
-  $('#connectIssuer')?.addEventListener('click',()=>openIssuerConnector());
-  $('#openFundingSetupFromCard')?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openIssuerConnector()});
-  $('#fundingSourceCard')?.addEventListener('click',event=>{if(event.target.closest('#openFundingSetupFromCard'))return;openIssuerConnector()});
-  $('#fundingSourceCard')?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openIssuerConnector()}});
+  function updateCardPreview(){
+    const name=$('#cardholderInput')?.value||'NAME ON CARD';
+    const last4=$('#last4Input')?.value||'1234';
+    const rawMm=String($('#expiryMonthInput')?.value||'').trim();
+    const rawYy=String($('#expiryYearInput')?.value||'').trim();
+    const mm=rawMm?rawMm.padStart(2,'0'):'MM';
+    const yy=rawYy?rawYy.slice(-2):'YY';
+    const bank=$('#issuerBankName')?.value||'CORPORATE CARD';
+    const network=$('#issuerCardNetwork')?.value||'VISA';
+
+    if($('#previewCardholder'))$('#previewCardholder').textContent=name.toUpperCase();
+    if($('#previewCardNumber'))$('#previewCardNumber').textContent=`•••• •••• •••• ${last4}`;
+    if($('#previewExpiry'))$('#previewExpiry').textContent=`${mm}/${yy}`;
+    if($('#previewBankName'))$('#previewBankName').textContent=bank.toUpperCase();
+    if($('#previewNetwork'))$('#previewNetwork').textContent=network;
+  }
+
+  ['cardholderInput','last4Input','expiryMonthInput','expiryYearInput','issuerBankName','issuerCardNetwork'].forEach(id=>{
+    $('#'+id)?.addEventListener('input',updateCardPreview);
+    $('#'+id)?.addEventListener('change',updateCardPreview);
+  });
+
+  $('#tabDirectCard')?.addEventListener('click',()=>{
+    $('#tabDirectCard').classList.add('active');
+    $('#tabBankApi')?.classList.remove('active');
+    $('#issuerProvider').value='direct_card';
+    if($('#bankApiFields'))$('#bankApiFields').hidden=true;
+    if($('#bankProfileNote'))$('#bankProfileNote').hidden=true;
+    const shortcuts=$('.issuer-bank-shortcuts');if(shortcuts)shortcuts.hidden=true;
+    if($('#issuerBankName'))$('#issuerBankName').value='Corporate Card';
+    if($('#saveIssuer'))$('#saveIssuer').textContent='Save & connect card';
+    updateCardPreview();
+  });
+
+  $('#tabBankApi')?.addEventListener('click',()=>{
+    $('#tabBankApi').classList.add('active');
+    $('#tabDirectCard')?.classList.remove('active');
+    if($('#issuerProvider').value==='direct_card')$('#issuerProvider').value='hdfc';
+    if($('#bankApiFields'))$('#bankApiFields').hidden=false;
+    if($('#bankProfileNote'))$('#bankProfileNote').hidden=false;
+    const shortcuts=$('.issuer-bank-shortcuts');if(shortcuts)shortcuts.hidden=false;
+    syncBankConnector();
+    if($('#saveIssuer'))$('#saveIssuer').textContent='Test & connect';
+    updateCardPreview();
+  });
+
+  $('#connectIssuer')?.addEventListener('click',()=>{
+    openIssuerConnector();
+    updateCardPreview();
+  });
+  $('#openFundingSetupFromCard')?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openIssuerConnector();updateCardPreview();});
+  $('#fundingSourceCard')?.addEventListener('click',event=>{if(event.target.closest('#openFundingSetupFromCard'))return;openIssuerConnector();updateCardPreview();});
+  $('#fundingSourceCard')?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openIssuerConnector();updateCardPreview();}});
   document.querySelectorAll('[data-bank-shortcut]').forEach(button=>button.addEventListener('click',event=>{
     event.preventDefault();
     const code=button.dataset.bankShortcut;
@@ -188,6 +237,7 @@
     $('#issuerProvider').value=code;
     syncBankConnector();
     $('#issuerBankName')?.focus();
+    updateCardPreview();
   }));
   $('#closeIssuer')?.addEventListener('click',closeIssuerConnector);
   $('#cancelIssuer')?.addEventListener('click',closeIssuerConnector);
@@ -203,16 +253,24 @@
       const month=String(form.get('fundingCardExpiryMonth')||'').trim(),year=String(form.get('fundingCardExpiryYear')||'').trim();
       const common={
         provider:providerCode,
-        bankName:String(form.get('bankName')),
-        programmeName:String(form.get('programmeName')),
-        cardNetwork:String(form.get('cardNetwork')),
+        bankName:String(form.get('bankName')||'Corporate Card'),
+        programmeName:String(form.get('programmeName')||'Procurement Card Programme'),
+        cardNetwork:String(form.get('cardNetwork')||'VISA'),
         fundingCardholderName:optional('fundingCardholderName'),
         fundingCardLast4:optional('fundingCardLast4'),
         fundingCardExpiryMonth:month?Number(month):undefined,
         fundingCardExpiryYear:year?Number(year):undefined
       };
       let payload;
-      if(providerCode==='enkash'){
+      if(providerCode==='direct_card'){
+        payload={...common,
+          provider:'direct_card',
+          fundingCardholderName:String(form.get('fundingCardholderName')||'Corporate Cardholder'),
+          fundingCardLast4:String(form.get('fundingCardLast4')||'8888'),
+          fundingCardExpiryMonth:month?Number(month):12,
+          fundingCardExpiryYear:year?Number(year):2028
+        };
+      }else if(providerCode==='enkash'){
         payload={...common,
           baseUrl:String(form.get('baseUrl')),tokenUrl:String(form.get('tokenUrl')),partnerId:String(form.get('partnerId')),
           basicAuth:String(form.get('basicAuth')),username:String(form.get('username')),password:String(form.get('password')),
@@ -220,32 +278,32 @@
         };
       }else{
         payload={...common,
-          integrationMode:String(form.get('integrationMode')),
-          baseUrl:String(form.get('bankBaseUrl')),
-          authMode:String(form.get('authMode')),
+          integrationMode:String(form.get('integrationMode')||'PARENT_CARD_API'),
+          baseUrl:String(form.get('bankBaseUrl')||'https://api.bank.example'),
+          authMode:String(form.get('authMode')||'BEARER'),
           tokenUrl:optional('bankTokenUrl'),clientId:optional('bankClientId'),clientSecret:optional('bankClientSecret'),
-          bearerToken:optional('bankBearerToken'),username:optional('bankUsername'),password:optional('bankPassword'),
+          bearerToken:optional('bankBearerToken')||'token',username:optional('bankUsername'),password:optional('bankPassword'),
           apiKey:optional('bankApiKey'),apiKeyHeader:optional('bankApiKeyHeader'),
-          parentAccountReference:String(form.get('parentAccountReference')),
-          healthPath:optional('healthPath'),createCardPath:String(form.get('createCardPath')),
+          parentAccountReference:String(form.get('parentAccountReference')||'AAN-001'),
+          healthPath:optional('healthPath'),createCardPath:String(form.get('createCardPath')||'/cards/create'),
           controlCardPath:optional('controlCardPath'),loadCardPath:optional('loadCardPath'),
-          createCardTemplate:String(form.get('createCardTemplate')),
+          createCardTemplate:String(form.get('createCardTemplate')||'{"limit":"{{amountRupees}}"}'),
           controlCardTemplate:optional('controlCardTemplate'),loadCardTemplate:optional('loadCardTemplate'),
-          responseCardIdPath:String(form.get('responseCardIdPath')),
+          responseCardIdPath:String(form.get('responseCardIdPath')||'data.cardId'),
           responseAccountIdPath:optional('responseAccountIdPath'),responseMaskedNumberPath:optional('responseMaskedNumberPath'),
           responseStatusPath:optional('responseStatusPath'),responseBalancePath:optional('responseBalancePath'),
           responseBalanceUnit:String(form.get('responseBalanceUnit')||'MINOR')
         };
       }
       provider=await request('/api/cards/provider/connect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
-      event.currentTarget.reset();closeIssuerConnector();await load();toast('Bank card programme connected');
+      event.currentTarget.reset();closeIssuerConnector();await load();toast('Funding card & virtual card programme connected');
     }catch(error){
       $('#issuerError').textContent=error.message;
       $('#issuerDialog').hidden=false;
       document.body.classList.add('issuer-connect-open');
       $('#issuerError').scrollIntoView({behavior:'smooth',block:'center'});
     }
-    finally{button.disabled=false;button.textContent='Test & connect'}
+    finally{button.disabled=false;button.textContent='Save & connect card'}
   };
   $('#disconnectIssuer').onclick=async()=>{
     if(!confirm('Remove this card programme? Existing card records will remain.'))return;

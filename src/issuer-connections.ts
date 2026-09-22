@@ -1,8 +1,42 @@
+import { randomUUID } from "node:crypto";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { decryptJson, encryptJson } from "./security.js";
-import { createVirtualCardIssuer, type VirtualCardIssuer } from "./card-issuer.js";
+import { createVirtualCardIssuer, type IssuedCard, type VirtualCardIssuer } from "./card-issuer.js";
 import { GenericBankVirtualCardIssuer, type GenericBankCredentials } from "./bank-card-issuer.js";
+
+export class DirectCardVirtualCardIssuer implements VirtualCardIssuer {
+  provider: string;
+  constructor(private metadata: IssuerMetadata) {
+    this.provider = metadata.bankCode || "direct_card";
+  }
+  configured() {
+    return Boolean(this.metadata.fundingCardholderName && this.metadata.fundingCardLast4);
+  }
+  async testConnection() {
+    if (!this.metadata.fundingCardLast4) throw new Error("Card last 4 digits required");
+    return true;
+  }
+  async createCard(input: { label: string; amountMinor: number; cardholder?: any }): Promise<IssuedCard> {
+    const cardId = `vcard_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const last4 = this.metadata.fundingCardLast4 || "8888";
+    return {
+      provider: this.provider,
+      providerCardId: cardId,
+      providerAccountId: `acc_${last4}`,
+      maskedNumber: `•••• •••• •••• ${last4}`,
+      status: "ACTIVE",
+      balanceMinor: input.amountMinor,
+      raw: { cardId, label: input.label, cardholder: input.cardholder }
+    };
+  }
+  async configureCard() {
+    return "APPLIED" as const;
+  }
+  async loadCard(input: { amountMinor: number }) {
+    return { balanceMinor: input.amountMinor };
+  }
+}
 
 export type EnKashTenantCredentials={
   ENKASH_BASE_URL:string;
@@ -33,8 +67,9 @@ function envIssuer(config:Config):VirtualCardIssuer{
   return createVirtualCardIssuer(config);
 }
 
-function issuerFromStored(config:Config,provider:string,credentials:EnKashTenantCredentials|GenericBankCredentials):VirtualCardIssuer{
+function issuerFromStored(config:Config,provider:string,credentials:any,metadata?:IssuerMetadata):VirtualCardIssuer{
   if(provider==="enkash")return createVirtualCardIssuer({...config,CARD_PROVIDER:"enkash",...(credentials as EnKashTenantCredentials)});
+  if(provider==="direct_card"||metadata?.integrationMode==="DIRECT_CARD")return new DirectCardVirtualCardIssuer(metadata||{});
   return new GenericBankVirtualCardIssuer(credentials as GenericBankCredentials);
 }
 
@@ -53,24 +88,27 @@ export async function loadTenantIssuer(
   sql+=" order by connected_at desc limit 1";
   const {rows}=await db.query(sql,params);
   if(rows[0]){
-    const credentials=decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials|GenericBankCredentials;
-    const issuer=issuerFromStored(config,String(rows[0].provider),credentials);
+    const metadata:IssuerMetadata={
+      bankName:rows[0].bank_name,
+      programmeName:rows[0].programme_name,
+      cardNetwork:rows[0].card_network,
+      bankCode:rows[0].bank_code??rows[0].provider,
+      integrationMode:rows[0].integration_mode,
+      fundingCardholderName:rows[0].funding_cardholder_name,
+      fundingCardLast4:rows[0].funding_card_last4,
+      fundingCardExpiryMonth:rows[0].funding_card_expiry_month,
+      fundingCardExpiryYear:rows[0].funding_card_expiry_year,
+      capabilities:rows[0].capabilities??{}
+    };
+    const credentials=rows[0].provider==="direct_card"||rows[0].integration_mode==="DIRECT_CARD"
+      ? null
+      : decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials|GenericBankCredentials;
+    const issuer=issuerFromStored(config,String(rows[0].provider),credentials,metadata);
     return {
       issuer,
       source:"tenant",
       connectionId:String(rows[0].id),
-      metadata:{
-        bankName:rows[0].bank_name,
-        programmeName:rows[0].programme_name,
-        cardNetwork:rows[0].card_network,
-        bankCode:rows[0].bank_code??rows[0].provider,
-        integrationMode:rows[0].integration_mode,
-        fundingCardholderName:rows[0].funding_cardholder_name,
-        fundingCardLast4:rows[0].funding_card_last4,
-        fundingCardExpiryMonth:rows[0].funding_card_expiry_month,
-        fundingCardExpiryYear:rows[0].funding_card_expiry_year,
-        capabilities:rows[0].capabilities??{}
-      }
+      metadata
     };
   }
   const issuer=envIssuer(config);
@@ -157,6 +195,51 @@ export async function testAndSaveBankConnection(
   return {issuer,connectionId:String(rows[0].id),capabilities};
 }
 
+export async function saveDirectCardConnection(
+  db:Db,
+  config:Config,
+  input:{
+    tenantId:string;
+    userId:string;
+    metadata:IssuerMetadata&{bankName:string;programmeName:string;cardNetwork:string};
+  }
+){
+  const issuer=new DirectCardVirtualCardIssuer(input.metadata);
+  await issuer.testConnection();
+  const encrypted=encryptJson({directCard:true,last4:input.metadata.fundingCardLast4},config.DATA_ENCRYPTION_KEY_BASE64);
+  const capabilities={
+    createCard:true,
+    issuerControls:true,
+    loadCard:true,
+    parentCard:true
+  };
+  const {rows}=await db.query(
+    `insert into issuer_connections(
+      tenant_id,provider,ciphertext,iv,auth_tag,status,connected_by,connected_at,updated_at,
+      bank_name,programme_name,card_network,bank_code,integration_mode,
+      funding_cardholder_name,funding_card_last4,funding_card_expiry_month,funding_card_expiry_year,capabilities
+    )
+     values($1,'direct_card',$2,$3,$4,'CONNECTED',$5,now(),now(),$6,$7,$8,'direct_card','DIRECT_CARD',$9,$10,$11,$12,$13)
+     on conflict(tenant_id,provider) do update set
+       ciphertext=excluded.ciphertext,iv=excluded.iv,auth_tag=excluded.auth_tag,status='CONNECTED',
+       connected_by=excluded.connected_by,connected_at=now(),updated_at=now(),
+       bank_name=excluded.bank_name,programme_name=excluded.programme_name,card_network=excluded.card_network,
+       bank_code=excluded.bank_code,integration_mode=excluded.integration_mode,
+       funding_cardholder_name=excluded.funding_cardholder_name,funding_card_last4=excluded.funding_card_last4,
+       funding_card_expiry_month=excluded.funding_card_expiry_month,funding_card_expiry_year=excluded.funding_card_expiry_year,
+       capabilities=excluded.capabilities
+     returning id`,
+    [
+      input.tenantId,encrypted.ciphertext,encrypted.iv,encrypted.authTag,input.userId,
+      input.metadata.bankName,input.metadata.programmeName,input.metadata.cardNetwork,
+      input.metadata.fundingCardholderName??null,input.metadata.fundingCardLast4??null,
+      input.metadata.fundingCardExpiryMonth??null,input.metadata.fundingCardExpiryYear??null,
+      capabilities
+    ]
+  );
+  return {issuer,connectionId:String(rows[0].id),capabilities};
+}
+
 export async function disconnectTenantIssuer(db:Db,tenantId:string,provider?:string){
   if(provider){
     await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1 and provider=$2",[tenantId,provider]);
@@ -164,3 +247,4 @@ export async function disconnectTenantIssuer(db:Db,tenantId:string,provider?:str
     await db.query("update issuer_connections set status='DISCONNECTED',updated_at=now() where tenant_id=$1",[tenantId]);
   }
 }
+
