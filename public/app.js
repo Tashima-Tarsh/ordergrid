@@ -18,6 +18,62 @@ $('#loginForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.cur
 $('#showSignup').onclick=()=>{$('#loginForm').hidden=true;$('#signupForm').hidden=false;$('#signupError').textContent=''};
 $('#showLogin').onclick=()=>{$('#signupForm').hidden=true;$('#loginForm').hidden=false;$('#loginError').textContent=''};
 $('#signupForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),password=String(f.get('password')||''),confirmPassword=String(f.get('confirmPassword')||'');$('#signupError').textContent='';if(password!==confirmPassword){$('#signupError').textContent='Passwords do not match';return}try{await api('/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password,setupCode:f.get('setupCode'),replaceBootstrapOwner:f.get('replaceBootstrapOwner')==='on'})});$('#login').classList.add('hidden');$('#signupForm').hidden=true;$('#loginForm').hidden=false;await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Owner account ready')}catch(err){$('#signupError').textContent=err.message}};
+async function finishSignedIn(message){
+  $('#login').classList.add('hidden');
+  $('#signupForm').hidden=true;
+  $('#loginForm').hidden=false;
+  await refresh();
+  window.dispatchEvent(new Event('ordergrid:auth-ready'));
+  toast(message);
+}
+async function handleGoogleCredential(response){
+  $('#googleLoginError').textContent='';
+  try{
+    await api('/api/login/google',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+        credential:response.credential,
+        setupCode:$('#googleSetupCode')?.value||undefined,
+        replaceBootstrapOwner:Boolean($('#googleReplaceOwner')?.checked)
+      })
+    });
+    await finishSignedIn('Signed in with Google');
+  }catch(err){
+    $('#googleLoginError').textContent=err.message;
+  }
+}
+async function setupGoogleSignIn(){
+  const response=await fetch('/api/auth-config',{headers:{accept:'application/json'}});
+  if(!response.ok)return;
+  const config=await response.json();
+  if(!config.google?.enabled||!config.google.clientId)return;
+  $('#googleAuth').hidden=false;
+  await new Promise((resolve,reject)=>{
+    if(window.google?.accounts?.id)return resolve();
+    const script=document.createElement('script');
+    script.src='https://accounts.google.com/gsi/client';
+    script.async=true;
+    script.defer=true;
+    script.onload=resolve;
+    script.onerror=()=>reject(new Error('Google sign-in could not load'));
+    document.head.appendChild(script);
+  });
+  window.google.accounts.id.initialize({
+    client_id:config.google.clientId,
+    callback:handleGoogleCredential,
+    auto_select:false,
+    cancel_on_tap_outside:true
+  });
+  window.google.accounts.id.renderButton($('#googleSignIn'),{
+    theme:'outline',
+    size:'large',
+    text:'continue_with',
+    shape:'rectangular',
+    width:320
+  });
+}
+setupGoogleSignIn().catch(err=>{if($('#googleLoginError'))$('#googleLoginError').textContent=err.message});
 $('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}$('#login').classList.remove('hidden')};
 $('#newBatch').onclick=openBatch;$('#emptyNew').onclick=openBatch;$('#close').onclick=()=>$('#batchDialog').close();$('#cancel').onclick=()=>$('#batchDialog').close();
 $('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};

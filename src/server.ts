@@ -9,6 +9,7 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { loadConfig } from "./config.js";
 import { audit, createDb } from "./db.js";
 import { decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } from "./security.js";
@@ -27,6 +28,7 @@ import { startManagedExecutionSupervisor } from "./managed-execution.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
+const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 type AutomationPolicy={
   automation_enabled:boolean;
   auto_assign_virtual_card:boolean;
@@ -150,7 +152,14 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
   return {claimed:ids.length,ids};
 }
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","req.headers.x-ordergrid-worker-token","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
-await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],scriptSrc:["'self'"],imgSrc:["'self'","data:"]}}});
+await app.register(helmet,{contentSecurityPolicy:{directives:{
+  defaultSrc:["'self'"],
+  styleSrc:["'self'","'unsafe-inline'"],
+  scriptSrc:["'self'","https://accounts.google.com"],
+  frameSrc:["'self'","https://accounts.google.com"],
+  connectSrc:["'self'","https://accounts.google.com","https://www.googleapis.com"],
+  imgSrc:["'self'","data:","https://lh3.googleusercontent.com"]
+}}});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
@@ -192,7 +201,7 @@ function workerMachineRoute(req:any){
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
 }
 app.addHook("preHandler",async(req,reply)=>{
-  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
+  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/login/google"||req.url==="/api/auth-config"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
     select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
@@ -210,6 +219,10 @@ app.addHook("preHandler",async(req,reply)=>{
 });
 
 app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),queueMode:jobs?"bullmq":"direct"}});
+app.get("/api/auth-config",async()=>({
+  google:{enabled:Boolean(config.GOOGLE_CLIENT_ID),clientId:config.GOOGLE_CLIENT_ID??null},
+  ownerSignupEnabled:Boolean(config.ORDERGRID_SIGNUP_CODE)
+}));
 app.get("/api/worker-bootstrap",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
@@ -376,6 +389,166 @@ app.post("/api/signup",{config:{rateLimit:{max:5,timeWindow:"15 minutes"}}},asyn
   }).catch(()=>{});
   reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
   return reply.code(created?201:200).send({user,workspace,created});
+});
+
+async function verifiedGoogleIdentity(credential:string){
+  if(!config.GOOGLE_CLIENT_ID)throw new Error("google_login_not_configured");
+  const {payload}=await jwtVerify(credential,googleJwks,{
+    audience:config.GOOGLE_CLIENT_ID,
+    issuer:["https://accounts.google.com","accounts.google.com"]
+  });
+  const subject=typeof payload.sub==="string"?payload.sub:"";
+  const email=typeof payload.email==="string"?payload.email.trim().toLowerCase():"";
+  const emailVerified=payload.email_verified===true;
+  const hostedDomain=typeof payload.hd==="string"&&payload.hd.length>0;
+  const googleAuthoritative=email.endsWith("@gmail.com")||(emailVerified&&hostedDomain);
+  if(!subject||!email||!emailVerified)throw new Error("google_identity_invalid");
+  return {subject,email,googleAuthoritative};
+}
+app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  if(!config.GOOGLE_CLIENT_ID)return reply.code(503).send({
+    error:"google_login_not_configured",
+    message:"Google sign-in is not configured on this deployment yet."
+  });
+  const body=z.object({
+    credential:z.string().min(100).max(10000),
+    setupCode:z.string().max(512).optional(),
+    replaceBootstrapOwner:z.boolean().default(true)
+  }).parse(req.body);
+
+  let identity:{subject:string;email:string;googleAuthoritative:boolean};
+  try{identity=await verifiedGoogleIdentity(body.credential)}
+  catch{return reply.code(401).send({error:"google_authentication_failed",message:"Google could not verify this sign-in. Please choose the account again."})}
+
+  const suppliedSetup=Boolean(config.ORDERGRID_SIGNUP_CODE&&body.setupCode&&secretEqual(body.setupCode,config.ORDERGRID_SIGNUP_CODE));
+  const client=await db.connect();
+  let user:any=null,workspace:any=null,created=false,linked=false;
+  try{
+    await client.query("begin");
+    const linkedIdentity=await client.query(
+      `select u.id,u.tenant_id,u.email,u.role::text role,u.active,t.name workspace_name
+       from private.user_external_identities i
+       join users u on u.id=i.user_id
+       join tenants t on t.id=u.tenant_id
+       where i.provider='google' and i.subject=$1
+       limit 1`,
+      [identity.subject]
+    );
+    if(linkedIdentity.rows[0]){
+      if(!linkedIdentity.rows[0].active){
+        await client.query("rollback");
+        return reply.code(403).send({error:"account_disabled",message:"This OrderGrid user is disabled."});
+      }
+      user=linkedIdentity.rows[0];
+      workspace={id:user.tenant_id,name:user.workspace_name};
+      await client.query(
+        "update private.user_external_identities set email_at_link=$1,updated_at=now() where provider='google' and subject=$2",
+        [identity.email,identity.subject]
+      );
+    }else{
+      const existing=await client.query(
+        "select id,tenant_id,email,role::text role,active from users where lower(email::text)=lower($1) limit 1",
+        [identity.email]
+      );
+      if(existing.rows[0]){
+        const priorLink=await client.query(
+          "select subject from private.user_external_identities where provider='google' and user_id=$1 limit 1",
+          [existing.rows[0].id]
+        );
+        if(priorLink.rows[0]&&String(priorLink.rows[0].subject)!==identity.subject){
+          await client.query("rollback");
+          return reply.code(409).send({error:"google_identity_conflict",message:"This OrderGrid user is already linked to another Google account."});
+        }
+        if(!identity.googleAuthoritative&&!suppliedSetup){
+          await client.query("rollback");
+          return reply.code(403).send({error:"google_account_link_requires_setup_code",message:"Enter the owner setup code once to link this non-Gmail Google account."});
+        }
+        if(!existing.rows[0].active&&!suppliedSetup){
+          await client.query("rollback");
+          return reply.code(403).send({error:"account_disabled",message:"This OrderGrid user is disabled. Enter the owner setup code to recover it."});
+        }
+        if(!existing.rows[0].active&&suppliedSetup){
+          const reactivated=await client.query(
+            "update users set active=true,role='OWNER' where id=$1 returning id,tenant_id,email,role::text role,active",
+            [existing.rows[0].id]
+          );
+          user=reactivated.rows[0];
+        }else user=existing.rows[0];
+        await client.query(
+          "insert into private.user_external_identities(provider,subject,user_id,email_at_link) values('google',$1,$2,$3)",
+          [identity.subject,user.id,identity.email]
+        );
+        const tenant=await client.query("select id,name from tenants where id=$1",[user.tenant_id]);
+        workspace=tenant.rows[0];
+        linked=true;
+      }else{
+        if(!suppliedSetup){
+          await client.query("rollback");
+          return reply.code(403).send({
+            error:"google_owner_setup_required",
+            message:"This Google account is not an OrderGrid user yet. Enter the owner setup code under First Google login and try again."
+          });
+        }
+        const bootstrapWorkspace=await client.query(
+          `select t.id,t.name
+           from users u join tenants t on t.id=u.tenant_id
+           where lower(u.email::text)=lower($1)
+           order by u.created_at asc
+           limit 1`,
+          [config.BOOTSTRAP_ADMIN_EMAIL]
+        );
+        if(bootstrapWorkspace.rows[0])workspace=bootstrapWorkspace.rows[0];
+        else{
+          const createdWorkspace=await client.query("insert into tenants(name) values('OrderGrid') returning id,name");
+          workspace=createdWorkspace.rows[0];
+        }
+        const passwordHash=await hashPassword(randomBytes(48).toString("base64url"));
+        const inserted=await client.query(
+          "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,tenant_id,email,role::text role,active",
+          [workspace.id,identity.email,passwordHash]
+        );
+        user=inserted.rows[0];
+        await client.query(
+          "insert into private.user_external_identities(provider,subject,user_id,email_at_link) values('google',$1,$2,$3)",
+          [identity.subject,user.id,identity.email]
+        );
+        if(body.replaceBootstrapOwner&&identity.email!==config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase()){
+          await client.query(
+            "delete from sessions where user_id in (select id from users where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3)",
+            [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+          );
+          await client.query(
+            "update users set active=false where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3",
+            [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+          );
+        }
+        created=true;
+      }
+    }
+
+    const token=randomBytes(32).toString("base64url");
+    await client.query(
+      "insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",
+      [tokenHash(token),user.id,user.tenant_id]
+    );
+    await client.query("commit");
+    reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
+  }catch(error){
+    await client.query("rollback").catch(()=>{});
+    throw error;
+  }finally{client.release()}
+
+  await audit(db,user.tenant_id,user.id,created?"user.google_owner_signup":linked?"user.google_linked":"user.google_login","user",user.id,{
+    googleSubject:identity.subject,
+    created,
+    linked
+  }).catch(()=>{});
+  return reply.code(created?201:200).send({
+    user:{id:user.id,email:user.email,role:user.role},
+    workspace,
+    created,
+    linked
+  });
 });
 
 app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
