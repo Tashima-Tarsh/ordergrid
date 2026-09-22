@@ -240,11 +240,13 @@ function retailerAuthScript(credentials){
     const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,50000);
     const setValue=(el,value)=>{
       if(!el)return;
+      try{el.focus();}catch{}
       const tracker=el._valueTracker;
       if(tracker)tracker.setValue('');
       const descriptor=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
       if(descriptor?.set)descriptor.set.call(el,value);
       else el.value=value;
+      try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:value,inputType:'insertText'}));}catch{}
       el.dispatchEvent(new Event('input',{bubbles:true}));
       el.dispatchEvent(new Event('change',{bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
@@ -253,9 +255,12 @@ function retailerAuthScript(credentials){
     const clickElement=(el)=>{
       if(!el)return;
       try{el.disabled=false;el.removeAttribute('disabled');}catch{}
-      el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
-      el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));
-      el.click();
+      try{el.focus();}catch{}
+      el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+      el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
+      try{el.click();}catch{}
     };
     const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
@@ -263,8 +268,8 @@ function retailerAuthScript(credentials){
     // Check if OTP input fields are already active on screen (e.g. multi-box or single otp input)
     const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
     const singleOtp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
-    const otpSentText=/(please enter the otp|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit)/i.test(text);
-    if(digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile)/i.test(text))){
+    const otpSentText=/(please enter the otp|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit|verification code we)/i.test(text);
+    if(digitInputs.length>=4||singleOtp||(otpSentText&&!/enter your (phone|mobile|email)/i.test(text))){
       return {acted:false,challenge:'OTP_REQUIRED'};
     }
 
@@ -275,25 +280,29 @@ function retailerAuthScript(credentials){
     const nonSearchText=inputs.filter(x=>{
       const type=String(x.type||'text').toLowerCase(),meta=fieldMeta(x),role=String(x.getAttribute('role')||'');
       if(x===password||digitInputs.includes(x)||singleOtp)return false;
+      if(x.name==='q'||x.closest('form')?.classList.contains('header-form-search')||/search|find products|products brands and more/i.test(meta)||role==='searchbox')return false;
       if(!['text','email','tel','number'].includes(type))return false;
-      if(/search|find products|products brands and more/i.test(meta)||role==='searchbox')return false;
       return true;
     });
     const isEmail=String(credentials.login||'').includes('@');
     if(isEmail){
-      const useEmail=controls.find(x=>/(use email|email-id|use email-id)/i.test(label(x)));
+      const leafElements=[...document.querySelectorAll('*')].filter(s=>/use email/i.test(s.innerText||'')&&s.children.length===0);
+      const useEmail=leafElements[0]||controls.find(x=>/(use email|email-id|use email-id)/i.test(label(x)));
       if(useEmail){
         clickElement(useEmail);
         return {acted:true,action:'LOGIN_SURFACE_OPENED'};
       }
     }else{
-      const usePhone=controls.find(x=>/(use phone|phone number|use mobile)/i.test(label(x)));
+      const leafElements=[...document.querySelectorAll('*')].filter(s=>/use phone|phone number|use mobile/i.test(s.innerText||'')&&s.children.length===0);
+      const usePhone=leafElements[0]||controls.find(x=>/(use phone|phone number|use mobile)/i.test(label(x)));
       if(usePhone){
         clickElement(usePhone);
         return {acted:true,action:'LOGIN_SURFACE_OPENED'};
       }
     }
-    let user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(fieldMeta(x)))||inputs.find(x=>x.type==='tel');
+    let user=nonSearchText.find(x=>isEmail?x.type==='email':(x.type==='tel'||x.type==='number'))
+      ||nonSearchText.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(fieldMeta(x)))
+      ||nonSearchText[0]||null;
     if(!user){
       user=nonSearchText.find(x=>{
         let node=x;
