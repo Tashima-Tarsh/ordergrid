@@ -672,19 +672,31 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   if(!url)return {status:"ERROR",code:"SESSION_CHECK_UNSUPPORTED",message:"Session preparation is currently available for Amazon India and Flipkart."};
   const host=retailerHost(retailer);
   const existing=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
-  const target=existing.find(t=>/(account\/orders|order-history|login|signin|verify|otp)/i.test(String(t.url||"")))||existing[0]||await createTarget(port,url);
-  const connection=new CdpConnection(target.webSocketDebuggerUrl);
-  try{
+  let target=existing.find(t=>/(account\/orders|order-history|login|signin|verify|otp)/i.test(String(t.url||"")))||existing[0]||await createTarget(port,url);
+  let connection=new CdpConnection(target.webSocketDebuggerUrl);
+  const primeConnection=async()=>{
     await connection.send("Page.enable");
     await connection.send("Page.bringToFront").catch(()=>null);
     await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
+  };
+  const resetFlipkartToStorefront=async()=>{
+    const previousTarget=target,previousConnection=connection;
+    previousConnection.close();
+    await closeTarget(port,previousTarget).catch(()=>null);
+    target=await createTarget(port,flipkartLoginUrl);
+    connection=new CdpConnection(target.webSocketDebuggerUrl);
+    await primeConnection();
+  };
+  try{
+    if(retailer==="flipkart"&&/\/login(?:[/?#]|$)|\/account\/login(?:[/?#]|$)/i.test(String(target.url||"")))await resetFlipkartToStorefront();
+    else await primeConnection();
     for(let round=0;round<6;round++){
       await waitReady(connection);await sleep(round?1100:1600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
       if(acted?.acted){await sleep(1500);continue}
       if(acted?.challenge){
         if(retailer==="flipkart"&&acted.challenge==="LOGIN_REQUIRED"&&round<5){
-          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await resetFlipkartToStorefront();
           await sleep(1200);
           continue;
         }
@@ -693,7 +705,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){
         if(retailer==="flipkart"&&challenge.code==="LOGIN_REQUIRED"&&round<5){
-          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await resetFlipkartToStorefront();
           await sleep(1200);
           continue;
         }
@@ -703,11 +715,19 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href)){
         if(retailer==="flipkart"&&round<5){
-          await connection.send("Page.navigate",{url:flipkartLoginUrl});
+          await resetFlipkartToStorefront();
           await sleep(1500);
           continue;
         }
         return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href};
+      }
+      if(retailer==="flipkart"&&/^https:\/\/(?:www\.)?flipkart\.com\/?(?:[?#].*)?$/i.test(href)){
+        if(round<5){
+          await connection.send("Page.navigate",{url});
+          await sleep(1500);
+          continue;
+        }
+        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart did not expose its sign-in surface in the cloud browser.",url:href};
       }
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
     }
