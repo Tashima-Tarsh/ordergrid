@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +22,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Build Cloudflare Container image
+        run: docker build --file Dockerfile.cloudflare --tag ordergrid-cloudflare-ci .
       - name: Frontend/card connector contract smoke test
         run: npm run smoke:frontend
       - name: End-to-end showroom checkout smoke test
