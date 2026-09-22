@@ -48,9 +48,11 @@ must(!retailerUi.includes("Flipkart password <small>"),"managed execution contra
 must(files["public/rewards.js"].includes("value===30?30:15"),"managed execution contract: Flipkart session target must default to 15 days and allow 30 days");
 must(retailerUi.includes('id="sessionTargetDays"'),"managed execution contract: Flipkart session target selector missing");
 must(server.includes("const credentials:{login:string;password?:string}"),"managed execution contract: OTP-only Flipkart login identity missing");
-must(!retailerUi.includes("Install Secure Browser"),"managed execution contract: customer installer must be removed");
-must(!retailerUi.includes("Install / start worker"),"managed execution contract: worker install jargon remains");
-must(!retailerUi.includes("start the secure browser worker"),"managed execution contract: worker startup instruction remains");
+must(retailerUi.includes("Install / start Secure Browser"),"local execution contract: customer Secure Browser setup action missing");
+must(retailerUi.includes("/api/secure-browser/setup.cmd"),"local execution contract: Secure Browser setup download is not wired");
+must(retailerUi.includes("SECURE BROWSER OFFLINE"),"local execution contract: offline Secure Browser state missing");
+must(!retailerUi.includes("SECURE BROWSER STARTING"),"local execution contract: offline worker must not be presented as starting");
+must(!retailerUi.includes("Install / start worker"),"managed execution contract: developer worker jargon remains");
 must(!retailerUi.includes("Start the OrderGrid secure browser worker first"),"managed execution contract: developer-only worker error remains");
 
 console.log("User-only workspace contract OK");
