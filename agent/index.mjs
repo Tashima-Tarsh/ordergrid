@@ -121,6 +121,15 @@ async function main(){
 
   await heartbeat(workerId);
   output.write(`Worker online · ${workerId} · ${parallel} parallel checkout profiles · ${productCheckState.current} parallel Flipkart product checks (adaptive, max ${productCheckState.max})\n`);
+  // Keep worker liveness independent from long-running browser automation.
+  // Flipkart page loads and security challenges can take longer than the
+  // server's 30-second worker-online window.
+  const heartbeatTimer=setInterval(()=>{
+    void heartbeat(workerId).catch(error=>{
+      output.write(`Worker heartbeat failed: ${String(error.message||error).slice(0,180)}\n`);
+    });
+  },10_000);
+  heartbeatTimer.unref?.();
 
   while(true){
     try{
@@ -317,6 +326,7 @@ async function main(){
     if(!daemon)break;
     await sleep(3000);
   }
+  clearInterval(heartbeatTimer);
 }
 
 try{await main()}catch(error){output.write(`\nWorker stopped: ${error.message}\n`);process.exitCode=1}finally{cookie="";rl.close()}
