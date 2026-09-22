@@ -776,14 +776,14 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const port=await ensureChrome(chrome,directory);
   const flipkartLoginUrl="https://www.flipkart.com/";
   const url=retailer==="flipkart"
-    ?"https://www.flipkart.com/account/orders"
+    ?"https://www.flipkart.com/account/login?ret=/"
     :retailer==="amazon-in"
       ?"https://www.amazon.in/gp/your-account/order-history"
       :null;
   if(!url)return {status:"ERROR",code:"SESSION_CHECK_UNSUPPORTED",message:"Session preparation is currently available for Amazon India and Flipkart."};
   const host=retailerHost(retailer);
   const existing=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
-  let target=existing.find(t=>/(account\/orders|order-history|login|signin|verify|otp)/i.test(String(t.url||"")))||existing[0]||await createTarget(port,url);
+  let target=existing.find(t=>/(account\/login|login|signin|account\/orders|order-history|verify|otp)/i.test(String(t.url||"")))||await createTarget(port,url);
   let connection=new CdpConnection(target.webSocketDebuggerUrl);
   const stealthScript=`
     try {
@@ -796,6 +796,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const primeConnection=async()=>{
     await connection.send("Page.enable");
     await connection.send("Network.enable").catch(()=>null);
+    await connection.send("Emulation.setDeviceMetricsOverride",{width:1280,height:800,deviceScaleFactor:1,mobile:false}).catch(()=>null);
     await connection.send("Network.setUserAgentOverride",{
       userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       acceptLanguage:"en-IN,en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7",
@@ -808,12 +809,18 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   const captureScreen=async()=>{
     try{
-      const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:65});
+      await sleep(400);
+      const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:75});
       return shot?.data?`data:image/jpeg;base64,${shot.data}`:null;
     }catch{return null}
   };
   try{
     await primeConnection();
+    const currentUrl=String(target.url||"");
+    if(!currentUrl||currentUrl==="about:blank"||!currentUrl.includes("flipkart.com")){
+      await connection.send("Page.navigate",{url});
+      await sleep(2200);
+    }
     const resetFlipkartToStorefront=async()=>{
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
       await sleep(1500);
