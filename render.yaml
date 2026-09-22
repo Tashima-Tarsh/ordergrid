@@ -23,7 +23,7 @@ services:
       - key: WORKER_API_TOKEN
         sync: false
       - key: ORDERGRID_MANAGED_EXECUTION
-        value: "false"
+        value: "true"
       - key: ORDERGRID_MANAGED_PARALLEL
         value: "2"
       - key: ORDERGRID_MANAGED_BASKETS
