@@ -31,6 +31,16 @@ must(server.includes("ORDERGRID_SIGNUP_CODE"),"owner signup contract: setup code
 must(server.includes("user.owner_signup")&&server.includes("user.owner_recovered"),"owner signup contract: signup/recovery audit events missing");
 must(files["public/index.html"].includes('id="signupForm"'),"owner signup contract: signup form missing");
 must(files["public/index.html"].includes("Create / recover owner account"),"owner signup contract: login-to-signup action missing");
+must(server.includes('app.get("/api/auth/google/config"'),"google auth contract: public config route missing");
+must(server.includes('app.post("/api/auth/google"'),"google auth contract: sign-in route missing");
+must(server.includes("createRemoteJWKSet")&&server.includes("jwtVerify"),"google auth contract: server-side ID token verification missing");
+must(server.includes('audience:config.GOOGLE_CLIENT_ID'),"google auth contract: OAuth audience verification missing");
+must(server.includes('issuer:["https://accounts.google.com","accounts.google.com"]'),"google auth contract: Google issuer verification missing");
+must(server.includes("claims.email_verified!==true"),"google auth contract: verified-email enforcement missing");
+must(server.includes("auth_identities"),"google auth contract: stable provider identity binding missing");
+must(files["public/index.html"].includes('id="googleLoginButton"'),"google auth contract: login button container missing");
+must(files["public/index.html"].includes('id="googleSignupButton"'),"google auth contract: owner Google signup button missing");
+must(files["public/app.js"].includes("https://accounts.google.com/gsi/client"),"google auth contract: GIS client loader missing");
 must(server.includes('app.get("/api/auth-config"'),"google auth contract: public auth config route missing");
 must(server.includes('app.post("/api/login/google"'),"google auth contract: Google login route missing");
 must(server.includes("createRemoteJWKSet")&&server.includes("jwtVerify"),"google auth contract: Google ID tokens must be cryptographically verified");
