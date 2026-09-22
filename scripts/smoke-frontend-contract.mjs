@@ -242,8 +242,8 @@ must(cdp.includes("LOGIN_IDENTIFIER_ENTERED"),"retailer session contract: Flipka
 must(cdp.includes('[role="button"]'),"retailer session contract: Flipkart role-button login controls must be supported");
 must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart text login field fallback missing");
 must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
-must(cdp.includes("account/login?ret=%2Faccount%2Forders"),"retailer session contract: Flipkart LOGIN_REQUIRED must use the direct OTP login page");
-must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
+must(cdp.includes('const flipkartLoginUrl="https://www.flipkart.com/"'),"retailer session contract: Flipkart LOGIN_REQUIRED must use the storefront login surface");
+must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");\nmust(cdp.includes('if(retailer==="flipkart"&&round<5)'),"retailer session contract: Flipkart login-page fallback must return to storefront");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
