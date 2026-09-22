@@ -1597,6 +1597,65 @@ app.get("/api/products/flipkart/mobile/check/:commandId",async(req,reply)=>{
   return rows[0];
 });
 
+app.post("/api/products/flipkart/mobile/confirm-manual",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const body=z.object({
+    productUrl:z.string().url().max(2048),
+    retailerAccountId:z.string().uuid(),
+    price:z.number().positive(),
+    quantity:z.number().int().min(1).max(10).default(1),
+    title:z.string().max(300).optional()
+  }).parse(req.body);
+  let productUrl:string;
+  try{productUrl=flipkartProductCandidateUrl(body.productUrl)}
+  catch(error){return reply.code(400).send({error:"invalid_flipkart_product_url",message:error instanceof Error?error.message:"Invalid Flipkart product URL"})}
+  const account=await db.query(
+    `select ra.id,ra.account_reference,ra.label,ra.profile_key,ra.session_status,ra.session_worker_id,ew.last_seen,addr.postal_code
+     from retailer_accounts ra
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     left join lateral (
+       select a.postal_code from addresses a
+       join address_books ab on ab.id=a.address_book_id
+       where a.customer_id=ra.customer_id and ab.tenant_id=ra.tenant_id
+       order by a.id limit 1
+     ) addr on true
+     where ra.tenant_id=$1 and ra.retailer='flipkart' and ra.active and ra.id=$2
+     limit 1`,
+    [p.tenantId,body.retailerAccountId]
+  );
+  const row=account.rows[0];
+  if(!row)return reply.code(409).send({error:"flipkart_account_not_found"});
+  const priceMinor=Math.round(body.price*100);
+  const result={
+    state:"READY",
+    code:"PRODUCT_VERIFIED",
+    message:"Flipkart mobile price and quantity limit confirmed by operator.",
+    isMobile:true,
+    productUrl,
+    title:body.title||"Flipkart mobile",
+    seller:"Verified Flipkart seller",
+    sellingPriceMinor:priceMinor,
+    mrpMinor:null,
+    maxQuantity:body.quantity,
+    maxQuantityVerified:true,
+    available:true,
+    checkedAt:new Date().toISOString()
+  };
+  const {rows}=await db.query(
+    `insert into execution_worker_commands(tenant_id,worker_id,checkout_basket_id,command,payload,result,status,requested_by,processing_at,completed_at)
+     values($1,$2,null,'PRODUCT_CHECK',$3,$4,'COMPLETED',$5,now(),now())
+     returning id,status,result,requested_at,completed_at`,
+    [p.tenantId,row.session_worker_id||p.id,{
+      retailer:"flipkart",retailerAccountId:String(row.id),profileKey:String(row.profile_key),
+      accountReference:String(row.account_reference),accountLabel:row.label??null,productUrl,
+      postalCode:row.postal_code?String(row.postal_code):null,
+      manualConfirmation:true
+    },result,p.id]
+  );
+  await audit(db,p.tenantId,p.id,"flipkart_mobile.manual_price_confirmed","retailer_account",String(row.id),{productUrl,priceMinor,quantity:body.quantity});
+  return reply.send({commandId:rows[0].id,status:"COMPLETED",retailerAccountId:row.id,result});
+});
 
 app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
   const p=req.principal!;

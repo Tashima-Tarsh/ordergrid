@@ -108,21 +108,41 @@
     }
     throw new Error('Flipkart product check timed out. Keep the native OrderGrid worker online and try again.');
   }
+  function renderManualConfirmBox(row,message,title){
+    const result=row.querySelector('.product-check-result');
+    if(result){
+      result.innerHTML=
+        '<div style="grid-column:1/-1;padding:12px;background:#fff;border:1px solid #fed7aa;border-radius:8px">'+
+        '<div style="font-weight:600;color:#9a3412;margin-bottom:4px">'+esc(message||'Live check requires price confirmation')+'</div>'+
+        (title?'<div style="font-size:12px;color:#334155;margin-bottom:8px">'+esc(title)+'</div>':'')+
+        '<div style="font-size:11px;color:#64748b;margin-bottom:8px">Flipkart requires location selection or alternate seller. Enter the verified product price to proceed:</div>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+        '<input name="manualPriceInput" type="number" step="0.01" min="1" placeholder="Price (₹), e.g. 54999" style="max-width:180px;padding:8px;border:1px solid #cbd5e1;border-radius:6px">'+
+        '<button type="button" class="secondary" data-confirm-manual-price style="padding:8px 14px;background:#0f172a;color:#fff;border-radius:6px">Confirm & Continue</button>'+
+        '</div></div>';
+    }
+  }
   function renderVerified(row,command){
     const r=command.result||{},state=row.querySelector('.product-check-state'),result=row.querySelector('.product-check-result');
-    if(command.status==='FAILED')throw new Error(command.error||'Native product check failed');
+    if(command.status==='FAILED'){
+      renderManualConfirmBox(row,command.error||'Native product check failed',r.title);
+      throw new Error(command.error||'Native product check failed');
+    }
     if(r.state!=='READY'){
       row.dataset.productVerified='false';
       if(state){state.textContent=String(r.state||'REVIEW REQUIRED').replaceAll('_',' ');state.className='product-check-state attention'}
-      if(result)result.innerHTML='<strong>'+esc(r.message||'Flipkart verification is incomplete.')+'</strong>'+(r.title?'<span>'+esc(r.title)+'</span>':'');
+      renderManualConfirmBox(row,r.message||'Flipkart verification is incomplete.',r.title);
       throw new Error(r.message||'Flipkart product check requires review');
     }
     const max=Number(r.maxQuantity||0),priceMinor=Number(r.sellingPriceMinor||0);
-    if(!r.isMobile||!r.maxQuantityVerified||max<1||priceMinor<1)throw new Error('Flipkart did not return a complete mobile/price/quantity verification');
+    if(!r.isMobile||!r.maxQuantityVerified||max<1||priceMinor<1){
+      renderManualConfirmBox(row,'Incomplete Flipkart price/quantity verification.',r.title);
+      throw new Error('Flipkart did not return a complete mobile/price/quantity verification');
+    }
     row.dataset.productVerified='true';
     row.dataset.productTitle=String(r.title||'Flipkart mobile');
     row.dataset.maxQuantity=String(max);
-    row.querySelector('[name="productCheckId"]').value=command.id;
+    row.querySelector('[name="productCheckId"]').value=command.id||command.commandId||'';
     row.querySelector('[name="price"]').value=(priceMinor/100).toFixed(2);
     const qty=row.querySelector('[name="quantity"]');qty.max=String(max);if(Number(qty.value)>max||Number(qty.value)<1)qty.value=String(Math.min(max,1));
     const note=row.querySelector('.verified-quantity-note');if(note)note.textContent='Verified maximum for this saved Flipkart account: '+max;
@@ -220,6 +240,7 @@
             const reason=plan.eligibleAccounts
               ?'Only '+plan.verifiedCapacity+' units could be verified across '+plan.eligibleAccounts+' eligible accounts.'
               :'No session-ready, worker-online Flipkart accounts with bound delivery addresses are available.';
+            renderManualConfirmBox(row,reason,row.dataset.productTitle);
             throw new Error(reason);
           }
           const started=await Promise.allSettled(next.map(account=>request('/api/products/flipkart/mobile/check',{
@@ -243,6 +264,29 @@
   productRows.addEventListener('click',async event=>{
     const remove=event.target.closest('[data-remove-product]');
     if(remove){remove.closest('.product-entry').remove();normalizeRemoveButtons();return}
+    const manualConfirmBtn=event.target.closest('[data-confirm-manual-price]');
+    if(manualConfirmBtn){
+      const row=manualConfirmBtn.closest('.product-entry');
+      const url=String(row.querySelector('[name="url"]').value||'').trim();
+      const accountId=String(row.querySelector('[name="retailerAccountId"]').value||'');
+      const manualPrice=Number(row.querySelector('[name="manualPriceInput"]')?.value||0);
+      const quantity=Number(row.querySelector('[name="quantity"]')?.value||1);
+      if(!url){formError.textContent='Paste the Flipkart mobile URL first.';return}
+      if(!accountId){formError.textContent='Select a session-ready Flipkart account.';return}
+      if(!manualPrice||manualPrice<=0){formError.textContent='Enter a valid product price in ₹.';return}
+      manualConfirmBtn.disabled=true;manualConfirmBtn.textContent='Confirming…';
+      try{
+        const res=await request('/api/products/flipkart/mobile/confirm-manual',{
+          method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({productUrl:url,retailerAccountId:accountId,price:manualPrice,quantity:Math.max(1,Math.min(10,quantity))})
+        });
+        renderVerified(row,res);
+        formError.textContent='';
+        if(window.toast)window.toast('Flipkart price confirmed: ₹'+manualPrice);
+      }catch(err){formError.textContent=err.message}
+      finally{manualConfirmBtn.disabled=false;manualConfirmBtn.textContent='Confirm & Continue'}
+      return;
+    }
     const allocate=event.target.closest('[data-allocate-flipkart]');
     if(allocate){
       try{await allocateAcrossPool(allocate.closest('.product-entry'),allocate)}
