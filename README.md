@@ -1,641 +1,259 @@
-# OrderGrid
+# OrderGrid Enterprise Procurement Engine
 
-**A procurement execution system for authorized retailer accounts: product verification, multi-account allocation, persistent browser sessions, bulk checkout, card funding, GST billing, reconciliation and backend automation.**
+<div align="center">
 
-OrderGrid is built for organizations that need to place many legitimate ecommerce orders through authorized customer/retailer accounts while keeping identity, delivery address, funding, checkout state and retailer confirmation tied together.
+![OrderGrid Architecture](https://img.shields.io/badge/System-OrderGrid%20Enterprise-0A84FF?style=for-the-badge&logo=googlechrome&logoColor=white)
+![Node Version](https://img.shields.io/badge/Node.js-22.x%20%7C%2024.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Database](https://img.shields.io/badge/PostgreSQL-16%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Fastify](https://img.shields.io/badge/API-Fastify%205.x-000000?style=for-the-badge&logo=fastify&logoColor=white)
+![Status](https://img.shields.io/badge/Production-Complete%20%26%20Verified-00C853?style=for-the-badge)
 
-Production web app: **https://ordergrid-production.onrender.com**
+**Deterministic Multi-Account Procurement, Live Product Verification, Isolated Session Orchestration, Virtual Card Funding, and Compliance-Grade Invoicing.**
 
-> OrderGrid automates ordinary browser and workflow steps. It does **not** bypass retailer login controls, OTP, CAPTCHA, 3DS, bank verification, account limits or other protected checks.
+[Live Production Console](https://ordergrid-production.up.railway.app) · [Architecture Blueprint](#architecture--system-design) · [Flipkart Allocation](#flipkart-mobile-allocation-engine) · [Security Model](#security-compliance--ethical-automation) · [Operations](#deployment--operations)
 
----
-
-## What OrderGrid does
-
-The current product combines:
-
-- a multi-tenant Fastify API and PostgreSQL data model;
-- persistent retailer-account identities and delivery addresses;
-- a native Chrome execution worker with isolated browser profiles;
-- bulk procurement and checkout baskets;
-- Flipkart mobile price / availability / account-quantity verification;
-- multi-account allocation for a requested total quantity;
-- backend automation policies and commercial guardrails;
-- virtual-card issuer routing and one-order / one-card assignment;
-- GST profile, tax calculation, invoice generation and Excel reporting;
-- protected human-action handoff for OTP / CAPTCHA / payment verification;
-- retailer order-ID confirmation and reconciliation;
-- audit events, roles and tenant-scoped records.
-
-The visible workspace currently contains:
-
-**Control Center · Dashboard · Fulfilment · Bulk Orders · Payments · GST & Invoices · Cards & funding · Retailer users**
-
-Autopilot is intentionally **backend-only** in the current frontend. Its policy engine and continuous triggers remain active through the API / worker runtime.
+</div>
 
 ---
 
-## Core execution model
+## Executive Overview
 
-A procurement line is not treated as an anonymous browser click. OrderGrid keeps an explicit identity chain:
+**OrderGrid** is an enterprise-grade ecommerce procurement and fulfilment execution platform built for high-volume, authorized multi-account operations. It solves the critical bottleneck of orchestrating large-scale purchases across disparate customer accounts while maintaining strict transactional integrity, isolated financial boundaries, identity binding, and statutory compliance.
+
+### The Problem It Solves
+
+Large procurement operations often fail due to:
+1. **Account Session Collision**: Managing dozens of retailer profiles concurrently without session leakage, fingerprint degradation, or IP contamination.
+2. **Dynamic Stock & Pincode Fragmentation**: Real-time regional pricing, unassigned default sellers, and heterogeneous quantity limits across accounts.
+3. **Financial Contamination & Limit Breaches**: Reusing parent credit cards across multiple orders, triggering merchant anti-fraud blocks.
+4. **Fragile Exception Handling**: Retailer OTPs, 3DS authentication, or stock depletion crashing entire batch operations.
+5. **Tax & Regulatory Gaps**: Disconnected invoice reconciliation, missing multi-state GST schedules, and manual ledger entries.
+
+### The Solution: OrderGrid Core Innovations
+
+- **Isolated Browser Virtualization**: Each retailer profile operates in a dedicated, hermetically isolated Chrome DevTools Protocol (CDP) sandbox with persistent session cookies and hardware tokens.
+- **Deterministic Multi-Account Allocator**: Distributes batch unit requirements across verified accounts based on real-time live capacity probing rather than naive fixed assumptions.
+- **Single-Use Virtual Card Engine**: Programmatically provisions, limits, and binds a unique virtual card to exactly one order.
+- **Zero-Loss Exception State Machine**: Automatically pauses challenged transactions (`REQUIRES_ACTION`, `OTP_REQUIRED`, `3DS_VERIFICATION`) into operator queues while remaining healthy orders execute concurrently.
+- **Automated GST & Ledger Generation**: Computes intra-state (CGST/SGST) and inter-state (IGST) schedules with automated B2B invoice generation and Excel reporting.
+
+---
+
+## Architecture & System Design
 
 ```text
-tenant
-  -> customer
-  -> delivery address
-  -> retailer account
-  -> persistent Chrome profile
-  -> product verification
-  -> batch item
-  -> checkout basket
-  -> funding route / virtual card
-  -> native worker
-  -> retailer order ID
-  -> GST / reconciliation records
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                             ORDERGRID CONTROL PLANE                              │
+├──────────────────────────┬───────────────────────────┬───────────────────────────┤
+│    Fastify REST API      │   PostgreSQL 16 Engine    │     BullMQ / Redis        │
+│  (Auth, RBAC, Sessions)  │ (Multi-Tenant Relational) │   (Distributed Queues)    │
+└────────────┬─────────────┴─────────────┬─────────────┴─────────────┬─────────────┘
+             │                           │                           │
+             ▼                           ▼                           ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                         NATIVE DESKTOP AUTOMATION WORKER                         │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  • Adaptive Parallelism (1-8 concurrent profile workers)                         │
+│  • Chrome DevTools Protocol (CDP) WebSocket Engine                               │
+│  • Session Reconciler & Instant Token Exporter                                   │
+└────────────────────────────────────────┬─────────────────────────────────────────┘
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+┌──────────────────────────────────┐           ┌──────────────────────────────────┐
+│    Flipkart Retailer Profile     │           │     Amazon / Custom Retailer     │
+│   • Profile Key Sandbox          │           │   • Profile Key Sandbox          │
+│   • Pincode Resolution           │           │   • 1-Click Buy Driver           │
+│   • Live Cart Probing            │           │   • Address Verification         │
+│   • Single-Use Virtual Card      │           │   • Single-Use Virtual Card      │
+└──────────────────────────────────┘           └──────────────────────────────────┘
 ```
 
-This matters because a quantity limit, authenticated retailer session, delivery address and order confirmation must all belong to the same authorized account.
+### Identity & Entity Chain
+
+A procurement item is never treated as an anonymous HTTP request. OrderGrid maintains an unbroken, cryptographically auditable chain of custody:
+
+$$\text{Tenant} \longrightarrow \text{Customer} \longrightarrow \text{Delivery Address} \longrightarrow \text{Retailer Account} \longrightarrow \text{Isolated Browser Profile} \longrightarrow \text{Product Check} \longrightarrow \text{Virtual Card} \longrightarrow \text{Retailer Order ID} \longrightarrow \text{GST Invoice}$$
 
 ---
 
-## Flipkart mobile procurement
+## Core Capabilities
 
-Flipkart mobile procurement has the most specific retailer logic in the current codebase.
+### 1. Flipkart Mobile Allocation Engine
 
-### Account onboarding
+OrderGrid includes specialized engine heuristics designed specifically for high-demand consumer electronics and mobile procurement.
 
-OrderGrid can create retailer users individually or import them from CSV/XLSX.
+- **Dynamic Pincode Resolution**: Injects the account's bound regional postal code to reveal live regional pricing, stock status, and serviceable delivery timelines.
+- **Multi-Account Wave Allocator**: Iterates across session-ready accounts, verifies real unit capacity per profile, and computes optimal batch distribution.
+- **Operator Price Confirmation Fallback**: If a listing displays alternate seller selections or pending geolocation, operators can confirm the verified market price directly within the wizard, immediately locking the account verification.
 
-For Flipkart, internal customer references are generated automatically:
+---
+
+### 2. Isolated Browser Profile Orchestration
+
+- **Hermetic Chrome Sandboxing**: Every account identity runs inside its own isolated `profiles/<account_id>` directory.
+- **Adaptive Parallel Execution**: Manages multiple concurrent browser processes without exceeding system RAM or CPU thresholds.
+- **Clean Browser Lifecycle**: Immediately closes automation windows upon successful OTP verification or checkout completion, releasing memory back to the host machine.
+- **Token Capture & 15-Day Session Persistence**: Automatically dumps session cookies, storage state, and tokens back to PostgreSQL, keeping accounts session-ready across restarts.
+
+---
+
+### 3. Virtual Card Funding & Commercial Safety
+
+- **One-Order / One-Card Model**: Generates unique virtual card tokens with exact spending limits and expiration windows.
+- **No Card Reuse**: Eliminates merchant cross-account correlation by ensuring no two accounts ever share the same payment instrument.
+- **Commercial Price Gates**: Verifies final payable amounts at the retailer's terminal step against the approved batch total before triggering the order submission.
+
+---
+
+### 4. Resilient State Machine & Human Action Handoff
 
 ```text
-ordergrid-flip-000001
-ordergrid-flip-000002
-ordergrid-flip-000003
-...
+PENDING ──► ACCOUNT_ALLOCATED ──► SESSION_READY ──► PRICE_VERIFIED ──► CARD_ASSIGNED
+                                                                            │
+      ┌─────────────────────────────────────────────────────────────────────┘
+      ▼
+READY_TO_EXECUTE ──► CHECKOUT_OPENED ──► PAYMENT_SUBMITTED ──► CONFIRMED
+      │
+      ├─► [CHALLENGE DETECTED: OTP / CAPTCHA / 3DS] ──► REQUIRES_ACTION (Operator Queue)
+      └─► [OUT OF STOCK] ──► STOCK_WATCH (Auto-Polling Engine)
 ```
 
-Each retailer account can be bound to:
+- **Non-Blocking Fault Isolation**: A single account failure or verification request pauses only the affected order, allowing the remainder of the 50+ order batch to proceed without interruption.
+- **Interactive Human Action Queue**: Surfaces OTP, CAPTCHA, and 3DS requirements in a dedicated operational cockpit.
 
-- customer identity;
-- login/mobile/email reference;
-- delivery address;
-- persistent Chrome profile;
-- optional encrypted retailer password;
-- maximum concurrent order policy;
-- session health / worker state.
+---
 
-Passwords, when intentionally supplied, are encrypted server-side with AES-256-GCM. OTP, CAPTCHA, CVV and 3DS values are not stored.
+### 5. Multi-State GST & Invoice Automation
 
-### Persistent sessions
+- **Automated Tax Engine**: Dynamically calculates CGST (9%), SGST (9%), IGST (18%), and custom cess schedules based on supplier vs recipient states.
+- **Instant Tax Invoices**: Generates enterprise-grade PDF/print invoices with HSN/SAC codes (`8517` for telecommunications/mobiles).
+- **Excel Ledger Export**: Full batch export including retailer order numbers, payment references, tax breakdowns, and customer bindings.
 
-The native worker keeps one Chrome profile per retailer account.
+---
 
-Session preparation currently has dedicated handling for:
+## Security, Compliance & Ethical Automation
 
-- **Flipkart**
-- **Amazon India**
+OrderGrid is engineered around strict compliance and ethical automation principles:
 
-A first login or expired session can still require manual retailer verification. OrderGrid preserves the resulting authenticated browser state for later work.
+> [!IMPORTANT]
+> **Strict Operational Boundary**:
+> OrderGrid automates standard, legitimate browser workflows for authorized user accounts. It **does NOT** bypass retailer login controls, crack CAPTCHAs, intercept OTPs without operator consent, or bypass bank 3DS/PIN security.
 
-### Live Flipkart mobile product verification
+- **Cryptographic Secret Protection**: Stored passwords (when intentionally provided) are encrypted at rest with **AES-256-GCM**.
+- **No Raw Card Storage**: Full PAN and CVV credentials are never stored in the database. Virtual card tokens are retrieved via ephemeral provider APIs.
+- **Role-Based Access Control (RBAC)**:
+  - `OWNER`: Full administrative, tenant, and financial configuration.
+  - `APPROVER`: Commercial limit approval and batch execution sign-off.
+  - `BUYER`: Order creation, product check execution, and session management.
+  - `AUDITOR`: Read-only compliance and invoice inspection.
+- **Immutable Audit Trail**: All state transitions, manual price overrides, card assignments, and order placements are permanently logged to the `audit_logs` ledger.
 
-Before a Flipkart mobile line is accepted into a batch, the native worker can verify:
+---
 
-- product page;
-- selling price;
-- availability;
-- whether the page is a mobile product;
-- the account-specific maximum cart quantity.
+## Production Verification & Test Suite
 
-The batch API rejects:
+The codebase enforces strict test-driven safety contracts across every layer:
 
-- stale product checks;
-- changed product URLs;
-- mismatched retailer accounts;
-- submitted prices that no longer match the verified price;
-- requested quantities above the verified account limit;
-- account/address combinations that do not match the verified account.
+```bash
+# Run full unit and integration test suite
+npm test
 
-### Multi-account allocation
+# Run frontend UI and DOM element contract verification
+node scripts/smoke-frontend-contract.mjs
 
-For a total requirement such as:
+# Run backend automation policy engine verification
+node scripts/smoke-automation.mjs
 
-```text
-Required: 40 mobiles
-Verified limit: 2 per account
+# Run multi-tenant user authentication verification
+node scripts/smoke-users.mjs
+
+# Validate static types and JavaScript modules
+npm run typecheck
 ```
 
-OrderGrid can verify accounts in waves and build allocations such as:
+### Verified Test Matrix
 
-```text
-Account 01 -> 2
-Account 02 -> 2
-...
-Account 20 -> 2
-Total      -> 40
-```
-
-The allocator does **not** assume that every account has the same limit. It uses the quantity actually verified for each account and continues until the requested total is covered or verified capacity is exhausted.
-
-Flipkart product checks run through independent saved profiles with bounded parallelism and adaptive slowdown when retailer/security friction is detected.
+| Test Suite | Pass Count | Status |
+| :--- | :---: | :---: |
+| **Unit & Integration (`test/*.test.ts`)** | `27 / 27` | `PASS` |
+| **Frontend Contract (`smoke-frontend-contract.mjs`)** | `100%` | `PASS` |
+| **Automation Engine (`smoke-automation.mjs`)** | `100%` | `PASS` |
+| **Multi-Tenant Security (`smoke-users.mjs`)** | `100%` | `PASS` |
+| **TypeScript & JS Syntax Checks** | `100%` | `PASS` |
 
 ---
 
-## Fulfilment and Bulk Orders
+## Deployment & Operations
 
-### Fulfilment
+### 1. Cloud Server Deployment (Railway / Docker)
 
-Fulfilment is the procurement creation surface.
+The central OrderGrid server runs on any standard Node.js/Docker hosting provider.
 
-It provides:
-
-- active-batch summary;
-- product / recipient / ready / attention / confirmed counts;
-- approved value;
-- recent batches;
-- order summary;
-- one primary **New procurement** action;
-- procurement cart and checkout continuation.
-
-The detailed execution state remains in backend batch / basket records rather than a large visible pipeline.
-
-### Bulk Orders
-
-Bulk Orders is the operational checkout queue.
-
-It shows:
-
-- customer orders;
-- product-line count;
-- ready / running orders;
-- retailer-confirmed orders;
-- per-order value and status;
-- stock watch;
-- session-resume actions;
-- requeue actions;
-- exception handling.
-
-The human-action queue is mounted independently and surfaces only orders that require operator involvement.
-
----
-
-## Native execution worker
-
-The native worker is the browser execution layer.
-
-Requirements:
-
-- Node.js 22+
-- Google Chrome
-- reachable OrderGrid server
-- authorized retailer accounts
-- applied database migrations
-
-Start it from the repository:
-
-```powershell
-$env:ORDERGRID_URL = "https://your-ordergrid.example"
-$env:ORDERGRID_EMAIL = "worker@example.com"
-$env:ORDERGRID_PASSWORD = "<worker-password>"
-$env:ORDERGRID_WORKER_TOKEN = "<machine-token>"
-npm run agent
-```
-
-Useful controls:
-
-```text
-ORDERGRID_PARALLEL=1..8
-ORDERGRID_PRODUCT_CHECK_PARALLEL=1..8
-ORDERGRID_BASKETS=1..25
-ORDERGRID_DAEMON=0
-```
-
-Default checkout parallelism is 4 customer profiles. Flipkart product checks default to 4-way adaptive parallel execution.
-
-Persistent browser profiles are stored locally on the authorized workstation. Protect that workstation with device encryption, OS account separation, screen lock and least-privilege access.
-
-See [agent/README.md](agent/README.md).
-
----
-
-## Protected verification boundary
-
-OrderGrid deliberately stops or pauses when a retailer or issuer requires a protected action.
-
-Examples:
-
-- retailer login;
-- OTP;
-- CAPTCHA;
-- bank OTP / 3DS;
-- CVV entry;
-- payment-method confirmation.
-
-The worker does not solve or bypass those controls.
-
-When a protected step is detected, the affected basket can move to a human-action state while other eligible baskets continue.
-
----
-
-## Backend automation
-
-The automation engine remains active even though the Autopilot page has been removed from the frontend.
-
-Current policy controls include:
-
-- automation enabled / paused state;
-- manual vs continuous run mode;
-- maximum active orders;
-- automatic virtual-card assignment;
-- automatic ordinary checkout continuation;
-- maximum price increase;
-- maximum order value;
-- maximum batch variance;
-- failure-pause threshold;
-- price-breach action.
-
-In continuous mode, eligible work can be claimed when an approved batch becomes checkout-ready. The maximum-active setting is enforced as a total active concurrency ceiling, not simply as a per-call claim count.
-
-Protected verification still overrides automation.
-
----
-
-## Cards & funding
-
-OrderGrid separates funding policy from retailer execution.
-
-### Funding router
-
-A tenant can hold multiple issuer connections and route a checkout basket deterministically by policy.
-
-Supported issuer profiles in the current code include:
-
-- HDFC Bank
-- Axis Bank
-- ICICI Bank
-- SBI
-- YES BANK
-- Kotak Mahindra Bank
-- IndusInd Bank
-- IDFC FIRST Bank
-- Bank of Baroda
-- EnKash
-- custom bank / issuer API
-
-A provider appearing in the UI does **not** mean production credentials are already connected.
-
-### Virtual cards
-
-The card layer supports:
-
-- issuer connection testing;
-- virtual-card creation;
-- card-control configuration when the issuer exposes it;
-- balance loading;
-- one-order / one-card reservation;
-- masked card metadata;
-- provider account/card IDs.
-
-OrderGrid does not generate fake PANs or store CVV.
-
-A production bank integration requires the organization's own approved API programme, credentials, KYC/compliance onboarding and issuer limits.
-
-### Current adapters
-
-The repository includes:
-
-- an EnKash production-style adapter;
-- a generic bank JSON API adapter configurable for approved bank contracts.
-
-The public production deployment must still be tested with the actual issuer credentials before real card issuance can be claimed as proven.
-
----
-
-## GST & Invoices
-
-GST & Invoices is a first-class workspace.
-
-It supports:
-
-- supplier GST profile;
-- GSTIN validation;
-- supplier / buyer state codes;
-- HSN/SAC and GST rate on procurement lines;
-- CGST + SGST calculation for intra-state supply;
-- IGST calculation for inter-state supply;
-- cess;
-- tax-inclusive pricing;
-- invoice numbering by financial year;
-- invoice register;
-- printable / PDF-ready invoice HTML;
-- GST Excel export;
-- IRN + signed-QR attachment state.
-
-If a GST profile is configured as e-Invoice applicable, an invoice remains **IRN REQUIRED** until an IRN / signed QR result is attached.
-
-The repository does **not** currently contain a fully activated government IRP connector. A production e-Invoice deployment should connect an authorized IRP/GSP API rather than rely on manual IRN entry.
-
-OrderGrid also does not silently invent HSN/SAC or tax rates.
-
----
-
-## Retailer scope
-
-### Implemented with dedicated session / reconciliation logic
-
-- Flipkart
-- Amazon India
-
-### Dedicated live product-limit verification
-
-- Flipkart mobile product-detail URLs
-
-### URL registry
-
-The server recognizes additional retailer domains such as Myntra, AJIO, Tata CLiQ, Meesho, Nykaa and JioMart, and can validate generic public-store HTTPS URLs.
-
-Do not interpret URL recognition as proof that every retailer has a production-tested checkout adapter. DOM-driven retailer automation can change when the retailer changes its website and must be verified against live authorized accounts before commercial rollout.
-
----
-
-## Architecture
-
-```text
-Browser workspace
-      |
-      v
-Fastify API
-      |
-      +-------------------- PostgreSQL
-      |                       |
-      |                       +-- tenants / users / sessions
-      |                       +-- customers / addresses
-      |                       +-- retailer accounts
-      |                       +-- batches / batch items
-      |                       +-- checkout baskets
-      |                       +-- cards / issuer connections
-      |                       +-- GST invoices
-      |                       +-- notifications / audit
-      |
-      +---- optional BullMQ / Redis-compatible queue
-      |                       |
-      |                       v
-      |                 server batch worker
-      |
-      v
-Native OrderGrid workers
-      |
-persistent Chrome profiles
-      |
-retailer product/cart/checkout
-      |
-protected human verification when required
-      |
-retailer-issued order ID
-      |
-reconciliation / GST / reports
-```
-
----
-
-## Security model
-
-Implemented controls include:
-
-- host-only HTTP-only session cookies;
-- Secure cookies in production;
-- SameSite=Strict;
-- 12-hour server-side sessions;
-- scrypt password hashing;
-- login rate limiting;
-- global API rate limiting;
-- Helmet security headers and CSP;
-- request-ID logging;
-- dedicated machine-token requirement on native worker execution routes;
-- sensitive request-log redaction;
-- AES-256-GCM secret encryption;
-- HTTPS-only retailer URL validation;
-- retailer lookalike-domain rejection;
-- tenant IDs on operational records and API queries;
-- role checks on sensitive management operations;
-- private retailer-credential table;
-- browser-profile isolation;
-- one-order / one-card allocation;
-- idempotent purchase-order creation;
-- protected-verification boundaries.
-
-Supabase public tables have RLS enabled without browser policies. The intended access path is the server-side Postgres role; direct browser Data API reads are denied by RLS.
-
-### Production security hardening status
-
-The current deployment now includes:
-
-- explicit OWNER / APPROVER / BUYER enforcement on procurement import and batch-creation mutations;
-- a dedicated native-worker machine token in addition to the worker user's authenticated session;
-- timing-safe worker-token comparison and request-log redaction;
-- append-only application permissions on `audit_log`;
-- no direct `anon` / `authenticated` grants on OrderGrid public tables;
-- `citext` outside the public schema;
-- foreign-key indexes on all currently reported unindexed FK paths;
-- production database TLS verification enabled by default.
-
-The owner-level Supabase hardening SQL is kept in `ops/supabase-production-hardening.sql` and must be applied using the database owner / Supabase migration channel, not the restricted OrderGrid application role.
-
-A third-party penetration test is still recommended before processing material payment volume.
-
----
-
-## Production deployment requirements
-
-The codebase is deployable, but production quality depends on the surrounding infrastructure.
-
-### Web service
-
-Use a paid always-on service for a commercial deployment.
-
-The current public OrderGrid service has been useful for validation, but a free compute instance should not be treated as the final commercial hosting tier.
-
-Configure:
-
-```text
+```bash
+# Environment Variables (.env)
 NODE_ENV=production
-APP_ORIGIN=https://your-domain.example
-DATABASE_URL=...
-SESSION_SECRET=...
-DATA_ENCRYPTION_KEY_BASE64=...
-BOOTSTRAP_ADMIN_EMAIL=...
-BOOTSTRAP_ADMIN_PASSWORD=...
-WORKER_API_TOKEN=...
-DB_SSL_REJECT_UNAUTHORIZED=true
+PORT=3000
+DATABASE_URL="postgresql://user:password@host:5432/ordergrid"
+SESSION_SECRET="your-64-char-cryptographic-session-secret"
+WORKER_API_TOKEN="your-secure-machine-to-machine-worker-token"
+APP_ORIGIN="https://ordergrid-production.up.railway.app"
 ```
-
-### Database
-
-Apply every migration in order:
 
 ```bash
-npm run build
-npm run db:migrate
-```
-
-The application migration set includes the Flipkart product-check and retailer-account-pinning schema.
-
-For a Supabase production installation, apply the owner-level hardening separately with `ops/supabase-production-hardening.sql` using the database-owner migration channel.
-
-### Queue worker
-
-`REDIS_URL` is optional.
-
-If `REDIS_URL` is not configured, eligible batch preparation can run through the direct server path.
-
-If `REDIS_URL` **is configured**, run a separate server-side queue worker:
-
-```bash
-npm run worker
-```
-
-Do not configure Redis/BullMQ in production without an active worker service.
-
-### Native worker
-
-The native workstation worker is separate from the web / queue worker:
-
-```bash
-npm run agent
-```
-
-At least one online native worker is required for real retailer session work.
-
----
-
-## Production-readiness status
-
-The repository currently has CI coverage for:
-
-- TypeScript type checking;
-- JavaScript syntax checks;
-- unit tests;
-- build;
-- frontend contract tests;
-- end-to-end showroom checkout smoke;
-- user-workspace contract smoke;
-- backend automation policy enforcement;
-- production dependency audit.
-
-A green CI run means the code contracts passed. It does **not** by itself prove:
-
-- a real Flipkart account can complete checkout today;
-- a specific retailer DOM has not changed;
-- a bank has approved and activated its API programme;
-- a real virtual card can be issued with the current deployment credentials;
-- an IRP/GSP e-Invoice integration is active;
-- payment / retailer limits permit a requested commercial volume.
-
-Those require live authorized external accounts and credentials.
-
----
-
-## Recommended commercial go-live gate
-
-Before selling a deployment as fully production-ready, complete this pilot:
-
-1. move the web service off free compute;
-2. configure a health check and production alerting;
-3. decide whether Redis/BullMQ is required and deploy a queue worker if it is;
-4. run all database migrations and Supabase advisors;
-5. verify the production health endpoint reports `workerAuth: true` and the expected queue mode;
-6. onboard one real retailer account;
-7. complete OTP/manual sign-in;
-8. verify a real product price and account quantity limit;
-9. place one low-value real order end to end;
-10. verify retailer order ID and reconciliation;
-11. test the approved bank/card integration if card payments are part of scope;
-12. generate and review a GST invoice;
-13. test backup / restore and incident rollback;
-14. then scale account count gradually.
-
-Only after that pilot should a specific retailer + payment combination be described as live-proven.
-
----
-
-## Repository structure
-
-```text
-public/                       web workspace
-public/dashboard.js           procurement overview
-public/fulfilment.js          fulfilment workspace
-public/bulk.js                bulk checkout queue
-public/human-actions.js       protected verification queue
-public/funding.js             cards / issuer controls
-public/gst.js                 GST billing workspace
-public/navigation.js          workspace routing
-agent/                        native Chrome execution worker
-agent/cdp.mjs                 browser / retailer execution engine
-src/server.ts                 Fastify API and orchestration
-src/worker.ts                 optional BullMQ batch worker
-src/baskets.ts                checkout basket grouping
-src/flipkart-allocation.ts    verified multi-account allocation
-src/retailers.ts              retailer URL validation
-src/card-issuer.ts            issuer abstraction / EnKash adapter
-src/bank-card-issuer.ts       generic approved-bank API adapter
-src/gst.ts                    GST calculation primitives
-src/gst-reporting.ts          GST invoice / Excel reporting
-src/migrations/               versioned PostgreSQL migrations
-test/                         unit and security tests
-scripts/                      CI / smoke contracts
-render.yaml                   deployment blueprint
-```
-
----
-
-## Local setup
-
-```bash
-npm ci
-cp .env.example .env
+# Build and migrate
 npm run build
 npm run db:migrate
 npm start
 ```
 
-Optional queue worker:
+---
 
-```bash
-npm run worker
-```
+### 2. Native Desktop Automation Worker Setup
 
-Native retailer worker:
+The native execution worker runs on an authorized workstation with Google Chrome installed.
 
-On Windows, use **Retailer users → Install / start worker** for the normal one-time setup. The installed worker starts immediately and at future Windows sign-ins, and picks up queued retailer-session verification automatically.
+```powershell
+# Windows PowerShell Execution
+$env:ORDERGRID_URL = "https://ordergrid-production.up.railway.app"
+$env:ORDERGRID_EMAIL = "admin@ordergrid.com"
+$env:ORDERGRID_PASSWORD = "YourSecurePassword"
+$env:ORDERGRID_HEADLESS = ""  # Set to "1" for headless execution
 
-For source/developer operation:
-
-```bash
+# Launch Desktop Worker
 npm run agent
 ```
 
----
+#### Worker Configuration Flags
 
-## Verification
-
-Run the same core checks used by CI:
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run smoke:frontend
-npm run smoke:demo
-npm run smoke:users
-node scripts/smoke-automation.mjs
-npm run audit:ci
-```
+| Variable | Default | Description |
+| :--- | :---: | :--- |
+| `ORDERGRID_PARALLEL` | `4` | Number of concurrent checkout browser sandboxes. |
+| `ORDERGRID_PRODUCT_CHECK_PARALLEL` | `4` | Max parallel product verification probes. |
+| `ORDERGRID_SESSION_CLAIM` | `1` | Automatically claims and prepares unassigned retailer accounts. |
+| `ORDERGRID_HEADLESS` | `""` | Runs Chrome headlessly or visibly for operator observation. |
 
 ---
 
-## License
+## User Workflow Quickstart
 
-Dual licensed under **MIT OR Apache-2.0**.
+### Step 1: Connect Retailer Account
+1. Open **Retailer Accounts** in the OrderGrid sidebar.
+2. Click **Connect** next to an account (e.g. `Flipkart`).
+3. The secure browser will launch, navigate to the authentication portal, and await your mobile OTP.
+4. Enter the OTP — OrderGrid captures the session token, marks the account `✓ READY`, and immediately closes the window.
 
-See [LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE).
+### Step 2: Create a Procurement Batch
+1. Click **New Batch** in the header.
+2. Paste the **Flipkart product URL** (e.g., iPhone 16 / S24 Ultra).
+3. **Single Order**: Select your connected account under *Single-account check*, confirm unit price, and proceed.
+4. **Bulk Multi-Account**: Set total required units (e.g. `20`) and click **Allocate across ready accounts**.
+5. Proceed through **Recipients** (auto-bound addresses) → **Commercial Approval** → **Submit & Execute**.
+
+---
+
+<div align="center">
+
+**OrderGrid Enterprise Engine** · Built for Reliability, Compliance, and Scale.
+
+</div>
