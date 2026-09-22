@@ -8,7 +8,9 @@ const files=Object.fromEntries(await Promise.all([
   "public/user-dashboard.js",
   "public/app.js",
   "public/index.html",
-  "public/rewards.js"
+  "public/rewards.js",
+  "cloudflare/worker.mjs",
+  "wrangler.jsonc"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
