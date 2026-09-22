@@ -1,5 +1,5 @@
 {
-  "release": "simple-owner-login-2026-09-22",
-  "feature": "username-password-login",
-  "expectedMainCommit": "22257634133d9ba961a69fdc522da26fc8cfcebb"
+  "release": "cloudflare-container-backend-2026-09-22",
+  "feature": "cloudflare-only-backend",
+  "renderDependency": false
 }

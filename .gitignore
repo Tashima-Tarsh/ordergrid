@@ -7,3 +7,6 @@ coverage
 
 .env.local
 .ordergrid-local/
+
+.dev.vars
+.dev.vars.*

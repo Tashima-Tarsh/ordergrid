@@ -47,7 +47,6 @@ const schema = z.object({
   if(!value.DB_HOST)ctx.addIssue({code:"custom",path:["DB_HOST"],message:"DB_HOST is required when DATABASE_URL is not set"});
   if(!value.DB_USER)ctx.addIssue({code:"custom",path:["DB_USER"],message:"DB_USER is required when DATABASE_URL is not set"});
   if(!value.DB_PASSWORD&&!value.ORDERGRID_DB_TOKEN)ctx.addIssue({code:"custom",path:["ORDERGRID_DB_TOKEN"],message:"A database credential is required when DATABASE_URL is not set"});
-  if(!value.BOOTSTRAP_ADMIN_PASSWORD&&!value.BOOTSTRAP_ADMIN_SECRET)ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_SECRET"],message:"A bootstrap administrator secret is required"});
   if(value.NODE_ENV==="production"&&!value.WORKER_API_TOKEN)ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN is required in production"});
 });
 export type Config = z.infer<typeof schema>;

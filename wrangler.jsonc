@@ -3,6 +3,7 @@
   "name": "ordergrid",
   "main": "cloudflare/worker.mjs",
   "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -10,7 +11,37 @@
     "run_worker_first": ["/api", "/api/*"]
   },
   "vars": {
-    "ORDERGRID_API_ORIGIN": "https://ordergrid-production.onrender.com"
+    "APP_ORIGIN": "https://ordergrid.nkumar906099.workers.dev",
+    "BOOTSTRAP_ADMIN_EMAIL": "owner@ordergrid.in",
+    "CARD_PROVIDER": "disabled"
+  },
+  "containers": [
+    {
+      "class_name": "OrderGridBackend",
+      "image": "./Dockerfile.cloudflare",
+      "max_instances": 1,
+      "instance_type": "standard-1",
+      "constraints": {
+        "regions": ["APAC"]
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BACKEND",
+        "class_name": "OrderGridBackend"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["OrderGridBackend"]
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
   },
   "observability": {
     "enabled": true
