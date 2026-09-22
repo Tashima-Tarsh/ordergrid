@@ -249,6 +249,10 @@ must(cdp.includes("resetFlipkartToStorefront"),"retailer session contract: broke
 must(cdp.includes("Chrome DevTools command timed out"),"cloud browser contract: CDP commands must have a bounded timeout");
 must(cdp.includes("fetchWithTimeout"),"cloud browser contract: local DevTools HTTP calls must have a bounded timeout");
 must(cdp.includes("Retailer page readiness timed out"),"cloud browser contract: retailer readiness must fail closed on timeout");
+must(cdp.includes("this.ready.catch(()=>{})"),"cloud browser contract: early DevTools socket failures must not crash the hosted worker");
+must(agent.includes("Session browser retry"),"retailer session contract: hosted session checks must retry a transient browser failure");
+must(agent.includes("Session result report failed"),"retailer session contract: session result reporting failures must be observable");
+must(server.includes("session_check_claimed_at<now()-interval '2 minutes'"),"retailer session contract: abandoned hosted login claims must recover promptly");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
 must(cdp.includes("acted?.challenge"),"retailer session contract: OTP challenge returned by login script must reach the server");
