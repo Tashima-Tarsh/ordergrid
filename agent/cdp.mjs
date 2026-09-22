@@ -241,15 +241,22 @@ function retailerAuthScript(credentials){
     const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
-    const otp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
-    if(otp)return {acted:false,challenge:'OTP_REQUIRED'};
+    
+    // Check if OTP input fields are already active on screen (e.g. multi-box or single otp input)
+    const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
+    const singleOtp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+    const otpSentText=/(please enter the otp|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit)/i.test(text);
+    if(digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile)/i.test(text))){
+      return {acted:false,challenge:'OTP_REQUIRED'};
+    }
+
     const password=inputs.find(x=>x.type==='password');
     const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
     const fieldMeta=x=>String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'').trim();
     const nonSearchText=inputs.filter(x=>{
       const type=String(x.type||'text').toLowerCase(),meta=fieldMeta(x),role=String(x.getAttribute('role')||'');
-      if(x===password||otp)return false;
+      if(x===password||digitInputs.includes(x)||singleOtp)return false;
       if(!['text','email','tel','number'].includes(type))return false;
       if(/search|find products|products brands and more/i.test(meta)||role==='searchbox')return false;
       return true;
@@ -276,29 +283,20 @@ function retailerAuthScript(credentials){
       const submit=controls.find(x=>/(sign in|signin|log in|login|continue|submit)/i.test(label(x)))||password.form?.querySelector('button[type="submit"],input[type="submit"]');
       if(submit){submit.click();return {acted:true,action:'CREDENTIALS_SUBMITTED'};}
     }
-    const explicitOtp=controls.find(x=>/(request otp|send otp|get otp|login with otp|log in with otp|use otp|continue with otp)/i.test(label(x)));
-    if(!credentials.password&&explicitOtp&&visible(explicitOtp)){
-      if(user&&!String(user.value||'').trim()){
-        setValue(user,credentials.login);
-        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
-      }
-      explicitOtp.click();
-      return {acted:true,action:'OTP_REQUESTED'};
-    }
+    
+    // For Flipkart (OTP-first flow): fill username and trigger Request OTP
     if(user){
-      if(!String(user.value||'').trim()){
-        setValue(user,credentials.login);
-        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
-      }
-      const requestOtp=explicitOtp
-        ||controls.find(x=>/(continue|next|sign in|signin|log in|login)/i.test(label(x)))
+      setValue(user,credentials.login);
+      const requestOtp=controls.find(x=>/(request otp|send otp|get otp|continue with otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
-      if(requestOtp&&visible(requestOtp)){requestOtp.click();return {acted:true,action:'OTP_REQUESTED'};}
+      if(requestOtp&&visible(requestOtp)){
+        requestOtp.click();
+        return {acted:true,action:'REQUEST_OTP_CLICKED'};
+      }
+      return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
     }
     if(password&&!credentials.password){
-      const safeInputs=inputs.slice(0,8).map(x=>({type:String(x.type||''),name:String(x.name||'').slice(0,40),placeholder:String(x.placeholder||'').slice(0,80),aria:String(x.getAttribute('aria-label')||'').slice(0,80)}));
-      const safeControls=controls.slice(0,12).map(x=>label(x).slice(0,80)).filter(Boolean);
-      return {acted:false,challenge:'LOGIN_REQUIRED',debug:{inputs:safeInputs,controls:safeControls}};
+      return {acted:false,challenge:'LOGIN_REQUIRED'};
     }
     return {acted:false};
   })()`;
@@ -587,12 +585,19 @@ function retailerHost(retailer){
 }
 function authChallengeScript(){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,80000).toLowerCase();
-    const otp=Boolean(document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i]'))||/(enter|request|verify|send).{0,24}(otp|one time password|verification code)/i.test(text);
+    const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+    const inputs=[...document.querySelectorAll('input')].filter(visible);
+    const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
+    const singleOtp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+    const otpSentText=/(please enter the otp|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit)/i.test(text);
+    const isOtpActive=digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile)/i.test(text));
+    
     const captcha=Boolean(document.querySelector('iframe[src*="captcha" i],[class*="captcha" i],[id*="captcha" i],input[name*="captcha" i]'))||/captcha|i am not a robot/i.test(text);
     const password=Boolean(document.querySelector('input[type="password"]'));
-    const login=/log in|login|sign in|enter email|enter mobile|request otp/i.test(text)&&(password||Boolean(document.querySelector('input[type="email"],input[type="tel"]')));
+    const login=/log in|login|sign in|enter email|enter mobile/i.test(text)&&(password||Boolean(document.querySelector('input[type="email"],input[type="tel"]')));
+    
     if(captcha)return {code:'CAPTCHA_REQUIRED'};
-    if(otp)return {code:'OTP_REQUIRED'};
+    if(isOtpActive)return {code:'OTP_REQUIRED'};
     if(password||login)return {code:'LOGIN_REQUIRED'};
     return null;
   })()`;
@@ -602,14 +607,23 @@ function otpSubmitScript(otp){
   return `(()=>{const otp=${JSON.stringify(String(otp||""))};
     if(!/^\\d{4,8}$/.test(otp))return {ok:false,reason:'INVALID_OTP'};
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
-    const setValue=(el,value)=>{const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+    const setValue=(el,value)=>{if(!el)return;const proto=Object.getPrototypeOf(el);const descriptor=Object.getOwnPropertyDescriptor(proto,'value');if(descriptor?.set)descriptor.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
     const inputs=[...document.querySelectorAll('input')].filter(visible);
+    
+    const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
     const field=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
-    if(!field)return {ok:false,reason:'OTP_FIELD_NOT_FOUND'};
-    setValue(field,otp);
+    
+    if(digitInputs.length>=4){
+      digitInputs.slice(0,otp.length).forEach((input,i)=>setValue(input,otp[i]));
+    }else if(field){
+      setValue(field,otp);
+    }else{
+      return {ok:false,reason:'OTP_FIELD_NOT_FOUND'};
+    }
+    
     const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
-    const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||field.form?.querySelector('button[type="submit"],input[type="submit"]');
+    const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||field?.form?.querySelector('button[type="submit"],input[type="submit"]');
     if(submit){submit.click();return {ok:true,submitted:true};}
     return {ok:true,submitted:false};
   })()`;
