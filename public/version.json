@@ -1,5 +1,7 @@
 {
-  "release": "cloudflare-container-backend-2026-09-22",
-  "feature": "cloudflare-only-backend",
-  "renderDependency": false
+  "release": "cloudflare-workers-free-2026-09-22",
+  "feature": "free-worker-api",
+  "plan": "workers-free",
+  "renderDependency": false,
+  "containers": false
 }

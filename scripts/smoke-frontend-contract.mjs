@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const files=Object.fromEntries(await Promise.all([
-  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","src/migrations/027_purge_flipkart_password_credentials.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","scripts/ordergrid-local.ps1","scripts/ordergrid-local-stop.ps1","render.yaml","package.json"
+  "public/index.html","public/app.js","public/wizard.js","public/funding.js","public/rewards.js","public/ordergrid-worker.ps1","public/gst.js","public/fulfilment.js","public/fulfilment.css","public/gst-premium.css","public/bulk.js","public/human-actions.js","public/bulk-premium.css","public/styles.css","public/finance.css","public/customer.css","public/user-dashboard.js","public/dashboard.js","public/dashboard.css","public/overview-premium.css","public/workspace-premium.css","public/navigation.js","public/sw.js","src/server.ts","src/worker.ts","src/config.ts","src/db.ts","src/baskets.ts","src/flipkart-allocation.ts","src/migrations/023_flipkart_account_pinned_batch_items.sql","src/migrations/024_managed_retailer_otp.sql","src/migrations/025_flipkart_otp_15_day_sessions.sql","src/migrations/027_purge_flipkart_password_credentials.sql","ops/supabase-production-hardening.sql","src/demo-server.ts","src/managed-execution.ts","agent/index.mjs","agent/cdp.mjs","agent/lib.mjs","scripts/install-managed-chrome.mjs","scripts/ordergrid-local.ps1","scripts/ordergrid-local-stop.ps1","package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -46,7 +46,6 @@ const flipkartPasswordPurgeMigration=files["src/migrations/027_purge_flipkart_pa
 const managedChromeInstaller=files["scripts/install-managed-chrome.mjs"];
 const localLauncher=files["scripts/ordergrid-local.ps1"];
 const localStop=files["scripts/ordergrid-local-stop.ps1"];
-const renderConfig=files["render.yaml"];
 const packageSource=files["package.json"];
 
 for(const id of [
@@ -262,7 +261,6 @@ must(cdp.includes("const chromeProcesses=new Map()"),"cloud browser contract: la
 must(cdp.includes('signalChromeProcess(tracked.pid,"SIGTERM")')&&cdp.includes('signalChromeProcess(tracked.pid,"SIGKILL")'),"cloud browser contract: failed DevTools shutdown must reap the Chrome process tree");
 must(cdp.includes('"--renderer-process-limit=2"'),"cloud browser contract: hosted Chrome must cap renderer process fanout");
 must(agent.includes('ORDERGRID_SESSION_CLAIM||"1"'),"cloud worker contract: hosted retailer session claims must default to one browser at a time");
-must(renderConfig.includes('key: ORDERGRID_MANAGED_PARALLEL')&&renderConfig.includes('key: ORDERGRID_SESSION_CLAIM'),"render contract: free hosted worker must explicitly limit browser concurrency");
 must(server.includes("session_check_claimed_at<now()-interval '2 minutes'"),"retailer session contract: abandoned hosted login claims must recover promptly");
 must(!cdp.includes("retailerLoginDiagnosticScript"),"retailer session contract: temporary Flipkart login diagnostics must stay removed");
 must(!agent.includes("Flipkart login diagnostic"),"retailer session contract: temporary worker diagnostic logging must stay removed");
@@ -293,7 +291,6 @@ must(managedExecution.includes("startManagedExecutionSupervisor"),"managed execu
 must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution contract: tenant worker session handoff missing");
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
-must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "true"'),"cloud execution contract: Render must run hosted retailer browser sessions");
 must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
 must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
 must(files["public/rewards.js"].includes("CLOUD BROWSER ONLINE"),"retailer session contract: hosted Cloud Browser customer status missing");
