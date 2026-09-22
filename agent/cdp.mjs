@@ -508,7 +508,29 @@ function flipkartProductSnapshotScript(){
     const selectorText=selectors=>{for(const selector of selectors){const el=document.querySelector(selector);const value=clean(el?.getAttribute?.('content')||el?.textContent||el?.innerText);if(value)return value}return ''};
     const title=clean(product?.name)||selectorText(['h1 span','h1','span.B_NuCI','meta[property="og:title"]'])||clean(document.title);
     let sellingPriceMinor=parseMoney(offers?.price),priceSource=sellingPriceMinor!==null?'STRUCTURED_PRODUCT':'';
-    if(sellingPriceMinor===null){for(const selector of ['[itemprop="price"]','meta[property="product:price:amount"]','div.Nx9bqj','._30jeq3','[class*="Nx9bqj"]']){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(el.getAttribute?.('content')||el.textContent);if(amount&&amount>=100){sellingPriceMinor=amount;priceSource='VISIBLE_SELLING_PRICE';break}}if(sellingPriceMinor!==null)break}}
+    if(sellingPriceMinor===null){
+      for(const selector of ['[itemprop="price"]','meta[property="product:price:amount"]','div.Nx9bqj','._30jeq3','[class*="Nx9bqj"]','[class*="hl05eU"]','[class*="price"]']){
+        for(const el of document.querySelectorAll(selector)){
+          const amount=parseMoney(el.getAttribute?.('content')||el.textContent);
+          if(amount&&amount>=10000){sellingPriceMinor=amount;priceSource='VISIBLE_SELLING_PRICE';break}
+        }
+        if(sellingPriceMinor!==null)break;
+      }
+    }
+    if(sellingPriceMinor===null){
+      const allMoneyElements=[...document.querySelectorAll('*')].filter(el=>el.children.length===0&&/₹\s*[0-9]/.test(el.textContent||''));
+      for(const el of allMoneyElements){
+        const amount=parseMoney(el.textContent);
+        if(amount&&amount>=10000){sellingPriceMinor=amount;priceSource='LEAF_ELEMENT_PRICE';break;}
+      }
+    }
+    if(sellingPriceMinor===null){
+      const textMatches=[...text.matchAll(/(?:₹|Rs\.?|INR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/gi)];
+      for(const m of textMatches){
+        const amount=parseMoney(m[0]);
+        if(amount&&amount>=10000){sellingPriceMinor=amount;priceSource='TEXT_PRICE';break;}
+      }
+    }
     let mrpMinor=null;for(const selector of ['.yRaY8j','._3I9_wc','[class*="yRaY8j"]']){for(const el of document.querySelectorAll(selector)){const amount=parseMoney(el.textContent);if(amount&&(!sellingPriceMinor||amount>=sellingPriceMinor)){mrpMinor=amount;break}}if(mrpMinor!==null)break}
     if(mrpMinor===null){const m=text.match(/(?:M\\.?R\\.?P\\.?|Maximum Retail Price)[^₹0-9]{0,35}(?:₹|Rs\\.?|INR)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)/i);if(m)mrpMinor=Math.round(Number(m[1].replace(/,/g,''))*100)}
     const seller=selectorText(['#sellerName span','#sellerName','a[href*="/sellers"]','[class*="seller"] a'])||null;
