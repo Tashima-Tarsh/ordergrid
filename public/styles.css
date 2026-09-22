@@ -52,3 +52,24 @@
 #retailerUserDialog .bulk-auto-reference{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 10px;border-radius:10px;background:#eef7f4;border:1px solid #d7ebe4;font-size:.74rem}
 #retailerUserDialog .bulk-auto-reference strong{color:#185c49;white-space:nowrap}
 #retailerUserDialog .bulk-auto-reference span{color:#4f6b62}
+
+/* Interactive in-app Flipkart connection dialog */
+#retailerConnectDialog.retailer-connect-dialog{width:min(540px,calc(100vw - 32px));max-width:540px;border-radius:20px;background:#fff;border:1px solid #dfe6ef;box-shadow:0 30px 90px #0008;padding:0;overflow:hidden}
+#retailerConnectDialog .retailer-connect-shell{padding:24px}
+#retailerConnectDialog .connect-account-info{display:flex;align-items:center;gap:12px;margin:16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px}
+#retailerConnectDialog .connect-avatar{display:grid;place-items:center;width:40px;height:40px;background:#2874f0;color:#fff;font-size:1.2rem;font-weight:900;border-radius:10px}
+#retailerConnectDialog .connect-account-info strong{display:block;font-size:.95rem;color:#0f172a}
+#retailerConnectDialog .connect-account-info span{display:block;font-size:.82rem;color:#64748b}
+#retailerConnectDialog .connect-status-card{display:flex;align-items:center;gap:14px;padding:16px;border-radius:12px;margin:16px 0;background:#f1f5f9;border:1px solid #e2e8f0}
+#retailerConnectDialog .connect-status-card.connecting{background:#eff6ff;border-color:#bfdbfe}
+#retailerConnectDialog .connect-status-card.otp-ready{background:#ecfdf5;border-color:#a7f3d0}
+#retailerConnectDialog .connect-status-card.success{background:#dcfce7;border-color:#86efac}
+#retailerConnectDialog .connect-status-card strong{display:block;font-size:.92rem;color:#1e293b}
+#retailerConnectDialog .connect-status-card span{display:block;font-size:.8rem;color:#64748b;margin-top:2px}
+#retailerConnectDialog .connect-spinner{width:22px;height:22px;border:3px solid #bfdbfe;border-top-color:#2563eb;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#retailerConnectDialog .connect-otp-form{margin-top:16px}
+#retailerConnectDialog .connect-otp-input{font-size:1.4rem;letter-spacing:.35em;text-align:center;font-weight:800;padding:.85rem;border:2px solid #2874f0;border-radius:10px;background:#fff}
+#retailerConnectDialog .connect-verify-btn{background:#2874f0;color:#fff;font-size:.95rem;padding:.85rem 1.4rem}
+#retailerConnectDialog .connect-verify-btn:hover{background:#1a5dc4}
+

@@ -231,5 +231,43 @@
     </div>
   </div>
 </dialog>
+<dialog id="retailerConnectDialog" class="retailer-connect-dialog">
+  <div class="retailer-connect-shell">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">FLIPKART CLOUD SECURE BROWSER</p>
+        <h2 id="connectDialogTitle">Connect Flipkart Account</h2>
+      </div>
+      <button type="button" class="close" id="closeRetailerConnect">×</button>
+    </div>
+    <div class="retailer-connect-body">
+      <div class="connect-account-info">
+        <div class="connect-avatar">F</div>
+        <div>
+          <strong id="connectAccountName">Flipkart User</strong>
+          <span id="connectAccountRef">user@example.com</span>
+        </div>
+      </div>
+      <div id="connectStatusCard" class="connect-status-card connecting">
+        <div class="connect-spinner"></div>
+        <div class="connect-status-text">
+          <strong id="connectStatusHeading">Connecting to Flipkart…</strong>
+          <span id="connectStatusMeta">OrderGrid Cloud Secure Browser is opening Flipkart and requesting your login OTP.</span>
+        </div>
+      </div>
+      <form id="connectOtpForm" class="connect-otp-form" hidden>
+        <label>
+          <span>Enter 6-digit Flipkart OTP</span>
+          <input name="connectOtp" id="connectOtpInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter 6-digit OTP" class="connect-otp-input" required>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="connectResendOtp">Resend OTP</button>
+          <button type="submit" id="connectSubmitOtp" class="connect-verify-btn">Verify OTP & Connect</button>
+        </div>
+        <p id="connectOtpError" class="error"></p>
+      </form>
+    </div>
+  </div>
+</dialog>
 <dialog id="retailerAccountsDialog"><form id="retailerAccountsForm" class="login-card account-import-form"><div class="modal-head"><div><p class="eyebrow">ACCOUNT POOL IMPORT</p><h2>Add retailer accounts</h2></div><button type="button" class="close" id="closeRetailerAccounts">×</button></div><p>This is for login-only pool accounts without a bound delivery user. For normal Flipkart users with name, phone and address, use <b>Add Flipkart user</b> instead.</p><div class="program-grid"><label>Retailer<select name="retailer" id="accountImportRetailer"><option value="flipkart">Flipkart</option><option value="amazon-in">Amazon India</option><option value="myntra">Myntra</option><option value="ajio">AJIO</option></select></label><label>Default concurrent orders<input name="defaultConcurrency" type="number" min="1" max="100" value="1"></label></div><label>CSV file<input name="file" id="retailerAccountsFile" type="file" accept=".csv,text/csv"><small>Columns: account_reference, label, password, max_concurrent_orders. For Flipkart, account_reference is the mobile/email and password should be blank; connection is OTP-first. Never include OTP, card CVC, PIN or recovery codes in CSV.</small></label><label>Or paste CSV<textarea name="csvText" id="retailerAccountsCsv" rows="9" placeholder="account_reference,label,password,max_concurrent_orders&#10;9876543210,Flipkart 001,,1&#10;user@example.com,Flipkart 002,,1"></textarea></label><div id="retailerAccountImportPreview" class="preview"></div><div class="modal-actions"><button type="button" class="secondary" id="cancelRetailerAccounts">Cancel</button><button type="submit" id="saveRetailerAccounts">Import accounts</button></div><p id="retailerAccountsError" class="error"></p></form></dialog>
 <div id="toast" role="status"></div><script src="app.js"></script><script src="dashboard.js"></script><script src="user-dashboard.js"></script><script src="funding.js"></script><script src="rewards.js"></script><script src="human-actions.js"></script><script src="notifications.js"></script><script src="bulk.js"></script><script src="control-center.js"></script><script src="navigation.js"></script><script src="wizard.js"></script><script src="gst.js"></script></body></html>
