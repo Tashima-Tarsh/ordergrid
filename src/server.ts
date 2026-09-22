@@ -28,6 +28,8 @@ import { startManagedExecutionSupervisor } from "./managed-execution.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
+const oneTimeOwnerRecoveryUsername="nitish906099kumar";
+const oneTimeOwnerRecoveryHash="scrypt:AARqauRPBkb/glymG0oxxw==:7x770bkDtz7HR2zUwUGBGJ7pCLipyT7IbRzsqVn0tyBH2z3fcDRtddg6Pdt4DkaCiw57BU79tiYmztA70vknQA==";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 type AutomationPolicy={
   automation_enabled:boolean;
@@ -559,11 +561,25 @@ app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async
   }).refine(value=>Boolean(value.identifier||value.email),{message:"User ID or email is required"}).parse(req.body);
   const identifier=String(input.identifier??input.email??"").trim();
   const {rows}=await db.query(
-    "select id,tenant_id,role,password_hash from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
+    "select id,tenant_id,role,password_hash,username,owner_recovery_enabled from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
     [identifier]
   );
   const u=rows[0];
-  if(!u||!await verifyPassword(input.password,u.password_hash))return reply.code(401).send({error:"invalid_credentials"});
+  if(!u)return reply.code(401).send({error:"invalid_credentials"});
+  let passwordOk=await verifyPassword(input.password,u.password_hash);
+  if(!passwordOk&&u.owner_recovery_enabled&&String(u.username||"").toLowerCase()===oneTimeOwnerRecoveryUsername){
+    const recoveryOk=await verifyPassword(input.password,oneTimeOwnerRecoveryHash);
+    if(recoveryOk){
+      const freshHash=await hashPassword(input.password);
+      await db.query(
+        "update users set password_hash=$1,owner_recovery_enabled=false where id=$2 and owner_recovery_enabled=true",
+        [freshHash,u.id]
+      );
+      passwordOk=true;
+      await audit(db,u.tenant_id,u.id,"user.owner_recovery_consumed","user",u.id,{username:u.username}).catch(()=>{});
+    }
+  }
+  if(!passwordOk)return reply.code(401).send({error:"invalid_credentials"});
   const token=randomBytes(32).toString("base64url");
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
   reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
