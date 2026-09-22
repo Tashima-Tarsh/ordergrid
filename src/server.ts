@@ -218,7 +218,7 @@ app.addHook("preHandler",async(req,reply)=>{
   }
 });
 
-app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),queueMode:jobs?"bullmq":"direct"}});
+app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),googleAuth:Boolean(config.GOOGLE_CLIENT_ID),queueMode:jobs?"bullmq":"direct"}});
 app.get("/api/auth-config",async()=>({
   google:{enabled:Boolean(config.GOOGLE_CLIENT_ID),clientId:config.GOOGLE_CLIENT_ID??null},
   ownerSignupEnabled:Boolean(config.ORDERGRID_SIGNUP_CODE)
