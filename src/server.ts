@@ -301,6 +301,141 @@ app.get("/api/signup-status",async()=>({
   enabled:Boolean(config.ORDERGRID_SIGNUP_CODE),
   protected:true
 }));
+const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
+app.get("/api/auth/google/config",async()=>({
+  enabled:Boolean(config.GOOGLE_CLIENT_ID),
+  clientId:config.GOOGLE_CLIENT_ID??null,
+  ownerSetupAvailable:Boolean(config.ORDERGRID_SIGNUP_CODE)
+}));
+app.post("/api/auth/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  if(!config.GOOGLE_CLIENT_ID)return reply.code(503).send({
+    error:"google_signin_not_configured",
+    message:"Google sign-in is not configured on this OrderGrid deployment."
+  });
+  const body=z.object({
+    credential:z.string().min(100).max(10000),
+    setupCode:z.string().max(512).optional(),
+    replaceBootstrapOwner:z.boolean().default(true)
+  }).parse(req.body);
+  let claims:any;
+  try{
+    const verified=await jwtVerify(body.credential,googleJwks,{
+      audience:config.GOOGLE_CLIENT_ID,
+      issuer:["https://accounts.google.com","accounts.google.com"]
+    });
+    claims=verified.payload;
+  }catch{
+    return reply.code(401).send({error:"google_authentication_failed",message:"Google authentication failed. Please choose your Google account again."});
+  }
+  const subject=typeof claims.sub==="string"?claims.sub:"";
+  const email=typeof claims.email==="string"?claims.email.toLowerCase():"";
+  if(!subject||!email||claims.email_verified!==true)return reply.code(401).send({
+    error:"google_email_not_verified",
+    message:"OrderGrid requires a verified Google email address."
+  });
+
+  const token=randomBytes(32).toString("base64url");
+  const client=await db.connect();
+  let user:any=null,workspace:any=null,created=false,linked=false;
+  try{
+    await client.query("begin");
+    const identity=await client.query(
+      `select u.id,u.tenant_id,u.email,u.role::text role,u.active
+       from auth_identities ai
+       join users u on u.id=ai.user_id
+       where ai.provider='google' and ai.subject=$1
+       limit 1`,
+      [subject]
+    );
+    if(identity.rows[0]){
+      if(!identity.rows[0].active){
+        await client.query("rollback");
+        return reply.code(403).send({error:"account_disabled",message:"This OrderGrid account is disabled."});
+      }
+      user=identity.rows[0];
+      const tenant=await client.query("select id,name from tenants where id=$1",[user.tenant_id]);
+      workspace=tenant.rows[0];
+      await client.query(
+        "update auth_identities set email_at_link=$1,last_login_at=now() where provider='google' and subject=$2",
+        [email,subject]
+      );
+    }else{
+      const byEmail=await client.query(
+        "select id,tenant_id,email,role::text role,active from users where lower(email::text)=lower($1) order by created_at asc limit 1",
+        [email]
+      );
+      if(byEmail.rows[0]){
+        if(!byEmail.rows[0].active){
+          await client.query("rollback");
+          return reply.code(403).send({error:"account_disabled",message:"This OrderGrid account is disabled."});
+        }
+        user=byEmail.rows[0];
+        const tenant=await client.query("select id,name from tenants where id=$1",[user.tenant_id]);
+        workspace=tenant.rows[0];
+        await client.query(
+          `insert into auth_identities(user_id,provider,subject,email_at_link,last_login_at)
+           values($1,'google',$2,$3,now())
+           on conflict(provider,subject) do nothing`,
+          [user.id,subject,email]
+        );
+        linked=true;
+      }else{
+        if(!config.ORDERGRID_SIGNUP_CODE||!secretEqual(body.setupCode,config.ORDERGRID_SIGNUP_CODE)){
+          await client.query("rollback");
+          return reply.code(403).send({
+            error:"google_account_not_linked",
+            message:"No OrderGrid account exists for this Google email. Choose Create / recover owner account and enter the owner setup code, then continue with Google."
+          });
+        }
+        const bootstrapWorkspace=await client.query(
+          `select t.id,t.name
+           from users u join tenants t on t.id=u.tenant_id
+           where lower(u.email::text)=lower($1)
+           order by u.created_at asc
+           limit 1`,
+          [config.BOOTSTRAP_ADMIN_EMAIL]
+        );
+        if(bootstrapWorkspace.rows[0])workspace=bootstrapWorkspace.rows[0];
+        else workspace=(await client.query("insert into tenants(name) values('OrderGrid') returning id,name")).rows[0];
+
+        const passwordHash=await hashPassword(randomBytes(48).toString("base64url"));
+        user=(await client.query(
+          "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,tenant_id,email,role::text role,active",
+          [workspace.id,email,passwordHash]
+        )).rows[0];
+        await client.query(
+          "insert into auth_identities(user_id,provider,subject,email_at_link,last_login_at) values($1,'google',$2,$3,now())",
+          [user.id,subject,email]
+        );
+        if(body.replaceBootstrapOwner&&email!==config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase()){
+          await client.query(
+            "delete from sessions where user_id in (select id from users where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3)",
+            [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+          );
+          await client.query(
+            "update users set active=false where tenant_id=$1 and lower(email::text)=lower($2) and id<>$3",
+            [workspace.id,config.BOOTSTRAP_ADMIN_EMAIL,user.id]
+          );
+        }
+        created=true;
+      }
+    }
+    await client.query(
+      "insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",
+      [tokenHash(token),user.id,user.tenant_id]
+    );
+    await client.query("commit");
+  }catch(error){
+    await client.query("rollback").catch(()=>{});
+    throw error;
+  }finally{client.release()}
+
+  await audit(db,user.tenant_id,user.id,created?"user.google_owner_signup":linked?"user.google_linked":"user.google_login","user",user.id,{
+    provider:"google"
+  }).catch(()=>{});
+  reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
+  return {user:{id:user.id,email:user.email,role:user.role},workspace,created,linked};
+});
 app.post("/api/signup",{config:{rateLimit:{max:5,timeWindow:"15 minutes"}}},async(req,reply)=>{
   if(!config.ORDERGRID_SIGNUP_CODE)return reply.code(403).send({
     error:"signup_disabled",
