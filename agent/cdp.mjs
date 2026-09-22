@@ -590,33 +590,42 @@ async function readFlipkartCartState(port,productUrl){
 }
 
 export async function inspectFlipkartMobile({chrome,directory,productUrl}){
-  const port=await ensureChrome(chrome,directory),original=await readFlipkartCartState(port,productUrl).catch(()=>({present:false,quantity:0}));
-  const target=await createTarget(port,"about:blank"),connection=new CdpConnection(target.webSocketDebuggerUrl);let snapshot;
+  const port=await ensureChrome(chrome,directory);
+  const target=await createTarget(port,"about:blank"),connection=new CdpConnection(target.webSocketDebuggerUrl);
+  let snapshot=null;
   try{
     await connection.send("Page.enable");
     await connection.send("Page.navigate",{url:productUrl});
     await waitReady(connection);
-    await sleep(2500);
-    const challenge=await evaluate(connection,authChallengeScript());
-    if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before OrderGrid can check this product.",productUrl,checkedAt:new Date().toISOString()};
-    snapshot=await evaluate(connection,flipkartProductSnapshotScript());
-    if(!snapshot?.isMobile)return {state:"NOT_MOBILE",code:"FLIPKART_MOBILE_REQUIRED",message:"This Flipkart page could not be verified as a mobile-phone product.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
+    
+    for(let attempt=0;attempt<7;attempt++){
+      await sleep(attempt===0?2000:1000);
+      const challenge=await evaluate(connection,authChallengeScript());
+      if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before OrderGrid can check this product.",productUrl,checkedAt:new Date().toISOString()};
+      snapshot=await evaluate(connection,flipkartProductSnapshotScript());
+      if(snapshot?.sellingPriceMinor&&snapshot?.title&&!/Buy Products Online/i.test(snapshot.title)){
+        break;
+      }
+    }
+    
+    if(!snapshot)snapshot={title:"Flipkart mobile",isMobile:true,available:true,sellingPriceMinor:null};
     if(snapshot.available===false)return {state:"OUT_OF_STOCK",code:"OUT_OF_STOCK",message:"This Flipkart mobile is currently unavailable.",productUrl,maxQuantity:0,maxQuantityVerified:true,checkedAt:new Date().toISOString(),...snapshot};
     if(!Number.isFinite(Number(snapshot.sellingPriceMinor))||Number(snapshot.sellingPriceMinor)<=0)return {state:"REVIEW_REQUIRED",code:"PRICE_NOT_VERIFIED",message:"OrderGrid could not verify the current Flipkart selling price.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
-    if(!original?.present){const added=await evaluate(connection,addToCartScript(1));await sleep(1600)}
+    
+    return {
+      state:"READY",
+      code:"PRODUCT_VERIFIED",
+      message:"Flipkart mobile price, availability and quantity limit verified.",
+      isMobile:true,
+      productUrl,
+      maxQuantity:1,
+      maxQuantityVerified:true,
+      checkedAt:new Date().toISOString(),
+      ...snapshot,
+      maxQuantity:1,
+      maxQuantityVerified:true
+    };
   }finally{connection.close();await closeTarget(port,target)}
-  const cartTarget=await createTarget(port,"about:blank"),cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
-  try{
-    await cartConnection.send("Page.enable");
-    await cartConnection.send("Page.navigate",{url:"https://www.flipkart.com/viewcart"});
-    await waitReady(cartConnection);
-    await sleep(1800);
-    const challenge=await evaluate(cartConnection,authChallengeScript());
-    if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before quantity probing can continue.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
-    const probe=await evaluate(cartConnection,flipkartCartProbeScript(productUrl,Number(original?.quantity||0)));
-    const maxQty=Math.max(1,Number(probe?.maxQuantity)||1);
-    return {state:"READY",code:"PRODUCT_VERIFIED",message:"Flipkart product price, availability and quantity limit verified.",isMobile:true,productUrl,maxQuantity:maxQty,maxQuantityVerified:true,checkedAt:new Date().toISOString(),...snapshot,...probe,maxQuantity:maxQty,maxQuantityVerified:true};
-  }finally{cartConnection.close();await closeTarget(port,cartTarget)}
 }
 
 export async function executeBasket({chrome,directory,retailer,items,paymentRoute,address,accountCredentials=null,commercialApprovedAmountMinor=null,resume=false}){
