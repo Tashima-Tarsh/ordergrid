@@ -1,5 +1,5 @@
 {
-  "release": "owner-signup-2026-09-22",
-  "feature": "protected-owner-signup",
-  "expectedMainCommit": "8a56be0efcb4756b6e0a6b00943678dc75ee9541"
+  "release": "google-signin-2026-09-22",
+  "feature": "secure-google-signin",
+  "expectedMainCommit": "bb7945433ea38478de6309573d31cf1497219f91"
 }
