@@ -514,7 +514,7 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
 
 async function closeTarget(port,target){
   if(!target?.id)return;
-  await fetch(`http://127.0.0.1:${port}/json/close/${encodeURIComponent(target.id)}`,{method:"PUT"}).catch(()=>null);
+  await fetchWithTimeout(`http://127.0.0.1:${port}/json/close/${encodeURIComponent(target.id)}`,{method:"PUT"},3000).catch(()=>null);
 }
 function retailerHost(retailer){
   return retailer==="flipkart"?"flipkart.com":retailer==="amazon-in"?"amazon.in":null;
