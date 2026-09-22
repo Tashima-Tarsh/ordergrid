@@ -556,16 +556,26 @@ function flipkartCartProbeScript(productUrl,originalQuantity){
 }
 
 async function readFlipkartCartState(port,productUrl){
-  const target=await createTarget(port,"https://www.flipkart.com/viewcart"),connection=new CdpConnection(target.webSocketDebuggerUrl);
-  try{await waitReady(connection);await sleep(1300);return await evaluate(connection,flipkartCartStateScript(productUrl))}
+  const target=await createTarget(port,"about:blank"),connection=new CdpConnection(target.webSocketDebuggerUrl);
+  try{
+    await connection.send("Page.enable");
+    await connection.send("Page.navigate",{url:"https://www.flipkart.com/viewcart"});
+    await waitReady(connection);
+    await sleep(1500);
+    return await evaluate(connection,flipkartCartStateScript(productUrl));
+  }
   finally{connection.close();await closeTarget(port,target)}
 }
 
 export async function inspectFlipkartMobile({chrome,directory,productUrl}){
   const port=await ensureChrome(chrome,directory),original=await readFlipkartCartState(port,productUrl).catch(()=>({present:false,quantity:0}));
-  const target=await createTarget(port,productUrl),connection=new CdpConnection(target.webSocketDebuggerUrl);let snapshot;
+  const target=await createTarget(port,"about:blank"),connection=new CdpConnection(target.webSocketDebuggerUrl);let snapshot;
   try{
-    await waitReady(connection);await sleep(1700);const challenge=await evaluate(connection,authChallengeScript());
+    await connection.send("Page.enable");
+    await connection.send("Page.navigate",{url:productUrl});
+    await waitReady(connection);
+    await sleep(2500);
+    const challenge=await evaluate(connection,authChallengeScript());
     if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before OrderGrid can check this product.",productUrl,checkedAt:new Date().toISOString()};
     snapshot=await evaluate(connection,flipkartProductSnapshotScript());
     if(!snapshot?.isMobile)return {state:"NOT_MOBILE",code:"FLIPKART_MOBILE_REQUIRED",message:"This Flipkart page could not be verified as a mobile-phone product.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
@@ -573,9 +583,13 @@ export async function inspectFlipkartMobile({chrome,directory,productUrl}){
     if(!Number.isFinite(Number(snapshot.sellingPriceMinor))||Number(snapshot.sellingPriceMinor)<=0)return {state:"REVIEW_REQUIRED",code:"PRICE_NOT_VERIFIED",message:"OrderGrid could not verify the current Flipkart selling price.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
     if(!original?.present){const added=await evaluate(connection,addToCartScript(1));await sleep(1600)}
   }finally{connection.close();await closeTarget(port,target)}
-  const cartTarget=await createTarget(port,"https://www.flipkart.com/viewcart"),cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
+  const cartTarget=await createTarget(port,"about:blank"),cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
   try{
-    await waitReady(cartConnection);await sleep(1500);const challenge=await evaluate(cartConnection,authChallengeScript());
+    await cartConnection.send("Page.enable");
+    await cartConnection.send("Page.navigate",{url:"https://www.flipkart.com/viewcart"});
+    await waitReady(cartConnection);
+    await sleep(1800);
+    const challenge=await evaluate(cartConnection,authChallengeScript());
     if(challenge)return {state:"REAUTH_REQUIRED",code:challenge.code,message:"Flipkart verification is required before quantity probing can continue.",productUrl,checkedAt:new Date().toISOString(),...snapshot};
     const probe=await evaluate(cartConnection,flipkartCartProbeScript(productUrl,Number(original?.quantity||0)));
     const maxQty=Math.max(1,Number(probe?.maxQuantity)||1);
@@ -590,9 +604,11 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     // Observe every product before clicking anything. This prevents partially
     // mutating the cart when one line is unavailable.
     for(const item of items){
-      const target=await createTarget(port,item.executionUrl);
+      const target=await createTarget(port,"about:blank");
       const connection=new CdpConnection(target.webSocketDebuggerUrl);
       try{
+        await connection.send("Page.enable");
+        await connection.send("Page.navigate",{url:item.executionUrl});
         await waitReady(connection);
         const result=await evaluate(connection,productAvailabilityScript());
         availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(result||{available:null,reason:"NO_RESULT"})});
@@ -611,9 +627,11 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     }
 
     for(const item of items){
-      const target=await createTarget(port,item.executionUrl);
+      const target=await createTarget(port,"about:blank");
       const connection=new CdpConnection(target.webSocketDebuggerUrl);
       try{
+        await connection.send("Page.enable");
+        await connection.send("Page.navigate",{url:item.executionUrl});
         await waitReady(connection);
         const result=await evaluate(connection,addToCartScript(item.requested_quantity));
         results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(result||{ok:false,reason:"NO_RESULT"})});
@@ -624,7 +642,15 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
     const failures=results.filter(x=>!x.ok);
     if(failures.length)return {state:"CHALLENGE",code:"CART_PREPARATION_REVIEW",message:`${failures.length} item(s) could not be added automatically`,results,availability};
     const cartUrl=cartUrlFor(retailer,items[0]?.executionUrl);
-    if(cartUrl)await createTarget(port,cartUrl);
+    if(cartUrl){
+      const cartTarget=await createTarget(port,"about:blank");
+      const cartConnection=new CdpConnection(cartTarget.webSocketDebuggerUrl);
+      try{
+        await cartConnection.send("Page.enable");
+        await cartConnection.send("Page.navigate",{url:cartUrl});
+        await waitReady(cartConnection);
+      }finally{cartConnection.close()}
+    }
   }
   const state=await driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor});
   return {...state,results,availability};
