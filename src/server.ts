@@ -558,7 +558,7 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
   });
 });
 
-app.post("/api/login",{config:{rateLimit:{max:8,timeWindow:"15 minutes"}}},async(req,reply)=>{
+app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({
     identifier:z.string().min(1).max(320).optional(),
     email:z.string().min(1).max(320).optional(),
