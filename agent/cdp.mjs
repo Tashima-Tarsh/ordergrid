@@ -809,7 +809,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   const captureScreen=async()=>{
     try{
-      await sleep(400);
+      await sleep(250);
       const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:75});
       return shot?.data?`data:image/jpeg;base64,${shot.data}`:null;
     }catch{return null}
@@ -819,16 +819,21 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     const currentUrl=String(target.url||"");
     if(!currentUrl||currentUrl==="about:blank"||!currentUrl.includes("flipkart.com")){
       await connection.send("Page.navigate",{url});
-      await sleep(2200);
+      await sleep(1000);
     }
     const resetFlipkartToStorefront=async()=>{
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
-      await sleep(1500);
+      await sleep(800);
     };
-    for(let round=0;round<8;round++){
-      await waitReady(connection);await sleep(round?1200:1800);
+    for(let round=0;round<5;round++){
+      await waitReady(connection);
+      await sleep(round?400:600);
       const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
-      if(acted?.acted){await sleep(1800);continue}
+      if(acted?.acted){
+        await sleep(600);
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:acted.challenge||"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
+      }
       if(acted?.challenge){
         const screenshot=await captureScreen();
         return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
@@ -850,8 +855,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       }
       if(retailer==="flipkart"&&/^https:\/\/(?:www\.)?flipkart\.com\/?(?:[?#].*)?$/i.test(href)){
         if(retailer==="flipkart"&&round<5){
-          await connection.send("Page.navigate",{url});
-          await sleep(1500);
+          await resetFlipkartToStorefront();
           continue;
         }
         const screenshot=await captureScreen();

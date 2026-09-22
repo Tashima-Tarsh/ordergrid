@@ -317,7 +317,7 @@
       }catch(err){
         console.error('Polling error:',err);
       }
-    },1500);
+    },700);
   }
 
   $('#connectOtpForm')?.addEventListener('submit',async event=>{
