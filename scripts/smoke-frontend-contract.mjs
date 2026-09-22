@@ -273,10 +273,10 @@ must(managedExecution.includes("startManagedExecutionSupervisor"),"managed execu
 must(managedExecution.includes("ORDERGRID_SESSION_TOKEN"),"managed execution contract: tenant worker session handoff missing");
 must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract: headless worker launch missing");
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
-must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "false"'),"local execution contract: Render must not own retailer browser sessions");
+must(renderConfig.includes('ORDERGRID_MANAGED_EXECUTION\n        value: "true"'),"cloud execution contract: Render must run hosted retailer browser sessions");
 must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
 must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
-must(files["public/rewards.js"].includes("SECURE BROWSER ONLINE"),"retailer session contract: local Secure Browser customer status missing");
+must(files["public/rewards.js"].includes("CLOUD BROWSER ONLINE"),"retailer session contract: hosted Cloud Browser customer status missing");
 must(files["public/rewards.js"].includes("waiting OTP"),"retailer session contract: account authentication progress counts missing");
 must(agent.includes("ORDERGRID_SESSION_CLAIM"),"retailer session contract: local worker must support sequential auth claims");
 must(workerInstaller.includes('ORDERGRID_SESSION_CLAIM = "1"'),"retailer session contract: Windows Secure Browser must authenticate one account at a time");
@@ -323,3 +323,5 @@ must(!files["public/human-actions.js"].includes("Start the native OrderGrid work
 must(files["public/rewards.js"].includes("Secure Browser will pick"),"retailer session contract: local Secure Browser offline queue guidance missing");
 
 console.log("Frontend/card connector contract OK");
+
+must(managedExecution.includes("Date.now()-entry.startedAt>12*60*60*1000"),"cloud execution contract: managed worker session rotation missing");
