@@ -6,6 +6,7 @@ const files=Object.fromEntries(await Promise.all([
   "public/automation-center.js",
   "public/navigation.js",
   "public/user-dashboard.js",
+  "public/app.js",
   "public/index.html",
   "public/rewards.js"
 ].map(async path=>[path,await readFile(path,"utf8")])));
