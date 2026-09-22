@@ -320,7 +320,7 @@ must(server.includes("workerToken:config.WORKER_API_TOKEN"),"worker bootstrap co
 must(workerInstaller.includes("ConvertFrom-SecureString"),"worker installer contract: optional legacy local credentials must remain protected");
 must(!files["public/rewards.js"].includes("start the secure browser worker"),"retailer session contract: worker startup jargon must stay out of customer UI");
 must(!files["public/human-actions.js"].includes("Start the native OrderGrid worker"),"human action contract: customer must not be asked to run a worker");
-must(files["public/rewards.js"].includes("Secure Browser will pick"),"retailer session contract: local Secure Browser offline queue guidance missing");
+must(files["public/rewards.js"].includes("Cloud Secure Browser is starting automatically"),"retailer session contract: hosted browser startup guidance missing");
 
 console.log("Frontend/card connector contract OK");
 
