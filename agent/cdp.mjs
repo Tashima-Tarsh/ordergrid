@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function fetchWithTimeout(url,options={},timeoutMs=12000){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{return await fetch(url,{...options,signal:controller.signal})}
+  finally{clearTimeout(timer)}
+}
 
 class CdpConnection{
   constructor(url){
@@ -14,15 +19,31 @@ class CdpConnection{
     this.socket.addEventListener("message",event=>{
       let message;try{message=JSON.parse(String(event.data))}catch{return}
       if(!message.id)return;const entry=this.pending.get(message.id);if(!entry)return;
-      this.pending.delete(message.id);
+      this.pending.delete(message.id);clearTimeout(entry.timer);
       if(message.error)entry.reject(new Error(message.error.message||"Chrome DevTools command failed"));
       else entry.resolve(message.result||{});
     });
+    this.socket.addEventListener("close",()=>{
+      for(const [id,entry] of this.pending){
+        clearTimeout(entry.timer);entry.reject(new Error("Chrome DevTools connection closed"));this.pending.delete(id);
+      }
+    });
   }
-  async send(method,params={}){
-    await this.ready;const id=this.nextId++;
-    const promise=new Promise((resolve,reject)=>this.pending.set(id,{resolve,reject}));
-    this.socket.send(JSON.stringify({id,method,params}));return promise;
+  async send(method,params={},timeoutMs=12000){
+    await Promise.race([
+      this.ready,
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("Chrome DevTools connection timeout")),timeoutMs))
+    ]);
+    const id=this.nextId++;
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{
+        this.pending.delete(id);
+        reject(new Error(`Chrome DevTools command timed out: ${method}`));
+      },timeoutMs);
+      this.pending.set(id,{resolve,reject,timer});
+      try{this.socket.send(JSON.stringify({id,method,params}))}
+      catch(error){clearTimeout(timer);this.pending.delete(id);reject(error)}
+    });
   }
   close(){try{this.socket.close()}catch{}}
 }
@@ -33,7 +54,7 @@ async function devtoolsPort(directory,timeoutMs=15000){
     try{
       const text=await readFile(file,"utf8"),[port]=text.trim().split(/\r?\n/);
       if(port){
-        const response=await fetch(`http://127.0.0.1:${port}/json/version`).catch(()=>null);
+        const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/version`,{},1500).catch(()=>null);
         if(response?.ok)return Number(port);
       }
     }catch{}
@@ -55,7 +76,7 @@ export async function closeProfileBrowser({directory}){
   let port;
   try{port=await devtoolsPort(directory,1200)}catch{return false}
   try{
-    const response=await fetch(`http://127.0.0.1:${port}/json/version`).catch(()=>null);
+    const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/version`,{},1500).catch(()=>null);
     if(!response?.ok)return false;
     const version=await response.json();
     if(!version?.webSocketDebuggerUrl)return false;
@@ -108,22 +129,24 @@ export async function restoreRetailerSessionState({chrome,directory,retailer,ses
 }
 
 async function createTarget(port,url){
-  const response=await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
+  const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
   return response.json();
 }
 async function listTargets(port){
-  const response=await fetch(`http://127.0.0.1:${port}/json/list`);
+  const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/list`);
   if(!response.ok)throw new Error("Could not inspect retailer session");
   return response.json();
 }
 async function waitReady(connection,timeoutMs=20000){
   const deadline=Date.now()+timeoutMs;await connection.send("Runtime.enable");
   while(Date.now()<deadline){
-    const result=await connection.send("Runtime.evaluate",{expression:"document.readyState",returnByValue:true});
+    const remaining=Math.max(500,Math.min(4000,deadline-Date.now()));
+    const result=await connection.send("Runtime.evaluate",{expression:"document.readyState",returnByValue:true},remaining);
     const state=result.result?.value;if(state==="interactive"||state==="complete")return;
     await sleep(250);
   }
+  throw new Error("Retailer page readiness timed out");
 }
 async function evaluate(connection,expression){
   const result=await connection.send("Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true,userGesture:true});
