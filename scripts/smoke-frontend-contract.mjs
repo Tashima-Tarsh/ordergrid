@@ -259,7 +259,11 @@ must(server.includes("const credentials:{login:string;password?:string}"),"retai
 must(server.includes('if(String(row.retailer)!=="flipkart")'),"retailer session contract: saved Flipkart passwords must not be used for managed login");
 must(server.includes('rows[0].retailer==="flipkart"'),"retailer session contract: checkout must retain Flipkart login identity for OTP reauthentication");
 must(server.includes("targetDays:z.number().int().min(1).max(90).default(15)"),"retailer session contract: default session target must be 15 days");
-must(files["public/rewards.js"].includes("targetDays:15"),"retailer session contract: customer connection flow must request 15 days");
+must(files["public/rewards.js"].includes("function sessionTargetDays()"),"retailer session contract: customer session target helper missing");
+must(files["public/rewards.js"].includes("value===30?30:15"),"retailer session contract: customer session target must default to 15 days and allow 30 days");
+must((files["public/rewards.js"].match(/targetDays:sessionTargetDays\(\)/g)||[]).length>=4,"retailer session contract: customer connection flows must submit the selected session target");
+must(html.includes('id="sessionTargetDays"'),"retailer session contract: customer session target selector missing");
+must(html.includes('<option value="15">15-day session target</option>')&&html.includes('<option value="30">30-day session target</option>'),"retailer session contract: customer session target selector must expose 15 and 30 days");
 must(!html.includes("Flipkart password <small>"),"retailer session contract: normal Flipkart onboarding must not ask for a password");
 must(flipkartOtpSessionMigration.includes("private.retailer_session_states"),"retailer session contract: encrypted persistent session checkpoint table missing");
 must(server.includes("private.retailer_session_states"),"retailer session contract: persistent session checkpoint API missing");
