@@ -8,7 +8,8 @@ const files=Object.fromEntries(await Promise.all([
   "public/user-dashboard.js",
   "public/app.js",
   "public/index.html",
-  "public/rewards.js"
+  "public/rewards.js",
+  "src/migrations/028_google_auth_identities.sql"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -41,6 +42,9 @@ must(server.includes("auth_identities"),"google auth contract: stable provider i
 must(files["public/index.html"].includes('id="googleLoginButton"'),"google auth contract: login button container missing");
 must(files["public/index.html"].includes('id="googleSignupButton"'),"google auth contract: owner Google signup button missing");
 must(files["public/app.js"].includes("https://accounts.google.com/gsi/client"),"google auth contract: GIS client loader missing");
+must(files["src/migrations/028_google_auth_identities.sql"].includes("unique (provider,subject)"),"google auth contract: provider subject uniqueness missing");
+must(files["src/migrations/028_google_auth_identities.sql"].includes("enable row level security"),"google auth contract: identity RLS missing");
+must(files["src/migrations/028_google_auth_identities.sql"].includes("revoke all on table public.auth_identities from anon, authenticated"),"google auth contract: identity browser grants must stay revoked");
 must(server.includes('app.get("/api/auth-config"'),"google auth contract: public auth config route missing");
 must(server.includes('app.post("/api/login/google"'),"google auth contract: Google login route missing");
 must(server.includes("createRemoteJWKSet")&&server.includes("jwtVerify"),"google auth contract: Google ID tokens must be cryptographically verified");
