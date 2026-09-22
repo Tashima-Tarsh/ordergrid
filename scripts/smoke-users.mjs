@@ -45,7 +45,8 @@ must(server.includes("validFlipkartLogin"),"managed execution contract: Flipkart
 must(server.includes("flipkart_uses_otp"),"managed execution contract: Flipkart password authentication must be disabled");
 must(!server.includes('flipkart:["flipkart_password"]'),"managed execution contract: Flipkart password import mapping must stay removed");
 must(!retailerUi.includes("Flipkart password <small>"),"managed execution contract: Flipkart password field must not appear in normal onboarding");
-must(files["public/rewards.js"].includes("targetDays:15"),"managed execution contract: Flipkart session target must be 15 days");
+must(files["public/rewards.js"].includes("value===30?30:15"),"managed execution contract: Flipkart session target must default to 15 days and allow 30 days");
+must(retailerUi.includes('id="sessionTargetDays"'),"managed execution contract: Flipkart session target selector missing");
 must(server.includes("const credentials:{login:string;password?:string}"),"managed execution contract: OTP-only Flipkart login identity missing");
 must(!retailerUi.includes("Install Secure Browser"),"managed execution contract: customer installer must be removed");
 must(!retailerUi.includes("Install / start worker"),"managed execution contract: worker install jargon remains");
