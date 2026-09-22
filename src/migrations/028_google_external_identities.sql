@@ -5,7 +5,7 @@ create table if not exists private.user_external_identities (
   provider text not null,
   subject text not null,
   user_id uuid not null references public.users(id) on delete cascade,
-  email_at_link citext,
+  email_at_link text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (provider, subject),
