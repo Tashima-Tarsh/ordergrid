@@ -34,7 +34,7 @@ must(server.includes("user.owner_recovery_consumed"),"login contract: owner reco
 must(files["public/index.html"].includes("User ID or email"),"login contract: username/email label missing");
 must(files["public/app.js"].includes("identifier:f.get('identifier')"),"login contract: username identifier not submitted");
 must(files["cloudflare/worker.mjs"].includes('url.pathname.startsWith("/api/")'),"cloudflare contract: API proxy route missing");
-must(files["cloudflare/worker.mjs"].includes("ORDERGRID_API_ORIGIN"),"cloudflare contract: backend origin configuration missing");
+must(files["cloudflare/worker.mjs"].includes("env.BACKEND.getByName"),"cloudflare contract: container routing binding missing");
 must(files["wrangler.jsonc"].includes('"run_worker_first": ["/api", "/api/*"]'),"cloudflare contract: API must run Worker before SPA assets");
 must(files["wrangler.jsonc"].includes('"directory": "./public"'),"cloudflare contract: public asset directory missing");
 must(files["cloudflare/worker.mjs"].includes("cloudflare-container"),"cloudflare contract: container backend mode missing");
