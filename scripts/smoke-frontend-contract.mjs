@@ -310,6 +310,8 @@ must(files["public/styles.css"].includes("#retailerUserDialog.retailer-user-dial
 must(files["public/styles.css"].includes("max-height:none;overflow:visible"),"retailer user contract: dialog must not use nested scrolling");
 must(server.includes('app.get("/api/retailer-users/template.xlsx"'),"retailer user contract: Excel template API missing");
 must(server.includes("retailerAccountIds:[...new Set(retailerAccountIds)]"),"retailer user contract: bulk import must return bound account ids");
+must(server.includes('id=any($${params.length}::uuid[])'),"retailer session contract: account-id filter must bind the UUID array as a SQL parameter");
+must((server.match(/delete from private\\.retailer_credentials/g)||[]).length===0,"retailer session contract: app runtime must not require DELETE permission on private retailer credentials");
 must(files["public/rewards.js"].includes("Importing & connecting…"),"retailer user contract: bulk import must connect retailer logins");
 must(files["public/rewards.js"].includes("accountIds:ids,retailer:'flipkart'"),"retailer user contract: imported Flipkart sessions must be queued");
 must(html.includes("ordergrid-flip-000001"),"retailer user contract: generated reference format missing from UI");
