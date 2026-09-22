@@ -279,6 +279,20 @@ function retailerAuthScript(credentials){
       if(/search|find products|products brands and more/i.test(meta)||role==='searchbox')return false;
       return true;
     });
+    const isEmail=String(credentials.login||'').includes('@');
+    if(isEmail){
+      const useEmail=controls.find(x=>/(use email|email-id|use email-id)/i.test(label(x)));
+      if(useEmail){
+        clickElement(useEmail);
+        return {acted:true,action:'LOGIN_SURFACE_OPENED'};
+      }
+    }else{
+      const usePhone=controls.find(x=>/(use phone|phone number|use mobile)/i.test(label(x)));
+      if(usePhone){
+        clickElement(usePhone);
+        return {acted:true,action:'LOGIN_SURFACE_OPENED'};
+      }
+    }
     let user=inputs.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(fieldMeta(x)))||inputs.find(x=>x.type==='tel');
     if(!user){
       user=nonSearchText.find(x=>{
