@@ -60,3 +60,18 @@ test("reports gap when 45 units requested from a 40-account pool (one unit per a
   assert.equal(result.allocations.length,40);
   assert.ok(result.allocations.every(x=>x.quantity===1));
 });
+
+// Mandatory acceptance test: 40 pool accounts with only 25 eligible, 30 orders requested
+test("handles shortage: 40 accounts in pool, 25 eligible, 30 requested -> 25 allocated, 5 waiting account, no reuse",()=>{
+  const eligiblePool=Array.from({length:25},(_,i)=>account(i+1,1));
+  const result=buildFlipkartAllocation(eligiblePool,30);
+  assert.equal(result.complete,false);
+  assert.equal(result.allocatedQuantity,25);
+  assert.equal(result.remainingQuantity,5); // 5 waiting account
+  assert.equal(result.allocations.length,25);
+  assert.ok(result.allocations.every(x=>x.quantity===1));
+  // Ensure every allocated account ID is unique (no reuse to manufacture missing units)
+  const uniqueAllocated=new Set(result.allocations.map(x=>x.retailerAccountId));
+  assert.equal(uniqueAllocated.size,25);
+});
+
