@@ -1372,6 +1372,33 @@ app.patch("/api/retailer-accounts/:id",async(req,reply)=>{
   return rows[0];
 });
 
+app.delete("/api/retailer-accounts/:id",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const account=await db.query("select id,retailer,account_reference from retailer_accounts where id=$1 and tenant_id=$2 limit 1",[id,p.tenantId]);
+  if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    await client.query("delete from private.retailer_credentials where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,id]);
+    await client.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,id]);
+    await client.query("delete from retailer_reward_events where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,id]);
+    await client.query("delete from retailer_refunds where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,id]);
+    await client.query("update batch_items set retailer_account_id=null where retailer_account_id=$1",[id]);
+    await client.query("update checkout_baskets set retailer_account_id=null where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,id]);
+    await client.query("delete from retailer_accounts where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    await client.query("commit");
+  }catch(e){
+    await client.query("rollback");
+    throw e;
+  }finally{
+    client.release();
+  }
+  await audit(db,p.tenantId,p.id,"retailer_account.deleted","retailer_account",id,{retailer:account.rows[0].retailer,accountReference:account.rows[0].account_reference});
+  return {ok:true,deletedId:id};
+});
+
 app.post("/api/retailer-accounts/:id/credential",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
@@ -3538,7 +3565,18 @@ app.post("/api/batches",async(req,reply)=>{
 app.post("/api/batches/:id/approve",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const id=z.string().uuid().parse((req.params as any).id);const {rows}=await db.query("update order_batches set status='APPROVED',approved_by=$1,approved_at=now(),updated_at=now() where id=$2 and tenant_id=$3 and status='AWAITING_APPROVAL' returning id",[p.id,id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"batch_not_approvable"});await audit(db,p.tenantId,p.id,"batch.approved","order_batch",id);if(jobs){await jobs.queue.add("place-batch",{batchId:id,tenantId:p.tenantId},{jobId:`place:${id}`,attempts:3,backoff:{type:"exponential",delay:5000}});}else{await db.query(`insert into purchase_orders(tenant_id,batch_item_id,status,retailer,amount_minor,idempotency_key) select $1,i.id,'REQUIRES_ACTION',i.retailer,i.unit_price_minor*i.requested_quantity,$2||i.id from batch_items i where i.batch_id=$3 on conflict(idempotency_key) do update set amount_minor=excluded.amount_minor,failure_code=null,failure_message=null,updated_at=now()`,[p.tenantId,`basket:${id}:`,id]);await syncCheckoutBaskets(db,p.tenantId,id);const automationPolicy=await getAutomationPolicy(p.tenantId);if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){await claimReadyBaskets(p.tenantId,p.id,Number(automationPolicy.max_active_orders||8),automationPolicy);}}return {ok:true};});
 app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error",requestId:req.id});});
 
-async function bootstrap(){const {rows}=await db.query("select count(*)::int count from users");if(rows[0].count)return;const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET;if(!adminSecret)throw new Error("BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_SECRET is required only when creating the first OrderGrid owner");const c=await db.connect();try{await c.query("begin");const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);await c.query("commit");}catch(e){await c.query("rollback");throw e}finally{c.release()}}
+async function bootstrap(){
+  await db.query(`
+    delete from private.retailer_credentials where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    delete from private.retailer_session_states where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    delete from retailer_reward_events where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    delete from retailer_refunds where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    update batch_items set retailer_account_id=null where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    update checkout_baskets set retailer_account_id=null where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
+    delete from retailer_accounts where account_reference ilike '%niku906099%';
+  `).catch(err => console.error("Account cleanup notice:", err.message));
+
+  const {rows}=await db.query("select count(*)::int count from users");if(rows[0].count)return;const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET;if(!adminSecret)throw new Error("BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_SECRET is required only when creating the first OrderGrid owner");const c=await db.connect();try{await c.query("begin");const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);await c.query("commit");}catch(e){await c.query("rollback");throw e}finally{c.release()}}
 await bootstrap(); await app.listen({port:config.PORT,host:"0.0.0.0"});
 const managedExecution=startManagedExecutionSupervisor(db,config);
 for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await managedExecution.stop();await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});

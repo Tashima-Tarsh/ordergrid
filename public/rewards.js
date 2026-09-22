@@ -140,7 +140,7 @@
           <div><span>ORDERS</span><strong>${Number(account.order_count||0)}</strong><small>${Number(account.active_orders||0)} active / ${Number(account.max_concurrent_orders||1)} max</small></div>
           <div><span>REWARDS</span><strong>${available}</strong><small>${esc(rewardMeta)}</small></div>
           <div><span>REFUNDS</span><strong>${moneyMinor(account.settled_refund_minor||0)}</strong><small>${esc(refundMeta)}</small></div>
-          <div class="account-actions">${credentialAction}${verifyAction}${otpAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button></div>
+          <div class="account-actions">${credentialAction}${verifyAction}${otpAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button><button type="button" class="secondary danger-btn" data-delete-account style="color:#ef4444;border-color:rgba(239,68,68,0.3);">Delete</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and secure login.</span></div>';
   }
@@ -541,6 +541,18 @@
     const verify=event.target.closest('[data-verify-session]');
     if(verify){
       openConnectModal(account);
+      return;
+    }
+    const deleteBtn=event.target.closest('[data-delete-account]');
+    if(deleteBtn){
+      if(!confirm(`Are you sure you want to remove account "${account.label||account.account_reference}"?`))return;
+      deleteBtn.disabled=true;
+      try{
+        await request('/api/retailer-accounts/'+encodeURIComponent(account.id),{method:'DELETE'});
+        toast('Account removed: '+(account.label||account.account_reference));
+        await load();
+      }catch(error){alert(error.message)}
+      finally{deleteBtn.disabled=false}
       return;
     }
     const button=event.target.closest('[data-toggle-account]');if(!button)return;
