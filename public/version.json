@@ -1,5 +1,5 @@
 {
-  "release": "google-signin-2026-09-22",
-  "feature": "secure-google-signin",
-  "expectedMainCommit": "bb7945433ea38478de6309573d31cf1497219f91"
+  "release": "simple-owner-login-2026-09-22",
+  "feature": "username-password-login",
+  "expectedMainCommit": "22257634133d9ba961a69fdc522da26fc8cfcebb"
 }
