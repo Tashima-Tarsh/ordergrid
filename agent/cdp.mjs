@@ -92,11 +92,13 @@ export async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
   const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--disable-blink-features=AutomationControlled","--new-window"];
-  if(process.env.ORDERGRID_HEADLESS==="1")args.push(
+  const isLinux=process.platform==="linux";
+  if(process.env.ORDERGRID_HEADLESS==="1"||(isLinux&&!process.env.DISPLAY))args.push(
     "--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
     "--disable-extensions","--disable-background-networking","--disable-sync",
     "--metrics-recording-only","--renderer-process-limit=2"
   );
+  if(isLinux&&!args.includes("--no-sandbox"))args.push("--no-sandbox","--disable-dev-shm-usage","--disable-gpu");
   args.push("about:blank");
   const child=spawn(chrome,args,{detached:true,stdio:"ignore"});
   chromeProcesses.set(directory,{pid:child.pid,child});
@@ -943,18 +945,28 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   try{
     await primeConnection();
+    await waitReady(connection).catch(()=>null);
+    await sleep(2500);
     const resetFlipkartToStorefront=async()=>{
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
-      await sleep(800);
+      await sleep(1500);
     };
     if(retailer==="flipkart"&&accountCredentials?.login){
       const loginId=String(accountCredentials.login).trim();
       const isEmail=loginId.includes('@');
       
+      // Wait for Flipkart React form elements to mount
+      for(let w=0;w<12;w++){
+        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
+        if(hasInput)break;
+        await sleep(800);
+      }
+
       // Step 1: If email, ensure email input mode
       if(isEmail){
         const switchEmail=await evaluate(connection,`(()=>{
-          const span=document.querySelector('span.doAzeC, span.ExvnMI')||[...document.querySelectorAll('*')].find(s=>/^use email-?id$/i.test(s.innerText||'')&&s.children.length===0);
+          const spans=[...document.querySelectorAll('span, button, a')];
+          const span=spans.find(s=>/^use email-?id$/i.test((s.innerText||'').trim()));
           if(span){span.click();return {clicked:true};}
           return {clicked:false};
         })()`);
@@ -964,11 +976,11 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       // Step 2: Focus the target login input
       await evaluate(connection,`(()=>{
         const isEmail=${JSON.stringify(isEmail)};
-        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder));
+        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||''));
         const targetInput=isEmail
           ?(inputs.find(i=>i.type==='email'||i.classList.contains('jwCbxy'))||inputs[0])
           :(inputs.find(i=>i.type==='tel'||i.type==='number')||inputs[0]);
-        if(targetInput){targetInput.focus();targetInput.select?.();}
+        if(targetInput){targetInput.focus();targetInput.value='';targetInput.select?.();}
       })()`);
       await sleep(300);
 
@@ -982,12 +994,19 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await sleep(500);
 
       await evaluate(connection,`(()=>{
-        const btn=[...document.querySelectorAll('button, [role="button"], input[type="submit"]')].find(b=>/continue|request otp|submit/i.test(b.innerText||''));
-        if(btn)btn.click();
+        const buttons=[...document.querySelectorAll('button, input[type="submit"], [role="button"]')];
+        const btn=buttons.find(b=>/^continue$/i.test((b.innerText||b.value||'').trim()))||buttons.find(b=>/continue|request otp|submit/i.test((b.innerText||b.value||'').trim()));
+        if(btn){
+          btn.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+          btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+          btn.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+          btn.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+          try{btn.click();}catch{}
+        }
       })()`);
 
       // Step 5: Wait for Flipkart to respond with OTP screen
-      await sleep(3500);
+      await sleep(4500);
 
       // Step 6: Verify outcome
       const outcome=await evaluate(connection,`(()=>{
