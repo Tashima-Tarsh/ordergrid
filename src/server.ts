@@ -172,11 +172,17 @@ await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{
   root:join(dirname(fileURLToPath(import.meta.url)),"../public"),
   prefix:"/",
-  setHeaders:(res,path)=>{
+  setHeaders:(res:any,path:string)=>{
     if(path.endsWith(".js")||path.endsWith(".html")||path.endsWith(".css")){
-      res.setHeader("Cache-Control","no-cache, no-store, must-revalidate");
-      res.setHeader("Pragma","no-cache");
-      res.setHeader("Expires","0");
+      if(typeof res.setHeader==="function"){
+        res.setHeader("Cache-Control","no-cache, no-store, must-revalidate");
+        res.setHeader("Pragma","no-cache");
+        res.setHeader("Expires","0");
+      }else if(typeof res.header==="function"){
+        res.header("Cache-Control","no-cache, no-store, must-revalidate");
+        res.header("Pragma","no-cache");
+        res.header("Expires","0");
+      }
     }
   }
 });
