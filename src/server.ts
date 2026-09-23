@@ -159,14 +159,18 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
   return {claimed:ids.length,ids};
 }
 const app=Fastify({logger:{redact:["req.headers.authorization","req.headers.cookie","req.headers.x-ordergrid-worker-token","password"]},trustProxy:true,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
-await app.register(helmet,{contentSecurityPolicy:{directives:{
-  defaultSrc:["'self'"],
-  styleSrc:["'self'","'unsafe-inline'"],
-  scriptSrc:["'self'","https://accounts.google.com"],
-  frameSrc:["'self'","https://accounts.google.com"],
-  connectSrc:["'self'","https://accounts.google.com","https://www.googleapis.com"],
-  imgSrc:["'self'","data:","https://lh3.googleusercontent.com"]
-}}});
+await app.register(helmet,{
+  hsts: config.APP_ORIGIN.startsWith("https") ? { maxAge: 31536000, includeSubDomains: true } : false,
+  contentSecurityPolicy:{directives:{
+    defaultSrc:["'self'"],
+    styleSrc:["'self'","'unsafe-inline'"],
+    scriptSrc:["'self'","https://accounts.google.com"],
+    frameSrc:["'self'","https://accounts.google.com"],
+    connectSrc:["'self'","https://accounts.google.com","https://www.googleapis.com"],
+    imgSrc:["'self'","data:","https://lh3.googleusercontent.com"],
+    upgradeInsecureRequests: config.APP_ORIGIN.startsWith("https") ? [] : null
+  }}
+});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{
