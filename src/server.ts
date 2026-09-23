@@ -1606,14 +1606,6 @@ app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
   return {commandId:rows[0].id,status:rows[0].status};
 });
 
-app.get("/api/retailer-accounts/:id/screen",async(req,reply)=>{
-  const p=req.principal!;
-  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
-  const id=z.string().uuid().parse((req.params as any).id);
-  const screenshot=latestAccountScreenshots.get(id)||null;
-  return {screenshot};
-});
-
 app.post("/api/products/flipkart/mobile/check",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
