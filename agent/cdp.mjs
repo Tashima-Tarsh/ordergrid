@@ -479,7 +479,7 @@ export function cartUrlFor(retailer,productUrl){
   const url=new URL(productUrl);return `${url.origin}/cart`;
 }
 async function driveCheckout(port,{address,paymentRoute,accountCredentials,commercialApprovedAmountMinor}){
-  for(let round=0;round<12;round++){
+  for(let round=0;round<16;round++){
     const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&/^https?:/.test(t.url||""));
     const target=targets.find(t=>/(checkout|cart|order|payment|pay|secure|buy)/i.test(t.url||""))||targets[0];
     if(!target)return {state:"FAILED",code:"NO_RETAILER_PAGE",message:"No retailer checkout page is open"};
@@ -487,11 +487,11 @@ async function driveCheckout(port,{address,paymentRoute,accountCredentials,comme
     try{
       await waitReady(connection);
       const auth=await evaluate(connection,retailerAuthScript(accountCredentials));
-      if(auth?.acted){await sleep(1400);continue;}
+      if(auth?.acted){await sleep(800);continue;}
       const state=await evaluate(connection,pageStateScript(address,paymentRoute,commercialApprovedAmountMinor));
       if(!state)return {state:"FAILED",code:"NO_PAGE_STATE",message:"Retailer page did not return an execution state"};
       if(state.state==="CONFIRMED"||state.state==="CHALLENGE")return state;
-      await sleep(1200);
+      await sleep(600);
     }catch(error){return {state:"FAILED",code:"BROWSER_AUTOMATION_ERROR",message:String(error.message).slice(0,300)}}
     finally{connection.close()}
   }
@@ -661,8 +661,8 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
   const port=await ensureChrome(chrome,directory);
   const results=[],availability=[];
   if(!resume){
-    // Observe every product before clicking anything. This prevents partially
-    // mutating the cart when one line is unavailable.
+    // Combined availability + add-to-cart in a single page load per item.
+    // Previously loaded each product page twice; this eliminates the redundant navigation.
     for(const item of items){
       const target=await createTarget(port,"about:blank");
       const connection=new CdpConnection(target.webSocketDebuggerUrl);
@@ -670,10 +670,20 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
         await connection.send("Page.enable");
         await connection.send("Page.navigate",{url:item.executionUrl});
         await waitReady(connection);
-        const result=await evaluate(connection,productAvailabilityScript());
-        availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(result||{available:null,reason:"NO_RESULT"})});
+        await sleep(500);
+        const avail=await evaluate(connection,productAvailabilityScript());
+        availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(avail||{available:null,reason:"NO_RESULT"})});
+        if(avail?.available===false&&avail.reason==="OUT_OF_STOCK"){
+          results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,ok:false,reason:"OUT_OF_STOCK"});
+          continue;
+        }
+        // Add to cart on the same page load — no second navigation needed
+        const cartResult=await evaluate(connection,addToCartScript(item.requested_quantity));
+        results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(cartResult||{ok:false,reason:"NO_RESULT"})});
+        await sleep(400);
       }catch(error){
         availability.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,available:null,reason:String(error.message)});
+        results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,ok:false,reason:String(error.message)});
       }finally{connection.close();await closeTarget(port,target)}
     }
     const unavailable=availability.filter(x=>x.available===false&&x.reason==="OUT_OF_STOCK");
@@ -684,20 +694,6 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
         message:`${unavailable.length} item(s) are currently unavailable. OrderGrid can keep the approved order on stock watch.`,
         unavailable,availability,results
       };
-    }
-
-    for(const item of items){
-      const target=await createTarget(port,"about:blank");
-      const connection=new CdpConnection(target.webSocketDebuggerUrl);
-      try{
-        await connection.send("Page.enable");
-        await connection.send("Page.navigate",{url:item.executionUrl});
-        await waitReady(connection);
-        const result=await evaluate(connection,addToCartScript(item.requested_quantity));
-        results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,...(result||{ok:false,reason:"NO_RESULT"})});
-        await sleep(700);
-      }catch(error){results.push({purchaseOrderId:item.purchase_order_id,url:item.executionUrl,ok:false,reason:String(error.message)})}
-      finally{connection.close()}
     }
     const failures=results.filter(x=>!x.ok);
     if(failures.length)return {state:"CHALLENGE",code:"CART_PREPARATION_REVIEW",message:`${failures.length} item(s) could not be added automatically`,results,availability};
@@ -939,27 +935,42 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const captureScreen=async()=>{
     try{
       await sleep(250);
-      const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:75});
-      return shot?.data?`data:image/jpeg;base64,${shot.data}`:null;
+      const shot=await connection.send("Page.captureScreenshot",{format:"jpeg",quality:45});
+      if(!shot?.data)return null;
+      const data=`data:image/jpeg;base64,${shot.data}`;
+      return data.length<=800_000?data:null;
     }catch{return null}
   };
   try{
     await primeConnection();
     await waitReady(connection).catch(()=>null);
-    await sleep(2500);
+    await sleep(1500);
     const resetFlipkartToStorefront=async()=>{
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
-      await sleep(1500);
+      await sleep(800);
     };
+
+    // Fast check: if session is already active/authenticated, return READY without re-triggering OTP
+    const activeCheck=await evaluate(connection,`(()=>{
+      const text=(document.body?.innerText||'');
+      const isLogin=/(?:account\\/login|\\/login|\\/signin)/i.test(location.href);
+      const hasAccount=Boolean(document.querySelector('a[href*="/account"], div[class*="header"] a[href*="/account"]'))||/my account|supercoins|orders/i.test(text);
+      const hasLoginBtn=Boolean(document.querySelector('a[href*="/login"], button[class*="login"], a[class*="_1_3w1N"]'));
+      return {isAuth:hasAccount&&!isLogin&&!hasLoginBtn,url:location.href};
+    })()`).catch(()=>null);
+    if(activeCheck?.isAuth){
+      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:activeCheck.url};
+    }
+
     if(retailer==="flipkart"&&accountCredentials?.login){
       const loginId=String(accountCredentials.login).trim();
       const isEmail=loginId.includes('@');
       
       // Wait for Flipkart React form elements to mount
-      for(let w=0;w<12;w++){
-        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
+      for(let w=0;w<20;w++){
+        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input.jwCbxy, input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
         if(hasInput)break;
-        await sleep(800);
+        await sleep(500);
       }
 
       // Step 1: If email, ensure email input mode
@@ -979,7 +990,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||''));
         const targetInput=isEmail
           ?(inputs.find(i=>i.type==='email'||i.classList.contains('jwCbxy'))||inputs[0])
-          :(inputs.find(i=>i.type==='tel'||i.type==='number')||inputs[0]);
+          :(inputs.find(i=>i.type==='tel'||i.type==='number'||i.classList.contains('jwCbxy'))||inputs[0]);
         if(targetInput){targetInput.focus();targetInput.value='';targetInput.select?.();}
       })()`);
       await sleep(300);
@@ -1006,7 +1017,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       })()`);
 
       // Step 5: Wait for Flipkart to respond with OTP screen
-      await sleep(4500);
+      await sleep(3000);
 
       // Step 6: Verify outcome
       const outcome=await evaluate(connection,`(()=>{

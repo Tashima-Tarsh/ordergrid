@@ -24,6 +24,7 @@
     "smoke:users": "node scripts/smoke-users.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1138.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/helmet": "^13.0.2",
     "@fastify/multipart": "^9.2.1",

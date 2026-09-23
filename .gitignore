@@ -10,3 +10,10 @@ coverage
 
 .dev.vars
 .dev.vars.*
+
+*.pem
+
+profiles/
+.railway/
+mapping.json
+.ordergrid/

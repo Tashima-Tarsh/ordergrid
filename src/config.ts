@@ -42,7 +42,10 @@ const schema = z.object({
   CARDHOLDER_LAST_NAME: z.string().min(1).max(60).optional(),
   CARDHOLDER_GENDER: z.enum(["M","F","O"]).optional(),
   CARDHOLDER_PAN: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
-  CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional()
+  CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional(),
+  AWS_REGION: z.string().default("ap-south-1"),
+  BEDROCK_REGION: z.string().default("ap-south-1"),
+  BEDROCK_MODEL_ID: z.string().default("apac.amazon.nova-lite-v1:0")
 }).superRefine((value,ctx)=>{
   if(value.DATABASE_URL)return;
   if(!value.DB_HOST)ctx.addIssue({code:"custom",path:["DB_HOST"],message:"DB_HOST is required when DATABASE_URL is not set"});

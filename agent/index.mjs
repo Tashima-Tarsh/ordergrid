@@ -112,14 +112,14 @@ async function main(){
   if(!workerToken)throw new Error("ORDERGRID_WORKER_TOKEN is required. Configure the machine token issued for this deployment.");
 
   const parallelRequested=Number(process.env.ORDERGRID_PARALLEL||"4");
-  const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=8?parallelRequested:4;
+  const parallel=Number.isInteger(parallelRequested)&&parallelRequested>=1&&parallelRequested<=25?parallelRequested:4;
   const productCheckRequested=Number(process.env.ORDERGRID_PRODUCT_CHECK_PARALLEL||"4");
-  const productCheckMax=Number.isInteger(productCheckRequested)&&productCheckRequested>=1&&productCheckRequested<=8?productCheckRequested:4;
+  const productCheckMax=Number.isInteger(productCheckRequested)&&productCheckRequested>=1&&productCheckRequested<=16?productCheckRequested:4;
   const productCheckState={current:Math.min(4,productCheckMax),max:productCheckMax,cleanWaves:0,cooldownMs:0};
   const claimRequested=Number(process.env.ORDERGRID_BASKETS||"25");
-  const claimLimit=Number.isInteger(claimRequested)&&claimRequested>=1&&claimRequested<=25?claimRequested:25;
+  const claimLimit=Math.min(25,Number.isInteger(claimRequested)&&claimRequested>=1?claimRequested:25);
   const sessionClaimRequested=Number(process.env.ORDERGRID_SESSION_CLAIM||"1");
-  const sessionClaimLimit=Number.isInteger(sessionClaimRequested)&&sessionClaimRequested>=1&&sessionClaimRequested<=25?sessionClaimRequested:1;
+  const sessionClaimLimit=Math.min(25,Number.isInteger(sessionClaimRequested)&&sessionClaimRequested>=1?sessionClaimRequested:1);
   const daemon=process.env.ORDERGRID_DAEMON!=="0";
   const workerId=`worker-${profileKey(`${hostname()}:${profileRoot()}`)}`;
   const started=new Set();
@@ -206,7 +206,10 @@ async function main(){
         lastSessionCheckAt=Date.now();
         try{
           const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:sessionClaimLimit})})).body;
-          for(const account of sessionClaim.accounts||[]){
+          const sessionAccounts=sessionClaim.accounts||[];
+          const sessionConcurrency=Math.min(5,parallel);
+          await runPool(sessionAccounts.map(a=>[a]),sessionConcurrency,async group=>{
+            const account=group[0];
             const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
             let result=null;
             for(let attempt=0;attempt<2;attempt++){
@@ -236,7 +239,7 @@ async function main(){
             });
             if(!reported)await closeProfileBrowser({directory}).catch(()=>{});
             else if(result.status!=="REAUTH_REQUIRED")await closeProfileBrowser({directory}).catch(()=>{});
-          }
+          });
         }catch(error){output.write(`Session readiness cycle error: ${error.message}\n`)}
       }
 
@@ -344,7 +347,7 @@ async function main(){
       }
     }catch(error){output.write(`Worker cycle error: ${error.message}\n`)}
     if(!daemon)break;
-    await sleep(3000);
+    await sleep(800);
   }
   clearInterval(heartbeatTimer);
 }

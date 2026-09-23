@@ -25,15 +25,15 @@ import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
 import { buildFlipkartAllocation } from "./flipkart-allocation.js";
 import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } from "./user-dashboard-reporting.js";
 import { startManagedExecutionSupervisor } from "./managed-execution.js";
+import { createBedrockService } from "./bedrock.js";
 
 if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
   process.env.SESSION_SECRET ||= randomBytes(48).toString("base64url");
   process.env.WORKER_API_TOKEN ||= randomBytes(48).toString("base64url");
 }
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const bedrock=createBedrockService(config);
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
-const oneTimeOwnerRecoveryUsername="nitish906099kumar";
-const oneTimeOwnerRecoveryHash="scrypt:AARqauRPBkb/glymG0oxxw==:7x770bkDtz7HR2zUwUGBGJ7pCLipyT7IbRzsqVn0tyBH2z3fcDRtddg6Pdt4DkaCiw57BU79tiYmztA70vknQA==";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 type AutomationPolicy={
   automation_enabled:boolean;
@@ -245,7 +245,31 @@ app.addHook("preHandler",async(req,reply)=>{
   }
 });
 
-app.get("/api/health",async()=>{await db.query("select 1");return {status:"ok",database:"ok",workerAuth:Boolean(config.WORKER_API_TOKEN),googleAuth:Boolean(config.GOOGLE_CLIENT_ID),queueMode:jobs?"bullmq":"direct"}});
+app.get("/api/health",async()=>{
+  let dbStatus = "healthy";
+  try { await db.query("select 1"); } catch { dbStatus = "unhealthy"; }
+  const workers = await db.query("select count(*)::int online from execution_workers where last_seen > now() - interval '30 seconds'").catch(()=>({rows:[{online:0}]}));
+  const connectedIssuers = await db.query("select count(*)::int count from issuer_connections where status='CONNECTED'").catch(()=>({rows:[{count:0}]}));
+  return {
+    status: dbStatus === "healthy" ? "ok" : "degraded",
+    api: "healthy",
+    database: dbStatus,
+    redis: jobs ? "connected" : "direct_mode",
+    workerAvailability: {
+      onlineWorkers: Number(workers.rows[0]?.online || 0),
+      authConfigured: Boolean(config.WORKER_API_TOKEN)
+    },
+    bedrockAvailability: {
+      configured: true,
+      region: config.BEDROCK_REGION,
+      model: config.BEDROCK_MODEL_ID
+    },
+    issuerConfiguration: {
+      provider: config.CARD_PROVIDER,
+      connectedIssuers: Number(connectedIssuers.rows[0]?.count || 0)
+    }
+  };
+});
 app.get("/api/auth-config",async()=>({
   google:{enabled:Boolean(config.GOOGLE_CLIENT_ID),clientId:config.GOOGLE_CLIENT_ID??null},
   ownerSignupEnabled:Boolean(config.ORDERGRID_SIGNUP_CODE)
@@ -586,25 +610,13 @@ app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},asy
   }).refine(value=>Boolean(value.identifier||value.email),{message:"User ID or email is required"}).parse(req.body);
   const identifier=String(input.identifier??input.email??"").trim();
   const {rows}=await db.query(
-    "select id,tenant_id,role,password_hash,username,owner_recovery_enabled from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
+    "select id,tenant_id,role,password_hash,username from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
     [identifier]
   );
   const u=rows[0];
-  if(!u)return reply.code(401).send({error:"invalid_credentials"});
-  let passwordOk=await verifyPassword(input.password,u.password_hash);
-  if(!passwordOk&&u.owner_recovery_enabled&&String(u.username||"").toLowerCase()===oneTimeOwnerRecoveryUsername){
-    const recoveryOk=await verifyPassword(input.password,oneTimeOwnerRecoveryHash);
-    if(recoveryOk){
-      const freshHash=await hashPassword(input.password);
-      await db.query(
-        "update users set password_hash=$1,owner_recovery_enabled=false where id=$2 and owner_recovery_enabled=true",
-        [freshHash,u.id]
-      );
-      passwordOk=true;
-      await audit(db,u.tenant_id,u.id,"user.owner_recovery_consumed","user",u.id,{username:u.username}).catch(()=>{});
-    }
-  }
-  if(!passwordOk)return reply.code(401).send({error:"invalid_credentials"});
+  if(!u)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
+  const passwordOk=await verifyPassword(input.password,u.password_hash);
+  if(!passwordOk)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
   const token=randomBytes(32).toString("base64url");
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
   reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
@@ -3698,20 +3710,81 @@ app.post("/api/batches",async(req,reply)=>{
   }
 });
 app.post("/api/batches/:id/approve",async(req,reply)=>{const p=req.principal!;if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const id=z.string().uuid().parse((req.params as any).id);const {rows}=await db.query("update order_batches set status='APPROVED',approved_by=$1,approved_at=now(),updated_at=now() where id=$2 and tenant_id=$3 and status='AWAITING_APPROVAL' returning id",[p.id,id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"batch_not_approvable"});await audit(db,p.tenantId,p.id,"batch.approved","order_batch",id);if(jobs){await jobs.queue.add("place-batch",{batchId:id,tenantId:p.tenantId},{jobId:`place:${id}`,attempts:3,backoff:{type:"exponential",delay:5000}});}else{await db.query(`insert into purchase_orders(tenant_id,batch_item_id,status,retailer,amount_minor,idempotency_key) select $1,i.id,'REQUIRES_ACTION',i.retailer,i.unit_price_minor*i.requested_quantity,$2||i.id from batch_items i where i.batch_id=$3 on conflict(idempotency_key) do update set amount_minor=excluded.amount_minor,failure_code=null,failure_message=null,updated_at=now()`,[p.tenantId,`basket:${id}:`,id]);await syncCheckoutBaskets(db,p.tenantId,id);const automationPolicy=await getAutomationPolicy(p.tenantId);if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){await claimReadyBaskets(p.tenantId,p.id,Number(automationPolicy.max_active_orders||8),automationPolicy);}}return {ok:true};});
+app.post("/api/bedrock/classify-failure",async(req,reply)=>{
+  const p=req.principal!;
+  const body=z.object({
+    error:z.string().min(1).max(2000),
+    context:z.record(z.string(),z.unknown()).optional()
+  }).parse(req.body);
+  const result=await bedrock.classifyWorkerFailure(body.error,body.context);
+  return result;
+});
+
+app.get("/api/bedrock/batch-summary/:id",async(req,reply)=>{
+  const p=req.principal!;
+  const batchId=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(`
+    select cb.id order_id,ra.account_reference account,cb.failure_code,cb.failure_message error
+    from checkout_baskets cb
+    left join retailer_accounts ra on ra.id=cb.retailer_account_id
+    where cb.tenant_id=$1 and cb.batch_id=$2 and cb.status in ('REQUIRES_ACTION','FAILED')
+  `,[p.tenantId,batchId]);
+  const failures=rows.map(r=>({orderId:String(r.order_id),account:r.account?String(r.account):undefined,error:r.error?String(r.error):r.failure_code?String(r.failure_code):"Failed"}));
+  const result=await bedrock.summarizeBatchFailures(batchId,failures);
+  return result;
+});
+
+app.get("/api/bedrock/account-explanation/:id",async(req,reply)=>{
+  const p=req.principal!;
+  const accountId=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(`
+    select retailer,account_reference,session_status,auth_status,health_score,cooldown_until
+    from retailer_accounts
+    where id=$1 and tenant_id=$2 limit 1
+  `,[accountId,p.tenantId]);
+  if(!rows[0])return reply.code(404).send({error:"account_not_found"});
+  const explanation=await bedrock.explainAccountStatus({
+    retailer:rows[0].retailer,
+    accountReference:rows[0].account_reference,
+    sessionStatus:rows[0].session_status,
+    authStatus:rows[0].auth_status,
+    healthScore:rows[0].health_score,
+    cooldownUntil:rows[0].cooldown_until
+  });
+  return {accountId,explanation};
+});
+
+app.post("/api/retailer-accounts/:id/toggle",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(`
+    update retailer_accounts
+    set active = not active, updated_at=now()
+    where id=$1 and tenant_id=$2
+    returning id,retailer,account_reference,label,active,auth_status,session_status
+  `,[id,p.tenantId]);
+  if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  await audit(db,p.tenantId,p.id,"retailer_account.toggled","retailer_account",id,{active:rows[0].active});
+  return rows[0];
+});
+
 app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error",requestId:req.id});});
 
 async function bootstrap(){
-  await db.query(`
-    delete from private.retailer_credentials where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    delete from private.retailer_session_states where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    delete from retailer_reward_events where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    delete from retailer_refunds where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    update batch_items set retailer_account_id=null where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    update checkout_baskets set retailer_account_id=null where retailer_account_id in (select id from retailer_accounts where account_reference ilike '%niku906099%');
-    delete from retailer_accounts where account_reference ilike '%niku906099%';
-  `).catch(err => console.error("Account cleanup notice:", err.message));
-
-  const {rows}=await db.query("select count(*)::int count from users");if(rows[0].count)return;const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET;if(!adminSecret)throw new Error("BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_SECRET is required only when creating the first OrderGrid owner");const c=await db.connect();try{await c.query("begin");const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);await c.query("commit");}catch(e){await c.query("rollback");throw e}finally{c.release()}}
+  const {rows}=await db.query("select count(*)::int count from users");
+  if(rows[0].count)return;
+  const adminSecret=config.BOOTSTRAP_ADMIN_PASSWORD??config.BOOTSTRAP_ADMIN_SECRET;
+  if(!adminSecret)throw new Error("BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_SECRET is required only when creating the first OrderGrid owner");
+  const c=await db.connect();
+  try{
+    await c.query("begin");
+    const t=await c.query("insert into tenants(name) values('OrderGrid') returning id");
+    await c.query("insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER')",[t.rows[0].id,config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),await hashPassword(adminSecret)]);
+    await c.query("commit");
+  }catch(e){await c.query("rollback");throw e}finally{c.release()}
+}
 await bootstrap(); await app.listen({port:config.PORT,host:"0.0.0.0"});
 const managedExecution=startManagedExecutionSupervisor(db,config);
 for(const sig of ["SIGTERM","SIGINT"] as const)process.on(sig,async()=>{await managedExecution.stop();await app.close();if(jobs){await jobs.queue.close();jobs.connection.disconnect();}await db.end();process.exit(0)});
+
