@@ -1076,6 +1076,58 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       return {status:"REAUTH_REQUIRED",code:"OTP_NOT_SENT",message:"Flipkart did not send an OTP after login submission. Please try manual browser login.",url:target.url||url,screenshot};
     }
 
+    const resetFlipkartToStorefront=async()=>{
+      await connection.send("Page.navigate",{url:flipkartLoginUrl});
+      await sleep(800);
+    };
+
+    for(let round=0;round<5;round++){
+      await waitReady(connection);
+      await sleep(round?400:600);
+      const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
+      if(acted?.acted){
+        if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){
+          await sleep(800);
+          continue;
+        }
+        if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
+          await sleep(3000);
+          const screenshot=await captureScreen();
+          return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
+        }
+        await sleep(600);
+        continue;
+      }
+      if(acted?.challenge){
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
+      }
+      const challenge=await evaluate(connection,authChallengeScript());
+      if(challenge){
+        if(challenge.code==="LOGIN_REQUIRED"&&retailer==="flipkart"&&round<5){
+          await resetFlipkartToStorefront();
+          continue;
+        }
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url,screenshot};
+      }
+      const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
+      const href=String(state?.url||"");
+      if(/\/signin|\/login|\/ap\/signin/i.test(href)){
+        if(retailer==="flipkart"&&round<5){
+          await resetFlipkartToStorefront();
+          continue;
+        }
+        if(round<4){
+          await sleep(1000);
+          continue;
+        }
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,screenshot};
+      }
+      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
+    }
+
     const screenshot=await captureScreen();
     return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:target.url||url,screenshot};
   }catch(error){

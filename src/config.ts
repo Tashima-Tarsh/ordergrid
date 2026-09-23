@@ -64,11 +64,11 @@ const schema = z.object({
     if(!value.DB_PASSWORD&&!value.ORDERGRID_DB_TOKEN)ctx.addIssue({code:"custom",path:["ORDERGRID_DB_TOKEN"],message:"A database credential is required when DATABASE_URL is not set"});
   }
 
+  if(value.NODE_ENV==="production"&&!value.WORKER_API_TOKEN)ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN is required in production"});
+  if(value.NODE_ENV==="production"&&value.WORKER_API_TOKEN&&(value.WORKER_API_TOKEN.length<32||knownInsecureSecrets.has(value.WORKER_API_TOKEN))){
+    ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN must be a secure random token (min 32 chars) and must not use the repository default"});
+  }
   if(value.NODE_ENV==="production"){
-    if(!value.WORKER_API_TOKEN)ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN is required in production"});
-    else if(value.WORKER_API_TOKEN.length<32||knownInsecureSecrets.has(value.WORKER_API_TOKEN)){
-      ctx.addIssue({code:"custom",path:["WORKER_API_TOKEN"],message:"WORKER_API_TOKEN must be a secure random token (min 32 chars) and must not use the repository default"});
-    }
     if(value.SESSION_SECRET.length<32||knownInsecureSecrets.has(value.SESSION_SECRET)){
       ctx.addIssue({code:"custom",path:["SESSION_SECRET"],message:"SESSION_SECRET must be a secure random secret (min 32 chars) and must not use the repository default"});
     }
