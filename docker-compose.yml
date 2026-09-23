@@ -37,11 +37,11 @@ services:
       - DATABASE_URL=postgres://ordergrid:OrderGrid2026SecurePostgres!@db:5432/ordergrid
       - DB_SSL=false
       - REDIS_URL=redis://redis:6379
-      - SESSION_SECRET=${SESSION_SECRET:-ordergrid_session_secret_2026_super_secure_32bytes}
-      - DATA_ENCRYPTION_KEY_BASE64=${DATA_ENCRYPTION_KEY_BASE64:-YXV0b2dlbmVyYXRlZF8zMmJ5dGVfa2V5X2Zvcg==1234567890abcdef}
-      - WORKER_API_TOKEN=${WORKER_API_TOKEN:-ordergrid_worker_token_secure_min_32_chars_2026}
-      - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL:-amyhod3@gmail.com}
-      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-OrderGrid2026SecureAdmin!}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - DATA_ENCRYPTION_KEY_BASE64=${DATA_ENCRYPTION_KEY_BASE64}
+      - WORKER_API_TOKEN=${WORKER_API_TOKEN}
+      - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD}
       - AWS_REGION=${AWS_REGION:-ap-southeast-2}
       - BEDROCK_REGION=${BEDROCK_REGION:-ap-southeast-2}
       - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-apac.amazon.nova-lite-v1:0}

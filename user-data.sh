@@ -15,18 +15,23 @@ git clone https://github.com/Tashima-Tarsh/ordergrid.git /opt/ordergrid
 cd /opt/ordergrid
 
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || curl -s ifconfig.me || echo "localhost")
+SESSION_SECRET_VAL=$(openssl rand -hex 32)
+DATA_ENCRYPTION_KEY_VAL=$(openssl rand -base64 32)
+WORKER_API_TOKEN_VAL=$(openssl rand -hex 32)
+BOOTSTRAP_ADMIN_PASSWORD_VAL=$(openssl rand -base64 16)
+DB_PASSWORD_VAL=$(openssl rand -base64 16)
 
 cat <<EOF > /opt/ordergrid/.env
 NODE_ENV=production
 PORT=3000
 APP_ORIGIN=http://${PUBLIC_IP}:3000
-DATABASE_URL=postgres://ordergrid:OrderGrid2026SecurePostgres!@db:5432/ordergrid
+DATABASE_URL=postgres://ordergrid:${DB_PASSWORD_VAL}@db:5432/ordergrid
 REDIS_URL=redis://redis:6379
-SESSION_SECRET=ordergrid_session_secret_2026_super_secure_32bytes
-DATA_ENCRYPTION_KEY_BASE64=YXV0b2dlbmVyYXRlZF8zMmJ5dGVfa2V5X2Zvcg==1234567890abcdef
-WORKER_API_TOKEN=ordergrid_worker_token_secure_min_32_chars_2026
-BOOTSTRAP_ADMIN_EMAIL=amyhod3@gmail.com
-BOOTSTRAP_ADMIN_PASSWORD=OrderGrid2026SecureAdmin!
+SESSION_SECRET=${SESSION_SECRET_VAL}
+DATA_ENCRYPTION_KEY_BASE64=${DATA_ENCRYPTION_KEY_VAL}
+WORKER_API_TOKEN=${WORKER_API_TOKEN_VAL}
+BOOTSTRAP_ADMIN_EMAIL=admin@ordergrid.internal
+BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD_VAL}
 AWS_REGION=ap-south-1
 BEDROCK_REGION=ap-south-1
 BEDROCK_MODEL_ID=apac.amazon.nova-lite-v1:0

@@ -196,9 +196,25 @@ NODE_ENV=production
 PORT=3000
 DATABASE_URL="postgresql://user:password@host:5432/ordergrid"
 SESSION_SECRET="your-64-char-cryptographic-session-secret"
+DATA_ENCRYPTION_KEY_BASE64="your-44-char-base64-encryption-key"
 WORKER_API_TOKEN="your-secure-machine-to-machine-worker-token"
 APP_ORIGIN="https://ordergrid-production.up.railway.app"
 ```
+
+#### Secrets Generation & Production Hardening
+Generate cryptographically strong keys before production deployment:
+```bash
+# Generate SESSION_SECRET (32+ chars)
+openssl rand -hex 32
+
+# Generate DATA_ENCRYPTION_KEY_BASE64 (AES-256-GCM 32-byte key in Base64)
+openssl rand -base64 32
+
+# Generate WORKER_API_TOKEN (32+ chars)
+openssl rand -hex 32
+```
+> [!IMPORTANT]
+> OrderGrid refuses to start in `production` mode if repository defaults, insecure placeholders, or short keys are detected.
 
 ```bash
 # Build and migrate
