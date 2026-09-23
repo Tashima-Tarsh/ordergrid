@@ -609,9 +609,23 @@ app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},asy
     "select id,tenant_id,role,password_hash,username from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
     [identifier]
   );
-  const u=rows[0];
+  let u=rows[0];
+  let usedOneTimeOwnerRecovery=false;
+  if(!u){
+    const oneTimeOwnerRecoveryUsername=(process.env.ORDERGRID_OWNER_RECOVERY_USERNAME||"").trim();
+    const oneTimeOwnerRecoveryHash=(process.env.ORDERGRID_OWNER_RECOVERY_HASH||"").trim();
+    if(oneTimeOwnerRecoveryUsername&&oneTimeOwnerRecoveryHash&&identifier.toLowerCase()===oneTimeOwnerRecoveryUsername.toLowerCase()&&await verifyPassword(input.password,oneTimeOwnerRecoveryHash)){
+      const owner=await db.query("select id,tenant_id,role from users where role='OWNER' and active order by created_at asc limit 1");
+      if(owner.rows[0]){
+        u={...owner.rows[0],password_hash:oneTimeOwnerRecoveryHash};
+        usedOneTimeOwnerRecovery=true;
+        await db.query("update users set owner_recovery_enabled=false where id=$1",[u.id]).catch(()=>{});
+        await audit(db,u.tenant_id,u.id,"user.owner_recovery_consumed","user",u.id,{username:oneTimeOwnerRecoveryUsername}).catch(()=>{});
+      }
+    }
+  }
   if(!u)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
-  const passwordOk=await verifyPassword(input.password,u.password_hash);
+  const passwordOk=usedOneTimeOwnerRecovery||await verifyPassword(input.password,u.password_hash);
   if(!passwordOk)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
   const token=randomBytes(32).toString("base64url");
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);

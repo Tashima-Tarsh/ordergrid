@@ -150,7 +150,7 @@ export async function ensureBasketVirtualCard(
   const cardholder=configuredHolder??{};
   const expectedMinor=Math.max(100,Number(row.amount_minor||0));
   const overagePct=typeof config.CARD_FUNDING_MAX_OVERAGE_PCT==="number"?config.CARD_FUNDING_MAX_OVERAGE_PCT:10;
-  const hardCeiling=Math.ceil(expectedMinor*(1+overagePct/100));
+  const hardCeiling=Math.ceil((expectedMinor*(100+overagePct))/100);
   const requestedMinor=Math.floor(Number(fundingAmountMinor||expectedMinor));
 
   if(requestedMinor>hardCeiling){

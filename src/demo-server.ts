@@ -12,13 +12,22 @@ import { z } from "zod";
 import { retailerForProductUrl, verifiedRetailerUrl } from "./retailers.js";
 import { decryptJson, encryptJson } from "./security.js";
 
-const port=Number(process.env.PORT??3000);
-const demoIdentifier=(process.env.DEMO_LOGIN_IDENTIFIER||process.env.DEMO_EMAIL||"").trim().toLowerCase();
-const demoPassword=process.env.DEMO_LOGIN_PASSWORD||process.env.DEMO_PASSWORD||"";
-const secret=process.env.SESSION_SECRET??randomBytes(32).toString("hex");
-const showroomRedirect=(process.env.SHOWROOM_REDIRECT_URL??"").trim().replace(/\/$/,"");
-const session=randomBytes(32).toString("base64url");
-const secureCookies=(process.env.APP_ORIGIN||"").startsWith("https");
+export type DemoServerOptions = {
+  identifier?: string;
+  password?: string;
+  secret?: string;
+  showroomRedirect?: string;
+  secureCookies?: boolean;
+  logger?: boolean;
+};
+
+export async function buildDemoApp(options?: DemoServerOptions) {
+  const demoIdentifier=(options?.identifier ?? (process.env.DEMO_LOGIN_IDENTIFIER||process.env.DEMO_EMAIL||"")).trim().toLowerCase();
+  const demoPassword=options?.password ?? (process.env.DEMO_LOGIN_PASSWORD||process.env.DEMO_PASSWORD||"");
+  const secret=options?.secret ?? (process.env.SESSION_SECRET||randomBytes(32).toString("hex"));
+  const showroomRedirect=(options?.showroomRedirect ?? (process.env.SHOWROOM_REDIRECT_URL||"")).trim().replace(/\/$/,"");
+  const session=randomBytes(32).toString("base64url");
+  const secureCookies=options?.secureCookies ?? ((process.env.APP_ORIGIN||"").startsWith("https"));
 type Address={id:string;tenant_id:string;recipient:string;phone:string;line1:string;line2?:string;city:string;state:string;postal_code:string;country:string;reference?:string;amazon_account?:string;flipkart_account?:string};
 type Batch={id:string;tenant_id:string;name:string;status:string;currency:string;estimated_total_minor:number;created_at:string;item_count:number;recipient_count:number;payment_route:string};
 type Item={id:string;tenant_id:string;batchId:string;product_url:string;retailer:string;requested_quantity:number;addressId:string;unit_price_minor:number};
@@ -78,7 +87,7 @@ function importedRetailer(value:string){
   if(aliases[raw])return aliases[raw]!;
   try{return retailerForProductUrl(/^https:\/\//i.test(raw)?raw:`https://${raw.replace(/^www\./,"")}/`).id}catch{return null}
 }
-const app=Fastify({logger:true,trustProxy:true});
+const app=Fastify({logger:options?.logger??false,trustProxy:true});
 if(showroomRedirect){
   app.addHook("onRequest",async(req,reply)=>{
     if(req.url==="/api/health")return;
@@ -563,7 +572,15 @@ app.post("/api/products/flipkart/mobile/allocation/plan", async(req) => {
     }
   };
 });
+  app.get("/api/reports/orders.csv",async(_,reply)=>{const csv=["customer_reference,recipient,retailer,account_reference,status,amount_minor",...activeBaskets().map(b=>[b.customer_reference,b.recipient,b.retailer,b.account_reference,b.status,b.amount_minor].map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");reply.header("content-type","text/csv; charset=utf-8").header("content-disposition",'attachment; filename="ordergrid-orders.csv"');return csv;});
+  app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error"});});
+  return app;
+}
 
-app.get("/api/reports/orders.csv",async(_,reply)=>{const csv=["customer_reference,recipient,retailer,account_reference,status,amount_minor",...activeBaskets().map(b=>[b.customer_reference,b.recipient,b.retailer,b.account_reference,b.status,b.amount_minor].map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");reply.header("content-type","text/csv; charset=utf-8").header("content-disposition",'attachment; filename="ordergrid-orders.csv"');return csv;});
-app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error"});});
-await app.listen({port,host:"0.0.0.0"});
+const isDirect = process.argv[1] && (process.argv[1].endsWith("demo-server.ts") || process.argv[1].endsWith("demo-server.js"));
+if (isDirect) {
+  const port = Number(process.env.PORT ?? 3000);
+  const app = await buildDemoApp({ logger: true });
+  await app.listen({ port, host: "0.0.0.0" });
+}
+

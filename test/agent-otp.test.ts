@@ -1,29 +1,69 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { classifyLoginOutcome, decideSessionReady } from "../agent/cdp.mjs";
+import { computeOtpCooldown } from "../src/security.js";
 
-test("Flipkart OTP text detection matches legitimate verification prompts", () => {
-  const isOtpText = (text: string) => /(please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in|enter 6-digit|enter the 6-digit)/i.test(text);
+test("classifyLoginOutcome correctly classifies login states", () => {
+  // 1. OTP screen
+  const otp1 = classifyLoginOutcome({ text: "Please enter the verification code sent to your email" });
+  assert.equal(otp1.outcome, "OTP_SENT");
+  assert.equal(otp1.code, "OTP_SENT");
 
-  assert.equal(isOtpText("Please enter the verification code sent to your email"), true);
-  assert.equal(isOtpText("Enter the 6-digit OTP sent to 9876543210"), true);
-  assert.equal(isOtpText("Resend OTP in 25 seconds"), true);
-  assert.equal(isOtpText("Welcome to Flipkart, please log in"), false);
+  const otp2 = classifyLoginOutcome({ text: "Enter code", digitsCount: 6 });
+  assert.equal(otp2.outcome, "OTP_SENT");
+
+  const otp3 = classifyLoginOutcome({ text: "", hasOtpInput: true });
+  assert.equal(otp3.outcome, "OTP_SENT");
+
+  // 2. Rate limit
+  const rl = classifyLoginOutcome({ text: "You have reached maximum attempts. Please try again later." });
+  assert.equal(rl.outcome, "RATE_LIMITED");
+  assert.equal(rl.code, "RATE_LIMITED");
+
+  // 3. New user / unregistered
+  const nu = classifyLoginOutcome({ text: "Looks like you're new here! Sign up with your email" });
+  assert.equal(nu.outcome, "ACCOUNT_NOT_REGISTERED");
+  assert.equal(nu.code, "ACCOUNT_NOT_REGISTERED");
+
+  // 4. Unknown / OTP not sent
+  const unk = classifyLoginOutcome({ text: "Welcome to Flipkart homepage" });
+  assert.equal(unk.outcome, "UNKNOWN");
+  assert.equal(unk.code, "OTP_NOT_SENT");
 });
 
-test("Flipkart rate limit detection matches throttle messages", () => {
-  const isRateLimited = (text: string) => /(try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(text);
+test("decideSessionReady enforces evaluation, URL, and account content rules", () => {
+  // Null evaluation or evalOk=false -> false
+  assert.equal(decideSessionReady({ evalOk: false, url: "https://www.flipkart.com/", hasAccountContent: true }), false);
 
-  assert.equal(isRateLimited("You have reached maximum attempts. Please try again later."), true);
-  assert.equal(isRateLimited("Too many attempts. Try after 2 hours."), true);
-  assert.equal(isRateLimited("Something went wrong while sending OTP"), true);
-  assert.equal(isRateLimited("Enter your password"), false);
+  // Login / signin URL -> false
+  assert.equal(decideSessionReady({ evalOk: true, url: "https://www.flipkart.com/account/login", hasAccountContent: true, isLoginUrl: true }), false);
+  assert.equal(decideSessionReady({ evalOk: true, url: "https://www.amazon.in/ap/signin", hasAccountContent: true }), false);
+
+  // Generic cookies alone without account content -> false
+  assert.equal(decideSessionReady({ evalOk: true, url: "https://www.flipkart.com/", hasAccountContent: false, cookieNames: ["S", "T", "SN", "at", "rt"] }), false);
+
+  // Valid authenticated account page -> true
+  assert.equal(decideSessionReady({ evalOk: true, url: "https://www.flipkart.com/account/orders", hasAccountContent: true, cookieNames: ["SN"] }), true);
 });
 
-test("Flipkart new user detection identifies unregistered accounts", () => {
-  const isNewUser = (text: string) => /looks like you're new here|sign up with your/i.test(text);
+test("computeOtpCooldown computes correct timestamps for all session result codes", () => {
+  const config = { OTP_MIN_INTERVAL_MINUTES: 30, OTP_RATE_LIMIT_COOLDOWN_HOURS: 6 };
+  const baseTime = new Date("2026-09-24T00:00:00.000Z");
 
-  assert.equal(isNewUser("Looks like you're new here! Sign up with your email to continue"), true);
-  assert.equal(isNewUser("Sign up with your mobile number"), true);
-  assert.equal(isNewUser("Please enter the OTP"), false);
+  // READY clears cooldown
+  const readyCooldown = computeOtpCooldown("READY", null, config, baseTime, new Date("2026-09-24T01:00:00.000Z"));
+  assert.equal(readyCooldown, null);
+
+  // OTP_SENT sets 30-minute cooldown
+  const sentCooldown = computeOtpCooldown("REAUTH_REQUIRED", "OTP_SENT", config, baseTime);
+  assert.equal(sentCooldown?.toISOString(), "2026-09-24T00:30:00.000Z");
+
+  // RATE_LIMITED sets 6-hour cooldown
+  const rateLimitedCooldown = computeOtpCooldown("REAUTH_REQUIRED", "RATE_LIMITED", config, baseTime);
+  assert.equal(rateLimitedCooldown?.toISOString(), "2026-09-24T06:00:00.000Z");
+
+  // OTP_NOT_SENT retains existing cooldown if set
+  const existing = new Date("2026-09-24T00:25:00.000Z");
+  const notSentCooldown = computeOtpCooldown("REAUTH_REQUIRED", "OTP_NOT_SENT", config, baseTime, existing);
+  assert.equal(notSentCooldown?.toISOString(), existing.toISOString());
 });
-
