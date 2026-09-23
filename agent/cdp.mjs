@@ -842,9 +842,17 @@ export async function submitRetailerOtp({chrome,directory,retailer,otp}){
     await connection.send("Page.bringToFront").catch(()=>null);
     const result=await evaluate(connection,otpSubmitScript(otp));
     if(!result?.ok)return result||{ok:false,reason:"OTP_SUBMIT_FAILED"};
-    await sleep(1800);
-    const challenge=await evaluate(connection,authChallengeScript()).catch(()=>null);
-    if(challenge)return {ok:false,reason:challenge.code||"OTP_CHALLENGE_REMAINS"};
+    
+    // Wait for Flipkart to process the OTP and transition
+    for(let w=0;w<8;w++){
+      await sleep(1000);
+      const curUrl=await evaluate(connection,`location.href`).catch(()=>"");
+      const curText=await evaluate(connection,`document.body?.innerText||''`).catch(()=>"");
+      const isInvalidOtp=/(incorrect otp|invalid otp|wrong otp|please enter a valid|verification failed)/i.test(curText);
+      if(isInvalidOtp)return {ok:false,reason:"INVALID_OTP_ENTERED"};
+      const isVerified=!String(curUrl).includes('/login/verify')||/(my account|orders|logout|cart)/i.test(curText);
+      if(isVerified)return {ok:true,submitted:true};
+    }
     return {ok:true,submitted:true};
   }finally{connection.close()}
 }
