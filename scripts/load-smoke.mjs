@@ -34,7 +34,7 @@ async function runLoadSmoke() {
   console.log("==> OrderGrid Load & Concurrency Smoke Test");
 
   let serverToClose = null;
-  let targetOrigin = process.env.APP_ORIGIN;
+  let targetOrigin = process.env.LOAD_TEST_TARGET || process.env.TARGET_URL;
 
   if (!targetOrigin) {
     const { app, address } = await createSmokeServer();
