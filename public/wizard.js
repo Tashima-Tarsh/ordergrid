@@ -174,13 +174,39 @@
   function parseAllocation(row){
     try{return row.dataset.allocationPlan?JSON.parse(row.dataset.allocationPlan):null}catch{return null}
   }
-  function updatePoolPreview(){
+  function updateRecipientPreview(){
     const rows=[...productRows.querySelectorAll('.product-entry')],plans=rows.map(parseAllocation);
     if(rows.length&&plans.every(plan=>plan?.complete)){
       const accountIds=new Set(plans.flatMap(plan=>plan.allocations.map(a=>a.retailerAccountId)));
       const units=plans.reduce((sum,plan)=>sum+Number(plan.totalQuantity||0),0);
-      preview.textContent=accountIds.size+' Flipkart user/address profiles allocated · '+units+' total units';
+      const allAllocations=plans.flatMap(p=>p.allocations||[]);
+      preview.innerHTML=
+        '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;margin-bottom:12px">'+
+        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚡</span><strong style="color:#15803d;font-size:13px">Automatic Delivery Address Binding</strong></div>'+
+        '<p style="font-size:12px;color:#334155;margin:6px 0 0 0"><strong>'+accountIds.size+' Flipkart accounts</strong> allocated for <strong>'+units+' total units</strong>. Each order is bound to that user\'s saved delivery address and 6-digit PIN from <strong>Retailer Users</strong>.</p>'+
+        '</div>'+
+        '<div style="max-height:220px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:6px">'+
+        allAllocations.map(a=>'<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:12px;display:flex;justify-content:space-between;align-items:center"><div><strong>'+esc(a.recipient||a.accountReference)+'</strong><div style="font-size:11px;color:#64748b">'+esc(a.accountReference)+' · PIN: '+esc(a.postalCode||'—')+'</div></div><span style="font-weight:600;color:#0f172a">'+esc(a.quantity)+' unit(s)</span></div>').join('')+
+        '</div>';
       preview.dataset.poolGenerated='true';
+    }else{
+      const firstRow=rows[0];
+      const accountId=firstRow?.querySelector('[name="retailerAccountId"]')?.value;
+      const account=flipkartAccounts.find(a=>a.id===accountId);
+      if(account){
+        const recipientName=account.address_recipient||account.display_name||account.label||account.account_reference;
+        const pin=account.address_postal_code||account.postal_code||'';
+        const city=account.address_city||'';
+        const addressText=[account.address_line1,city,account.address_state,pin].filter(Boolean).join(', ');
+        preview.innerHTML=
+          '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">'+
+          '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚡</span><strong style="color:#15803d;font-size:13px">Saved User Delivery Address Bound</strong></div>'+
+          '<div style="font-size:12px;color:#334155;margin-top:6px"><strong>'+esc(recipientName)+'</strong> ('+esc(account.account_reference)+')</div>'+
+          '<div style="font-size:11px;color:#64748b;margin-top:2px">'+esc(addressText||'Address loaded from Retailer Users')+'</div>'+
+          '</div>';
+      }else{
+        preview.innerHTML='<div style="padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#64748b;font-size:12px">⚡ Delivery address and 6-digit PIN are loaded automatically from Retailer Users.</div>';
+      }
     }
   }
   function renderAllocation(row,plan){
@@ -210,7 +236,7 @@
       '<div><span>PRICE</span><strong>'+esc(priceText)+'</strong></div>'+
       '<div><span>MAX / ACCOUNT</span><strong>'+esc(Math.min(...maxes))+(Math.min(...maxes)!==Math.max(...maxes)?'–'+esc(Math.max(...maxes)):'')+'</strong></div>'+
       '<div class="wide"><span>ALLOCATIONS</span><strong>'+allocations.map(a=>esc(a.accountReference)+' · '+esc(a.quantity)+' / '+esc(a.maxQuantity)+' · '+esc(a.postalCode||'')).join('<br>')+'</strong></div>';
-    updatePoolPreview();
+    updateRecipientPreview();
   }
   async function allocateAcrossPool(row,button){
     const url=String(row.querySelector('[name="url"]').value||'').trim();
@@ -331,7 +357,10 @@
     });
   }
   function summary(){
-    const data=new FormData(form),products=productData(),recipientText=preview.textContent.trim()||'Recipient file ready';
+    const data=new FormData(form),products=productData();
+    const recipientText=products.every(p=>p.allocationPlan)
+      ? products.reduce((sum,p)=>sum+(p.allocationPlan?.allocations?.length||0),0)+' user delivery addresses (auto-bound from Retailer Users)'
+      : 'Saved delivery address from selected Retailer User';
     const unitTotal=products.reduce((sum,p)=>sum+(p.allocationPlan?p.allocationValue:p.price*p.quantity),0);
     return '<div class="wizard-summary-grid">'+
       '<div><span>Batch</span><strong>'+esc(data.get('name')||'—')+'</strong></div>'+
@@ -341,17 +370,16 @@
       '<div class="wide-summary"><span>Product checks</span><strong>'+products.map(p=>p.allocationPlan
         ?esc(p.title)+' · '+p.quantity+' total units · '+p.allocationPlan.allocations.length+' accounts · verified capacity '+p.allocationPlan.verifiedCapacity
         :esc(p.title)+' · '+money(p.price)+' · Qty '+p.quantity+' / max '+p.maxQuantity).join('<br>')+'</strong></div>'+
-      '<div class="wide-summary"><span>Recipients</span><strong>'+esc(recipientText)+'</strong></div>'+
-      '<div class="wide-summary"><span>Execution model</span><strong>'+esc(products.every(p=>p.allocationPlan)?'Total quantity split across exact verified Flipkart accounts and their bound delivery addresses':'Verified Flipkart mobile price + account quantity limit, then grouped fulfilment execution')+'</strong></div>'+
+      '<div class="wide-summary"><span>Delivery Addresses</span><strong>'+esc(recipientText)+'</strong></div>'+
+      '<div class="wide-summary"><span>Execution model</span><strong>'+esc(products.every(p=>p.allocationPlan)?'Total quantity split across exact verified Flipkart accounts and their bound delivery addresses':'Verified Flipkart mobile price + account quantity limit, bound to saved user address')+'</strong></div>'+
       '</div>';
   }
   function show(step){
     current=step;
-    const rows=[...productRows.querySelectorAll('.product-entry')],pooled=rows.length>0&&rows.every(row=>parseAllocation(row)?.complete);
-    if(step===2&&pooled)updatePoolPreview();
+    if(step===2)updateRecipientPreview();
     [nameLabel,productRows,addProduct,paymentLabel].filter(Boolean).forEach(x=>x.hidden=step!==1);
-    if(fileLabel)fileLabel.hidden=step!==2||pooled;
-    if(sample)sample.hidden=step!==2||pooled;
+    if(fileLabel)fileLabel.hidden=true;
+    if(sample)sample.hidden=true;
     if(preview)preview.hidden=step!==2;
     approval.hidden=step!==3;
     checkout.hidden=step!==4;
@@ -376,15 +404,6 @@
   }
   next.onclick=()=>{
     if(current===1&&!validateProducts())return;
-    if(current===2){
-      // Pool-mode batches carry addresses inside the allocation plan — no CSV needed
-      const rows=[...productRows.querySelectorAll('.product-entry')];
-      const allPooled=rows.length>0&&rows.every(row=>parseAllocation(row)?.complete);
-      if(!allPooled&&!preview.textContent.trim()){
-        formError.textContent='Upload a recipient CSV/XLSX, use sample recipients, or complete multi-account allocation.';
-        return;
-      }
-    }
     if(current===3&&!document.querySelector('#wizardApproval').checked){formError.textContent='Confirm the batch details to continue.';return}
     formError.textContent='';show(Math.min(4,current+1));
   };

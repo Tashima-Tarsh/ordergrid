@@ -76,8 +76,8 @@ async function setupGoogleSignIn(){
 setupGoogleSignIn().catch(err=>{if($('#googleLoginError'))$('#googleLoginError').textContent=err.message});
 $('#signOut').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}$('#login').classList.remove('hidden')};
 $('#newBatch').onclick=openBatch;$('#emptyNew').onclick=openBatch;$('#close').onclick=()=>$('#batchDialog').close();$('#cancel').onclick=()=>$('#batchDialog').close();
-$('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};
-$('#sample').onclick=()=>{const csv='recipient,phone,flipkart_user_id,line1,line2,city,state,postal_code,max_concurrent_orders\nAarav Sharma,9876543210,9876543210,12 MG Road,,Bengaluru,Karnataka,560001,1\nMeera Iyer,9876543211,9876543211,18 Linking Road,,Mumbai,Maharashtra,400052,1\nKabir Singh,9876543212,9876543212,22 Connaught Place,,New Delhi,Delhi,110001,1\n';recipientsFile=new File([csv],'sample-flipkart-users.csv',{type:'text/csv'});$('#recipientPreview').textContent='3 Flipkart user/address records ready'};
+if($('input[name="file"]'))$('input[name="file"]').onchange=e=>{recipientsFile=e.target.files[0]||null;$('#recipientPreview').textContent=recipientsFile?recipientsFile.name+' ready':''};
+if($('#sample'))$('#sample').onclick=()=>{const csv='recipient,phone,flipkart_user_id,line1,line2,city,state,postal_code,max_concurrent_orders\nAarav Sharma,9876543210,9876543210,12 MG Road,,Bengaluru,Karnataka,560001,1\nMeera Iyer,9876543211,9876543211,18 Linking Road,,Mumbai,Maharashtra,400052,1\nKabir Singh,9876543212,9876543212,22 Connaught Place,,New Delhi,Delhi,110001,1\n';recipientsFile=new File([csv],'sample-flipkart-users.csv',{type:'text/csv'});$('#recipientPreview').textContent='3 Flipkart user/address records ready'};
 $('#batchForm').onsubmit=async e=>{
   e.preventDefault();
   const form=e.currentTarget,f=new FormData(form),button=form.querySelector('button[type="submit"]');
@@ -89,6 +89,7 @@ $('#batchForm').onsubmit=async e=>{
       quantity:Number(row.querySelector('[name="quantity"]').value),
       estimatedUnitPriceMinor:Math.round(Number(row.querySelector('[name="price"]').value)*100),
       productCheckId:String(row.querySelector('[name="productCheckId"]')?.value||''),
+      retailerAccountId:String(row.querySelector('[name="retailerAccountId"]')?.value||''),
       hsnSac:String(row.querySelector('[name="hsnSac"]')?.value||'8517').trim(),
       gstRate:Number(row.querySelector('[name="gstRate"]')?.value||18),
       cessRate:Number(row.querySelector('[name="cessRate"]')?.value||0),
@@ -98,9 +99,8 @@ $('#batchForm').onsubmit=async e=>{
   });
   if(!products.length){$('#formError').textContent='Add at least one product.';return}
   const allocatedCount=products.filter(product=>product.allocationPlan?.complete).length;
-  if(allocatedCount>0&&allocatedCount!==products.length){$('#formError').textContent='Complete pool allocation for every product or use recipient-file mode for every product.';return}
+  if(allocatedCount>0&&allocatedCount!==products.length){$('#formError').textContent='Complete pool allocation for every product in this batch.';return}
   const poolMode=allocatedCount===products.length;
-  if(!poolMode&&!recipientsFile){$('#formError').textContent='Upload a recipient file or complete Flipkart pool allocation.';return}
   button.disabled=true;button.textContent='Preparing order…';
   try{
     let items=[],readyMessage='';
@@ -121,20 +121,29 @@ $('#batchForm').onsubmit=async e=>{
       const unitCount=items.reduce((sum,item)=>sum+Number(item.quantity||0),0);
       readyMessage=unitCount+' units allocated across '+accountIds.size+' verified Flipkart accounts';
     }else{
-      const upload=new FormData();upload.append('file',recipientsFile);
-      const imported=await api('/api/address-books/import',{method:'POST',body:upload});
-      items=imported.addressIds.flatMap(addressId=>products.map(product=>({
-        productUrl:product.productUrl,
-        quantity:product.quantity,
-        estimatedUnitPriceMinor:product.estimatedUnitPriceMinor,
-        productCheckId:product.productCheckId,
-        hsnSac:product.hsnSac,
-        gstRate:product.gstRate,
-        cessRate:product.cessRate,
-        priceIncludesGst:product.priceIncludesGst,
-        addressId
-      })));
-      readyMessage=imported.count+' recipients × '+products.length+' products ready';
+      // Single-account mode: bind to saved customer address for the selected account
+      const recipientData=await api('/api/recipients').catch(()=>({recipients:[]}));
+      const recipients=recipientData.recipients||[];
+      const accountData=await api('/api/retailer-accounts?retailer=flipkart&limit=500').catch(()=>({accounts:[]}));
+      const accounts=accountData.accounts||[];
+      items=products.map(product=>{
+        const account=accounts.find(a=>a.id===product.retailerAccountId);
+        const recipient=recipients.find(r=>r.retailer_accounts&&r.retailer_accounts.flipkart===account?.account_reference);
+        const addressId=account?.address_id||recipient?.id;
+        return {
+          productUrl:product.productUrl,
+          quantity:product.quantity,
+          estimatedUnitPriceMinor:product.estimatedUnitPriceMinor,
+          productCheckId:product.productCheckId,
+          retailerAccountId:product.retailerAccountId||undefined,
+          addressId:addressId||undefined,
+          hsnSac:product.hsnSac,
+          gstRate:product.gstRate,
+          cessRate:product.cessRate,
+          priceIncludesGst:product.priceIncludesGst
+        };
+      });
+      readyMessage=products.length+' Flipkart order(s) prepared from saved addresses';
     }
     const batch=await api('/api/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:f.get('name'),paymentRoute:f.get('paymentMode'),items})});
     await api(`/api/batches/${batch.id}/approve`,{method:'POST'});
