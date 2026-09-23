@@ -12,6 +12,26 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ordergrid_test
+          POSTGRES_USER: ordergrid
+          POSTGRES_PASSWORD: ordergrid_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://ordergrid:ordergrid_test_password@localhost:5432/ordergrid_test
+      NODE_ENV: test
+      APP_ORIGIN: http://localhost:3000
+      SESSION_SECRET: ci_session_secret_32_bytes_minimum_length!
+      DATA_ENCRYPTION_KEY_BASE64: YXV0b2dlbmVyYXRlZF8zMmJ5dGVfa2V5X2Zvcg==1234567890abcdef
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +42,12 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Run Database Migrations
+        run: npm run db:migrate
+      - name: Run Integration Tests
+        run: npm run test:integration
+      - name: Run Load & Concurrency Smoke Test
+        run: npm run test:load
       - name: Validate Workers Free configuration
         run: npx --yes wrangler@4.136.1 deploy --dry-run --outdir /tmp/ordergrid-wrangler-dry-run
       - name: Frontend/card connector contract smoke test
