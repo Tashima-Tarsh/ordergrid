@@ -58,15 +58,15 @@ const side=document.createElement('aside');
 side.className='app-sidebar';
 side.setAttribute('aria-label','Primary navigation');
 
-// The 7 canonical OrderGrid sections
 const items=[
-  ['dashboard','⌂','Dashboard'],
-  ['flipkart-accounts','★','Flipkart Accounts'],
-  ['bulk-orders','▦','Bulk Orders'],
-  ['action-required','⚡','Action Required'],
-  ['funding','◆','Funding'],
-  ['reports','▣','Reports'],
-  ['settings','⚙','Settings']
+  ['control','◎','Control Center'],
+  ['overview','⌂','Dashboard'],
+  ['fulfilment','▦','Fulfilment'],
+  ['bulk','⇉','Bulk orders'],
+  ['payments','₹','Payments'],
+  ['gst','▣','GST & invoices'],
+  ['cards','◆','Cards & funding'],
+  ['rewards','★','Retailer users']
 ];
 
 side.innerHTML=
@@ -80,73 +80,38 @@ const main=document.querySelector('main');
 const title=document.createElement('section');
 title.className='workspace-title';
 main.prepend(title);
+const sections=[...main.children].filter(x=>x!==title&&x.tagName!=='DIALOG');
+sections.forEach(s=>{
+  let view='hidden';
+  if(s.classList.contains('control-center'))view='control';
+  else if(s.classList.contains('command-dashboard'))view='overview';
+  else if(s.classList.contains('metrics'))view='hidden';
+  else if(s.classList.contains('bulk-checkout')||s.classList.contains('human-action-centre'))view='bulk';
+  else if(s.classList.contains('funding-workspace'))view='cards';
+  else if(s.classList.contains('rewards-centre'))view='rewards';
+  else if(s.classList.contains('fulfilment-commerce')||s.classList.contains('checkout-panel')||s.querySelector('h2')?.textContent==='Fulfilment batches')view='fulfilment';
+  else if(s.classList.contains('gst-compliance'))view='gst';
+  else if(s.querySelector('h2')?.textContent==='Corporate settlement ledger')view='payments';
+  s.dataset.view=view;
+  s.classList.add('view-section');
+});
 
 const copy={
-  'dashboard':['Dashboard','Live procurement command, metrics and recent execution.'],
-  'flipkart-accounts':['Flipkart Accounts','Authorised accounts, delivery addresses, OTP status and health.'],
-  'bulk-orders':['Bulk Orders','Products, allocation preview, approval, cart and checkout execution.'],
-  'action-required':['Action Required','Human action inbox for OTPs, CAPTCHAs, 3DS and login renewals.'],
-  'funding':['Funding','Card programmes, master funding source and virtual card inventory.'],
-  'reports':['Reports','Reconciliation reports, corporate settlement ledger and GST tax billing.'],
-  'settings':['Settings','Workspace users, roles, autopilot policies and worker configuration.']
+  control:['Control Center','Accounts, checkout, cards and order progress.'],
+  overview:['Dashboard','Live procurement command and recent execution.'],
+  fulfilment:['Fulfilment','Products, allocation, approval and checkout.'],
+  bulk:['Bulk orders','Customer orders and checkout intervention.'],
+  payments:['Payments','Settlement and completed payment records.'],
+  gst:['GST & Invoices','GST billing, invoice register and tax profile.'],
+  cards:['Cards & funding','Funding programme and virtual-card inventory.'],
+  rewards:['Retailer users','Authorised accounts, addresses and saved sessions.']
 };
+const hashByView={control:'control-center',overview:'dashboard',fulfilment:'fulfilment',bulk:'bulk-orders',payments:'payments',gst:'gst-invoices',cards:'cards',rewards:'retailer-users'};
+const viewByHash=Object.fromEntries(Object.entries(hashByView).map(([view,hash])=>[hash,view]));
+const hashView=()=>viewByHash[String(location.hash||'').replace(/^#\/?/,'').replace(/\/$/,'')]||null;
 
-const hashByView={
-  'dashboard':'dashboard',
-  'flipkart-accounts':'flipkart-accounts',
-  'bulk-orders':'bulk-orders',
-  'action-required':'action-required',
-  'funding':'funding',
-  'reports':'reports',
-  'settings':'settings'
-};
-
-const legacyViewAlias={
-  'control':'settings',
-  'control-center':'settings',
-  'overview':'dashboard',
-  'fulfilment':'bulk-orders',
-  'bulk':'bulk-orders',
-  'action':'action-required',
-  'human-actions':'action-required',
-  'cards':'funding',
-  'gst':'reports',
-  'gst-invoices':'reports',
-  'payments':'reports',
-  'rewards':'flipkart-accounts',
-  'retailer-users':'flipkart-accounts'
-};
-
-function normalizeView(v){
-  const raw=String(v||'').replace(/^#\/?/,'').replace(/\/$/,'').trim().toLowerCase();
-  return hashByView[raw]||legacyViewAlias[raw]||'dashboard';
-}
-
-function classifySection(s){
-  if(s===title||s.tagName==='DIALOG')return 'hidden';
-  if(s.classList.contains('command-dashboard')||s.classList.contains('hero')||s.classList.contains('metrics')||s.classList.contains('user-dashboard')||s.classList.contains('provider-strip'))return 'dashboard';
-  if(s.classList.contains('rewards-centre'))return 'flipkart-accounts';
-  if(s.classList.contains('bulk-checkout')||s.classList.contains('fulfilment-commerce')||s.classList.contains('checkout-panel'))return 'bulk-orders';
-  if(s.classList.contains('human-action-centre'))return 'action-required';
-  if(s.classList.contains('funding-workspace'))return 'funding';
-  if(s.classList.contains('gst-compliance')||s.querySelector('h2')?.textContent==='Corporate settlement ledger'||s.querySelector('.eyebrow')?.textContent==='PAYMENT & COMPLIANCE')return 'reports';
-  if(s.classList.contains('control-center')||s.classList.contains('automation-control-center'))return 'settings';
-  return s.dataset.view||'dashboard';
-}
-
-function updateSections(){
-  const sections=[...main.children].filter(x=>x!==title&&x.tagName!=='DIALOG');
-  sections.forEach(s=>{
-    const v=classifySection(s);
-    s.dataset.view=v;
-    s.classList.add('view-section');
-  });
-  return sections;
-}
-
-function show(requestedView,{updateHash=true}={}){
-  const view=normalizeView(requestedView);
-  const sections=updateSections();
+function show(view,{updateHash=true}={}){
+  if(!copy[view])view='overview';
   sections.forEach(s=>s.classList.toggle('view-active',s.dataset.view===view));
   side.querySelectorAll('button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
   title.innerHTML=`<div><p class="eyebrow">ORDERGRID</p><h1>${copy[view][0]}</h1><p>${copy[view][1]}</p></div>`;
@@ -160,7 +125,7 @@ function show(requestedView,{updateHash=true}={}){
 }
 window.ordergridNavigate=view=>show(view);
 
-document.querySelector('#controlCenterTop')?.addEventListener('click',e=>{e.preventDefault();show('settings')});
+document.querySelector('#controlCenterTop')?.addEventListener('click',e=>{e.preventDefault();show('control')});
 menu.type='button';
 menu.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();document.body.classList.toggle('nav-open')});
 side.querySelectorAll('button[data-view]').forEach(button=>{
@@ -168,11 +133,8 @@ side.querySelectorAll('button[data-view]').forEach(button=>{
     e.preventDefault();e.stopPropagation();
     const view=button.dataset.view;
     show(view);
-    if(view==='funding')window.dispatchEvent(new CustomEvent('ordergrid:cards-open'));
-    if(view==='reports')window.dispatchEvent(new CustomEvent('ordergrid:gst-open'));
-    if(view==='action-required')window.dispatchEvent(new CustomEvent('ordergrid:human-actions-open'));
-    if(view==='bulk-orders')window.dispatchEvent(new CustomEvent('ordergrid:bulk-refresh'));
-    if(view==='flipkart-accounts')window.dispatchEvent(new CustomEvent('ordergrid:update'));
+    if(view==='cards')window.dispatchEvent(new CustomEvent('ordergrid:cards-open'));
+    if(view==='gst')window.dispatchEvent(new CustomEvent('ordergrid:gst-open'));
   });
 });
 document.addEventListener('click',e=>{
@@ -180,10 +142,10 @@ document.addEventListener('click',e=>{
   if(e.target.closest?.('.app-sidebar')||e.target.closest?.('.menu-trigger'))return;
   document.body.classList.remove('nav-open');
 });
-window.addEventListener('hashchange',()=>{const view=normalizeView(location.hash);if(view)show(view,{updateHash:false})});
+window.addEventListener('hashchange',()=>{const view=hashView();if(view)show(view,{updateHash:false})});
 
-let initial=normalizeView(location.hash);
-if(!initial||initial==='dashboard'){try{initial=normalizeView(localStorage.getItem('ordergrid-view'))||'dashboard'}catch{initial='dashboard'}}
+let initial=hashView();
+if(!initial){try{initial=localStorage.getItem('ordergrid-view')||'overview'}catch{initial='overview'}}
 show(initial);
 
 const fulfilmentScript=document.createElement('script');
