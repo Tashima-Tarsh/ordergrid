@@ -5,7 +5,7 @@ import { createDb, audit } from "./db.js";
 import { ShopifyProvider, ControlledRetailerProvider } from "./providers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
-import { ensureBasketVirtualCard } from "./card-provisioning.js";
+import { applyBasketCardProvisioning, ensureBasketVirtualCard } from "./card-provisioning.js";
 
 const config=loadConfig();
 if(!config.REDIS_URL)throw new Error("REDIS_URL is required to run the background worker");
@@ -84,14 +84,8 @@ async function triggerContinuousAutopilot(tenantId:string){
       if(!cardId){
         let fundingCeiling=Math.ceil(expectedMinor*(1+Number(policy.max_price_increase_percent||0)/100));
         if(Number(policy.max_order_value_minor)>0)fundingCeiling=Math.min(fundingCeiling,Number(policy.max_order_value_minor));
-        const card=await ensureBasketVirtualCard(db,config,tenantId,basket.id,basket.userId,fundingCeiling);
-        cardId=card.cardId;
-        if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
-          await db.query(
-            "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
-            [basket.id,tenantId]
-          );
-        }
+        const provisioned=await applyBasketCardProvisioning(db,config,tenantId,basket.id,basket.userId,fundingCeiling);
+        cardId=provisioned.assigned?provisioned.cardId:null;
       }
     }else if(paymentRoute==="Corporate virtual card"){
       const assigned=await db.query("select virtual_card_id from checkout_baskets where id=$1 and tenant_id=$2",[basket.id,tenantId]);

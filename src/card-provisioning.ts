@@ -24,7 +24,31 @@ function configuredCardholder(config:Config):CardholderInput|null{
   };
 }
 
-export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:string,basketId:string,userId:string,fundingAmountMinor?:number){
+export type CardProvisionStatus =
+  | "NOT_FOUND"
+  | "NOT_REQUIRED"
+  | "PROGRAMME_REQUIRED"
+  | "CARDHOLDER_PROFILE_REQUIRED"
+  | "CARD_ASSIGNED"
+  | "CONTROL_FAILED"
+  | "ISSUE_IN_PROGRESS"
+  | "ISSUE_UNCERTAIN"
+  | "CLEANUP_REQUIRED"
+  | "FUNDING_CAP_EXCEEDED";
+
+export type CardProvisionResult = {
+  status: CardProvisionStatus;
+  cardId: string | null;
+};
+
+export async function ensureBasketVirtualCard(
+  db: Db,
+  config: Config,
+  tenantId: string,
+  basketId: string,
+  userId: string,
+  fundingAmountMinor?: number
+): Promise<CardProvisionResult> {
   const client=await db.connect();
   let row:any=null;
   let cardRow:any=null;
@@ -299,5 +323,57 @@ export async function reconcileOrphanVirtualCards(db:Db,tenantId:string){
     [tenantId]
   );
   return rows;
+}
+
+export async function applyBasketCardProvisioning(
+  db: Db,
+  config: Config,
+  tenantId: string,
+  basketId: string,
+  userId: string,
+  fundingCeiling: number
+): Promise<{ cardId: string | null; assigned: boolean; inProgress: boolean }> {
+  try {
+    const card = await ensureBasketVirtualCard(db, config, tenantId, basketId, userId, fundingCeiling);
+    if (card.status === "CARD_ASSIGNED" && card.cardId) {
+      return { cardId: card.cardId, assigned: true, inProgress: false };
+    }
+    if (card.status === "NOT_REQUIRED") {
+      return { cardId: null, assigned: false, inProgress: false };
+    }
+    if (card.status === "PROGRAMME_REQUIRED" || card.status === "CARDHOLDER_PROFILE_REQUIRED") {
+      await db.query(
+        "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+        [basketId, tenantId]
+      );
+      return { cardId: null, assigned: false, inProgress: false };
+    }
+    if (card.status === "ISSUE_IN_PROGRESS") {
+      return { cardId: null, assigned: false, inProgress: true };
+    }
+    const message =
+      card.status === "CONTROL_FAILED"
+        ? "Virtual card merchant/channel controls could not be applied"
+        : card.status === "FUNDING_CAP_EXCEEDED"
+        ? "Requested funding amount exceeds safety funding ceiling"
+        : card.status === "ISSUE_UNCERTAIN"
+        ? "Virtual card issuing status is uncertain; manual review required"
+        : card.status === "CLEANUP_REQUIRED"
+        ? "Virtual card requires manual cleanup"
+        : "Virtual card provisioning failed";
+
+    await db.query(
+      "update checkout_baskets set status='REQUIRES_ACTION',failure_code='CARD_SETUP_FAILED',failure_message=$1,claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$2 and tenant_id=$3",
+      [message, basketId, tenantId]
+    );
+    return { cardId: null, assigned: false, inProgress: false };
+  } catch (error: any) {
+    const errMessage = String(error?.message || "Virtual card provisioning failed unexpectedly").slice(0, 200);
+    await db.query(
+      "update checkout_baskets set status='REQUIRES_ACTION',failure_code='CARD_SETUP_FAILED',failure_message=$1,claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$2 and tenant_id=$3",
+      [errMessage, basketId, tenantId]
+    ).catch(() => {});
+    return { cardId: null, assigned: false, inProgress: false };
+  }
 }
 

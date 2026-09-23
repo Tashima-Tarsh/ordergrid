@@ -18,7 +18,7 @@ import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrd
 import { syncCheckoutBaskets } from "./baskets.js";
 import { disconnectTenantIssuer, loadTenantIssuer, saveDirectCardConnection, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
-import { cleanupBasketVirtualCard, ensureBasketVirtualCard, reconcileOrphanVirtualCards } from "./card-provisioning.js";
+import { applyBasketCardProvisioning, cleanupBasketVirtualCard, ensureBasketVirtualCard, reconcileOrphanVirtualCards } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
 import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
@@ -137,14 +137,8 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
       if(!cardId){
         let fundingCeiling=Math.ceil(expectedMinor*(1+Number(policy.max_price_increase_percent)/100));
         if(Number(policy.max_order_value_minor)>0)fundingCeiling=Math.min(fundingCeiling,Number(policy.max_order_value_minor));
-        const card=await ensureBasketVirtualCard(db,config,tenantId,basketId,userId,fundingCeiling);
-        cardId=card.cardId;
-        if(card.status==="PROGRAMME_REQUIRED"||card.status==="CARDHOLDER_PROFILE_REQUIRED"){
-          await db.query(
-            "update checkout_baskets set status='REQUIRES_ACTION',failure_code='PAYMENT_SETUP_REQUIRED',failure_message='Payment setup required before checkout can continue',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
-            [basketId,tenantId]
-          );
-        }
+        const provisioned=await applyBasketCardProvisioning(db,config,tenantId,basketId,userId,fundingCeiling);
+        cardId=provisioned.assigned?provisioned.cardId:null;
       }
     }else if(paymentRoute==="Corporate virtual card"){
       const assigned=await db.query("select virtual_card_id from checkout_baskets where id=$1 and tenant_id=$2",[basketId,tenantId]);
