@@ -1,4 +1,4 @@
-﻿-- Virtual cards issuing safety and lifecycle states.
+-- Virtual cards issuing safety and lifecycle states.
 alter table public.virtual_cards
   drop constraint if exists virtual_cards_status_check;
 
