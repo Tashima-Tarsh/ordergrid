@@ -28,9 +28,8 @@ const frontend=[
 must(server.includes('app.get("/api/users"'),"user contract: GET /api/users missing");
 must(server.includes('app.post("/api/users"'),"user contract: POST /api/users missing");
 must(server.includes("coalesce(username::text,''))"),"login contract: username lookup missing");
-must(server.includes("oneTimeOwnerRecoveryHash"),"login contract: one-time owner recovery hash missing");
-must(server.includes("owner_recovery_enabled=false"),"login contract: one-time owner recovery must disable itself");
-must(server.includes("user.owner_recovery_consumed"),"login contract: owner recovery audit event missing");
+must(!server.includes("ORDERGRID_OWNER_RECOVERY_HASH"),"security contract: owner recovery backdoor must be absent");
+must(!server.includes("oneTimeOwnerRecoveryUsername"),"security contract: owner recovery username backdoor must be absent");
 must(files["public/index.html"].includes("User ID or email"),"login contract: username/email label missing");
 must(files["public/app.js"].includes("identifier:f.get('identifier')"),"login contract: username identifier not submitted");
 must(files["cloudflare/worker.mjs"].includes('url.pathname.startsWith("/api/")'),"cloudflare production contract: API route handling missing");

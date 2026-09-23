@@ -12,7 +12,21 @@ import { z } from "zod";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { loadConfig } from "./config.js";
 import { audit, createDb } from "./db.js";
-import { computeOtpCooldown, decryptJson, encryptJson, hashPassword, tokenHash, verifyPassword } from "./security.js";
+import {
+  computeLockoutDurationSeconds,
+  computeOtpCooldown,
+  createSignedMfaToken,
+  decryptJson,
+  dummyVerifyPassword,
+  encryptJson,
+  generateRecoveryCodes,
+  generateTotpSecret,
+  hashPassword,
+  tokenHash,
+  verifyPassword,
+  verifySignedMfaToken,
+  verifyTotp
+} from "./security.js";
 import { createOrderQueue } from "./queue.js";
 import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrderId, verifiedRetailerUrl } from "./retailers.js";
 import { syncCheckoutBaskets } from "./baskets.js";
@@ -32,6 +46,7 @@ if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
   process.env.WORKER_API_TOKEN ||= randomBytes(48).toString("base64url");
 }
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const encryptionKeys = [config.DATA_ENCRYPTION_KEY_BASE64, config.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64].filter(Boolean) as string[];
 const bedrock=createBedrockService(config);
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -165,7 +180,16 @@ await app.register(helmet,{
     upgradeInsecureRequests: config.APP_ORIGIN.startsWith("https") ? [] : null
   }}
 });
-await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
+await app.register(rateLimit, {
+  max: 600,
+  timeWindow: "1 minute",
+  errorResponseBuilder: (_req, context) => ({
+    statusCode: 429,
+    error: "rate_limited",
+    message: "Rate limit exceeded. Please try again later.",
+    retryAfterSeconds: Math.ceil(context.ttl / 1000)
+  })
+}); await app.register(cookie, { secret: config.SESSION_SECRET });
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{
   root:join(dirname(fileURLToPath(import.meta.url)),"../public"),
@@ -221,17 +245,86 @@ function workerMachineRoute(req:any){
   if(path==="/api/bulk-queue"&&String(req.url||"").includes("workerId="))return true;
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
 }
+const mfaRequiredRoles = new Set(config.MFA_REQUIRED_ROLES.split(",").map(r => r.trim().toUpperCase()).filter(Boolean));
+const isMfaRequired = (role: string) => mfaRequiredRoles.has(role.toUpperCase());
+
+async function recordLoginFailure(dbClient: any, identifierHash: string, userId?: string, tenantId?: string) {
+  const current = await dbClient.query("select failures, lock_count from login_throttle where identifier_hash=$1", [identifierHash]);
+  const failures = (current.rows[0]?.failures || 0) + 1;
+  let lockCount = current.rows[0]?.lock_count || 0;
+  let lockedUntil: Date | null = null;
+
+  if (failures >= 5) {
+    lockCount += 1;
+    const lockDuration = computeLockoutDurationSeconds(lockCount);
+    lockedUntil = new Date(Date.now() + lockDuration * 1000);
+    await dbClient.query(
+      `insert into login_throttle (identifier_hash, failures, locked_until, lock_count, last_failure_at)
+       values ($1, 0, $2, $3, now())
+       on conflict (identifier_hash) do update set
+         failures = 0,
+         locked_until = $2,
+         lock_count = $3,
+         last_failure_at = now()`,
+      [identifierHash, lockedUntil, lockCount]
+    );
+    if (userId && tenantId) {
+      await audit(dbClient, tenantId, userId, "user.locked", "user", userId, { lockCount, lockedUntil }).catch(() => {});
+    }
+  } else {
+    await dbClient.query(
+      `insert into login_throttle (identifier_hash, failures, locked_until, lock_count, last_failure_at)
+       values ($1, $2, null, $3, now())
+       on conflict (identifier_hash) do update set
+         failures = $2,
+         last_failure_at = now()`,
+      [identifierHash, failures, lockCount]
+    );
+  }
+}
+
 app.addHook("preHandler",async(req,reply)=>{
-  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/login/google"||req.url==="/api/auth-config"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
+  const path = String(req.url||"").split("?",1)[0] ?? "";
+  if(
+    !path.startsWith("/api/")||
+    path==="/api/health"||
+    path==="/api/login"||
+    path==="/api/login/mfa"||
+    path==="/api/login/google"||
+    path==="/api/auth-config"||
+    path==="/api/signup"||
+    path==="/api/signup-status"||
+    path==="/api/secure-browser/bootstrap"
+  ) return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
-    select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
+    select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role,u.mfa_enabled
     from sessions s
     join users u on u.id=s.user_id
     where s.id_hash=$1 and s.expires_at>now() and u.active
   `,[tokenHash(raw)]);
   if(!rows[0])return reply.code(401).send({error:"unauthorized"});
-  req.principal={id:rows[0].id,homeTenantId:rows[0].home_tenant_id,tenantId:rows[0].tenant_id,role:rows[0].role};
+  const userRow = rows[0];
+  req.principal={id:userRow.id,homeTenantId:userRow.home_tenant_id,tenantId:userRow.tenant_id,role:userRow.role};
+
+  // Enforce MFA enrollment for mandatory roles
+  if(isMfaRequired(userRow.role)&&!userRow.mfa_enabled){
+    const allowedEnrollmentPaths=[
+      "/api/mfa/status",
+      "/api/mfa/enroll/start",
+      "/api/mfa/enroll/verify",
+      "/api/auth-config",
+      "/api/logout",
+      "/api/users/me"
+    ];
+    if(!allowedEnrollmentPaths.includes(path)){
+      return reply.code(403).send({
+        error:"mfa_enrollment_required",
+        message:"MFA enrollment is required for your role."
+      });
+    }
+  }
+
   if(workerMachineRoute(req)){
     if(!["OWNER","APPROVER","BUYER"].includes(req.principal.role))return reply.code(403).send({error:"worker_role_required"});
     const supplied=String(req.headers["x-ordergrid-worker-token"]||"");
@@ -473,7 +566,7 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
   try{
     await client.query("begin");
     const linkedIdentity=await client.query(
-      `select u.id,u.tenant_id,u.email,u.role::text role,u.active,t.name workspace_name
+      `select u.id,u.tenant_id,u.email,u.role::text role,u.active,u.mfa_enabled,t.name workspace_name
        from private.user_external_identities i
        join users u on u.id=i.user_id
        join tenants t on t.id=u.tenant_id
@@ -494,7 +587,7 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
       );
     }else{
       const existing=await client.query(
-        "select id,tenant_id,email,role::text role,active from users where lower(email::text)=lower($1) limit 1",
+        "select id,tenant_id,email,role::text role,active,mfa_enabled from users where lower(email::text)=lower($1) limit 1",
         [identity.email]
       );
       if(existing.rows[0]){
@@ -516,7 +609,7 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
         }
         if(!existing.rows[0].active&&suppliedSetup){
           const reactivated=await client.query(
-            "update users set active=true,role='OWNER' where id=$1 returning id,tenant_id,email,role::text role,active",
+            "update users set active=true,role='OWNER' where id=$1 returning id,tenant_id,email,role::text role,active,mfa_enabled",
             [existing.rows[0].id]
           );
           user=reactivated.rows[0];
@@ -551,7 +644,7 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
         }
         const passwordHash=await hashPassword(randomBytes(48).toString("base64url"));
         const inserted=await client.query(
-          "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,tenant_id,email,role::text role,active",
+          "insert into users(tenant_id,email,password_hash,role) values($1,$2,$3,'OWNER') returning id,tenant_id,email,role::text role,active,mfa_enabled",
           [workspace.id,identity.email,passwordHash]
         );
         user=inserted.rows[0];
@@ -573,6 +666,25 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
       }
     }
 
+    if(user.mfa_enabled && !config.MFA_TRUST_GOOGLE_SIGNIN){
+      await client.query("commit");
+      const mfaToken=createSignedMfaToken({
+        userId:user.id,
+        tenantId:user.tenant_id,
+        role:user.role,
+        identifierHash:tokenHash(identity.email.toLowerCase()),
+        attempts:0,
+        expiresAt:Date.now()+5*60*1000
+      },config.SESSION_SECRET);
+      await audit(db,user.tenant_id,user.id,"user.google_login_mfa_challenge","user",user.id,{googleSubject:identity.subject}).catch(()=>{});
+      return reply.code(200).send({
+        mfaRequired:true,
+        mfaToken,
+        user:{id:user.id,email:user.email,role:user.role},
+        workspace
+      });
+    }
+
     const token=randomBytes(32).toString("base64url");
     await client.query(
       "insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",
@@ -591,47 +703,338 @@ app.post("/api/login/google",{config:{rateLimit:{max:12,timeWindow:"15 minutes"}
     linked
   }).catch(()=>{});
   return reply.code(created?201:200).send({
-    user:{id:user.id,email:user.email,role:user.role},
+    user:{id:user.id,email:user.email,role:user.role,mfaRequired:false,mfaEnrollmentRequired:isMfaRequired(user.role)&&!user.mfa_enabled},
     workspace,
     created,
     linked
   });
 });
 
-app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},async(req,reply)=>{
+app.post("/api/login",{config:{rateLimit:{max:config.LOGIN_RATE_LIMIT_MAX,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const input=z.object({
     identifier:z.string().min(1).max(320).optional(),
     email:z.string().min(1).max(320).optional(),
     password:z.string().min(1).max(200)
   }).refine(value=>Boolean(value.identifier||value.email),{message:"User ID or email is required"}).parse(req.body);
   const identifier=String(input.identifier??input.email??"").trim();
+  const normalizedIdentifier=identifier.toLowerCase();
+  const identifierHash=tokenHash(normalizedIdentifier);
+
+  // Check login throttle BEFORE checking credentials / scrypt
+  const throttleRes=await db.query(
+    "select failures, locked_until, lock_count from login_throttle where identifier_hash=$1",
+    [identifierHash]
+  );
+  const throttle=throttleRes.rows[0];
+  if(throttle&&throttle.locked_until&&new Date(throttle.locked_until).getTime()>Date.now()){
+    const retryAfterSeconds=Math.max(1,Math.ceil((new Date(throttle.locked_until).getTime()-Date.now())/1000));
+    reply.header("Retry-After",retryAfterSeconds.toString());
+    return reply.code(429).send({
+      error:"too_many_attempts",
+      message:"Account is temporarily locked due to too many failed attempts. Try again later.",
+      retryAfterSeconds
+    });
+  }
+
   const {rows}=await db.query(
-    "select id,tenant_id,role,password_hash,username from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
+    "select id,tenant_id,role,password_hash,username,email,mfa_enabled from users where active and (lower(email::text)=lower($1) or lower(coalesce(username::text,''))=lower($1)) limit 1",
     [identifier]
   );
   let u=rows[0];
-  let usedOneTimeOwnerRecovery=false;
+
   if(!u){
-    const oneTimeOwnerRecoveryUsername=(process.env.ORDERGRID_OWNER_RECOVERY_USERNAME||"").trim();
-    const oneTimeOwnerRecoveryHash=(process.env.ORDERGRID_OWNER_RECOVERY_HASH||"").trim();
-    if(oneTimeOwnerRecoveryUsername&&oneTimeOwnerRecoveryHash&&identifier.toLowerCase()===oneTimeOwnerRecoveryUsername.toLowerCase()&&await verifyPassword(input.password,oneTimeOwnerRecoveryHash)){
-      const owner=await db.query("select id,tenant_id,role from users where role='OWNER' and active order by created_at asc limit 1");
-      if(owner.rows[0]){
-        u={...owner.rows[0],password_hash:oneTimeOwnerRecoveryHash};
-        usedOneTimeOwnerRecovery=true;
-        await db.query("update users set owner_recovery_enabled=false where id=$1",[u.id]).catch(()=>{});
-        await audit(db,u.tenant_id,u.id,"user.owner_recovery_consumed","user",u.id,{username:oneTimeOwnerRecoveryUsername}).catch(()=>{});
-      }
-    }
+    await dummyVerifyPassword(input.password);
+    await recordLoginFailure(db,identifierHash);
+    return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
   }
-  if(!u)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
-  const passwordOk=usedOneTimeOwnerRecovery||await verifyPassword(input.password,u.password_hash);
-  if(!passwordOk)return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
+
+  const passwordOk=await verifyPassword(input.password,u.password_hash);
+  if(!passwordOk){
+    await recordLoginFailure(db,identifierHash,u.id,u.tenant_id);
+    return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
+  }
+
+  if(u.mfa_enabled){
+    const mfaToken=createSignedMfaToken({
+      userId:u.id,
+      tenantId:u.tenant_id,
+      role:u.role,
+      identifierHash,
+      attempts:0,
+      expiresAt:Date.now()+5*60*1000
+    },config.SESSION_SECRET);
+
+    return {
+      mfaRequired:true,
+      mfaToken
+    };
+  }
+
+  // Clear throttle on success
+  await db.query("delete from login_throttle where identifier_hash=$1",[identifierHash]);
+
   const token=randomBytes(32).toString("base64url");
   await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
   reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
   const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
-  return {user:{id:u.id,role:u.role},workspace:tenant.rows[0]};
+  return {
+    user:{
+      id:u.id,
+      role:u.role,
+      mfaRequired:false,
+      mfaEnrollmentRequired:isMfaRequired(u.role)
+    },
+    workspace:tenant.rows[0]
+  };
+});
+
+app.post("/api/login/mfa",{config:{rateLimit:{max:config.MFA_RATE_LIMIT_MAX,timeWindow:"15 minutes"}}},async(req,reply)=>{
+  const body=z.object({
+    mfaToken:z.string().min(1),
+    code:z.string().min(1).max(64)
+  }).parse(req.body);
+
+  const payload=verifySignedMfaToken<{
+    userId:string;
+    tenantId:string;
+    role:string;
+    identifierHash:string;
+    attempts:number;
+    expiresAt:number;
+  }>(body.mfaToken,config.SESSION_SECRET);
+
+  if(!payload){
+    return reply.code(401).send({
+      error:"invalid_mfa_token",
+      message:"MFA session expired or invalid. Please log in again."
+    });
+  }
+
+  // Check lockout on identifierHash
+  const throttleRes=await db.query(
+    "select failures, locked_until from login_throttle where identifier_hash=$1",
+    [payload.identifierHash]
+  );
+  const throttle=throttleRes.rows[0];
+  if(throttle&&throttle.locked_until&&new Date(throttle.locked_until).getTime()>Date.now()){
+    const retryAfterSeconds=Math.max(1,Math.ceil((new Date(throttle.locked_until).getTime()-Date.now())/1000));
+    reply.header("Retry-After",retryAfterSeconds.toString());
+    return reply.code(429).send({
+      error:"too_many_attempts",
+      message:"Account is temporarily locked due to too many failed attempts. Try again later.",
+      retryAfterSeconds
+    });
+  }
+
+  const {rows}=await db.query(
+    "select id,tenant_id,role,mfa_enabled,mfa_secret_ciphertext,mfa_secret_iv,mfa_secret_auth_tag,mfa_last_used_step from users where id=$1 and tenant_id=$2 and active limit 1",
+    [payload.userId,payload.tenantId]
+  );
+  const u=rows[0];
+  if(!u||!u.mfa_enabled||!u.mfa_secret_ciphertext){
+    return reply.code(401).send({error:"invalid_credentials",message:"Invalid MFA state"});
+  }
+
+  let decryptedSecret:string;
+  try{
+    const dec=decryptJson({
+      ciphertext:u.mfa_secret_ciphertext,
+      iv:u.mfa_secret_iv,
+      authTag:u.mfa_secret_auth_tag
+    },encryptionKeys);
+    decryptedSecret=typeof dec==="string"?dec:dec.secret;
+  }catch{
+    return reply.code(500).send({error:"mfa_decryption_error",message:"Failed to decrypt MFA credentials"});
+  }
+
+  // Try TOTP verification
+  const totpRes=verifyTotp(body.code,decryptedSecret,{
+    lastUsedStep:u.mfa_last_used_step
+  });
+
+  if(totpRes.valid){
+    await db.query("update users set mfa_last_used_step=$1 where id=$2",[totpRes.step.toString(),u.id]);
+    await db.query("delete from login_throttle where identifier_hash=$1",[payload.identifierHash]);
+    const token=randomBytes(32).toString("base64url");
+    await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
+    reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
+    const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
+    return {user:{id:u.id,role:u.role},workspace:tenant.rows[0]};
+  }
+
+  // Try Recovery Codes
+  const codeHash=tokenHash(body.code.trim().toUpperCase());
+  const recoveryRes=await db.query(
+    "select id from user_recovery_codes where user_id=$1 and code_hash=$2 and used_at is null limit 1",
+    [u.id,codeHash]
+  );
+  if(recoveryRes.rows[0]){
+    await db.query("update user_recovery_codes set used_at=now() where id=$1",[recoveryRes.rows[0].id]);
+    await audit(db,u.tenant_id,u.id,"user.recovery_code_used","user",u.id,{}).catch(()=>{});
+    await db.query("delete from login_throttle where identifier_hash=$1",[payload.identifierHash]);
+    const token=randomBytes(32).toString("base64url");
+    await db.query("insert into sessions(id_hash,user_id,active_tenant_id,expires_at) values($1,$2,$3,now()+interval '12 hours')",[tokenHash(token),u.id,u.tenant_id]);
+    reply.setCookie("session",token,{httpOnly:true,secure:secureCookies,sameSite:"strict",path:"/",maxAge:43200});
+    const tenant=await db.query("select id,name from tenants where id=$1",[u.tenant_id]);
+    return {user:{id:u.id,role:u.role,recoveryCodeUsed:true},workspace:tenant.rows[0]};
+  }
+
+  // Wrong code -> record failure in throttle
+  await recordLoginFailure(db,payload.identifierHash,u.id,u.tenant_id);
+  return reply.code(401).send({error:"invalid_mfa_code",message:"Invalid authentication code or recovery code"});
+});
+
+app.get("/api/mfa/status",async(req,reply)=>{
+  const p=req.principal!;
+  const {rows}=await db.query("select mfa_enabled,mfa_enrolled_at from users where id=$1 and tenant_id=$2 limit 1",[p.id,p.tenantId]);
+  const user=rows[0];
+  return {
+    mfaEnabled:Boolean(user?.mfa_enabled),
+    mfaEnrolledAt:user?.mfa_enrolled_at||null,
+    mfaRequired:isMfaRequired(p.role)
+  };
+});
+
+app.post("/api/mfa/enroll/start",async(req,reply)=>{
+  const p=req.principal!;
+  const {rows}=await db.query("select id,email,mfa_enabled from users where id=$1 and tenant_id=$2 and active limit 1",[p.id,p.tenantId]);
+  const u=rows[0];
+  if(!u)return reply.code(401).send({error:"unauthorized"});
+
+  const {secretBase32}=generateTotpSecret();
+  const otpauthUri=`otpauth://totp/OrderGrid:${encodeURIComponent(u.email)}?secret=${secretBase32}&issuer=OrderGrid&algorithm=SHA1&digits=6&period=30`;
+  const enrollmentToken=createSignedMfaToken({
+    userId:u.id,
+    tenantId:p.tenantId,
+    secretBase32,
+    expiresAt:Date.now()+10*60*1000
+  },config.SESSION_SECRET);
+
+  return {
+    secret:secretBase32,
+    otpauthUri,
+    enrollmentToken
+  };
+});
+
+app.post("/api/mfa/enroll/verify",async(req,reply)=>{
+  const p=req.principal!;
+  const body=z.object({
+    enrollmentToken:z.string().min(1),
+    code:z.string().min(6).max(8)
+  }).parse(req.body);
+
+  const payload=verifySignedMfaToken<{
+    userId:string;
+    tenantId:string;
+    secretBase32:string;
+    expiresAt:number;
+  }>(body.enrollmentToken,config.SESSION_SECRET);
+
+  if(!payload||payload.userId!==p.id||payload.tenantId!==p.tenantId){
+    return reply.code(400).send({error:"invalid_enrollment_token",message:"MFA enrollment session expired or invalid"});
+  }
+
+  const totpRes=verifyTotp(body.code,payload.secretBase32);
+  if(!totpRes.valid){
+    return reply.code(400).send({error:"invalid_mfa_code",message:"Invalid verification code. Check your authenticator app time and try again."});
+  }
+
+  const enc=encryptJson({secret:payload.secretBase32},config.DATA_ENCRYPTION_KEY_BASE64);
+  const recoveryCodes=generateRecoveryCodes(10);
+
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    await client.query(
+      `update users
+       set mfa_secret_ciphertext=$1,
+           mfa_secret_iv=$2,
+           mfa_secret_auth_tag=$3,
+           mfa_enabled=true,
+           mfa_enrolled_at=now(),
+           mfa_last_used_step=$4
+       where id=$5 and tenant_id=$6`,
+      [enc.ciphertext,enc.iv,enc.authTag,totpRes.step.toString(),p.id,p.tenantId]
+    );
+    await client.query("delete from user_recovery_codes where user_id=$1",[p.id]);
+    for(const code of recoveryCodes){
+      await client.query(
+        "insert into user_recovery_codes (user_id,code_hash) values ($1,$2)",
+        [p.id,tokenHash(code.trim().toUpperCase())]
+      );
+    }
+    await client.query("commit");
+  }catch(err){
+    await client.query("rollback").catch(()=>{});
+    throw err;
+  }finally{
+    client.release();
+  }
+
+  await audit(db,p.tenantId,p.id,"user.mfa_enrolled","user",p.id,{}).catch(()=>{});
+  return {ok:true,recoveryCodes};
+});
+
+app.post("/api/mfa/disable",async(req,reply)=>{
+  const p=req.principal!;
+  if(isMfaRequired(p.role)){
+    return reply.code(403).send({error:"mfa_required_for_role",message:"MFA is required for your role and cannot be disabled."});
+  }
+
+  const body=z.object({
+    password:z.string().min(1).optional(),
+    code:z.string().min(1).optional()
+  }).refine(val=>Boolean(val.password||val.code),{message:"Password or authentication code required"}).parse(req.body);
+
+  const {rows}=await db.query(
+    "select id,password_hash,mfa_enabled,mfa_secret_ciphertext,mfa_secret_iv,mfa_secret_auth_tag,mfa_last_used_step from users where id=$1 and tenant_id=$2 and active limit 1",
+    [p.id,p.tenantId]
+  );
+  const u=rows[0];
+  if(!u||!u.mfa_enabled)return reply.code(400).send({error:"mfa_not_enabled"});
+
+  let authenticated=false;
+  if(body.password&&await verifyPassword(body.password,u.password_hash)){
+    authenticated=true;
+  }else if(body.code&&u.mfa_secret_ciphertext){
+    try{
+      const dec=decryptJson({ciphertext:u.mfa_secret_ciphertext,iv:u.mfa_secret_iv,authTag:u.mfa_secret_auth_tag},encryptionKeys);
+      const secret=typeof dec==="string"?dec:dec.secret;
+      const totp=verifyTotp(body.code,secret,{lastUsedStep:u.mfa_last_used_step});
+      if(totp.valid)authenticated=true;
+    }catch{}
+  }
+
+  if(!authenticated){
+    return reply.code(401).send({error:"invalid_credentials",message:"Incorrect password or MFA code"});
+  }
+
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    await client.query(
+      `update users
+       set mfa_enabled=false,
+           mfa_secret_ciphertext=null,
+           mfa_secret_iv=null,
+           mfa_secret_auth_tag=null,
+           mfa_enrolled_at=null,
+           mfa_last_used_step=null
+       where id=$1 and tenant_id=$2`,
+      [p.id,p.tenantId]
+    );
+    await client.query("delete from user_recovery_codes where user_id=$1",[p.id]);
+    await client.query("commit");
+  }catch(err){
+    await client.query("rollback").catch(()=>{});
+    throw err;
+  }finally{
+    client.release();
+  }
+
+  await audit(db,p.tenantId,p.id,"user.mfa_disabled","user",p.id,{}).catch(()=>{});
+  return {ok:true};
 });
 app.post("/api/logout",async(req,reply)=>{const raw=req.cookies.session;if(raw)await db.query("delete from sessions where id_hash=$1",[tokenHash(raw)]);reply.clearCookie("session",{path:"/"});return {ok:true}});
 app.get("/api/users",async(req)=>{
@@ -2027,7 +2430,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           [p.tenantId,row.id]
         );
         if(stored.rows[0]){
-          const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+          const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},encryptionKeys) as {password?:string};
           if(decrypted.password)credentials.password=String(decrypted.password);
         }
       }
@@ -2038,7 +2441,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       );
       if(savedSession.rows[0]){
         try{
-          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},encryptionKeys) as {cookies?:Record<string,unknown>[]};
           if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
         }catch{
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
@@ -2483,7 +2886,7 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
           ciphertext:Buffer.from(String(encrypted.ciphertext),"base64"),
           iv:Buffer.from(String(encrypted.iv),"base64"),
           authTag:Buffer.from(String(encrypted.authTag),"base64")
-        },config.DATA_ENCRYPTION_KEY_BASE64) as {otp?:string};
+        },encryptionKeys) as {otp?:string};
         payload={...payload,otpEncrypted:undefined,otp:String(secret.otp||"")};
       }
       return {
@@ -3166,7 +3569,7 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
         ciphertext:storedCredential.rows[0].ciphertext,
         iv:storedCredential.rows[0].iv,
         authTag:storedCredential.rows[0].auth_tag
-      },config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+      },encryptionKeys) as {password?:string};
       if(decrypted.password){
         credentials={login:String(rows[0].account_reference),password:String(decrypted.password)};
         await db.query("update private.retailer_credentials set last_used_at=now() where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,rows[0].retailer_account_id]);
@@ -3867,7 +4270,45 @@ app.post("/api/retailer-accounts/:id/toggle",async(req,reply)=>{
   return rows[0];
 });
 
-app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error",requestId:req.id});});
+app.setErrorHandler((error: any, req, reply) => {
+  const statusCode = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 600
+    ? error.statusCode
+    : error instanceof z.ZodError
+    ? 400
+    : 500;
+
+  if (statusCode < 500) {
+    req.log.warn({ err: error, statusCode, url: req.url }, "Client request error");
+    if (error instanceof z.ZodError) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        issues: error.issues,
+        message: error.issues.map(e => `${e.path.join(".")}: ${e.message}`).join(", ")
+      });
+    }
+    if (typeof error.errorResponseBuilder === "function" || error.error === "rate_limited" || statusCode === 429) {
+      if (typeof error.retryAfterSeconds === "number") {
+        reply.header("Retry-After", error.retryAfterSeconds.toString());
+      }
+      return reply.code(429).send({
+        error: "rate_limited",
+        message: error.message || "Rate limit exceeded. Please try again later.",
+        ...(typeof error.retryAfterSeconds === "number" ? { retryAfterSeconds: error.retryAfterSeconds } : {})
+      });
+    }
+    return reply.code(statusCode).send({
+      error: error.code || error.error || "client_error",
+      message: error.message || "Bad Request"
+    });
+  }
+
+  req.log.error({ err: error, url: req.url }, "Unhandled server error");
+  return reply.code(500).send({
+    error: "internal_error",
+    requestId: req.id,
+    message: "An internal server error occurred"
+  });
+});
 
 async function bootstrap(){
   const {rows}=await db.query("select count(*)::int count from users");

@@ -14,13 +14,66 @@ function render(){const pending=state.tasks.filter(t=>t.status==='REQUIRES_ACTIO
   window.dispatchEvent(new CustomEvent('ordergrid:update',{detail:{tasks:state.tasks}}));
 }
 function openBatch(){recipientsFile=null;$('#batchForm').reset();$('#recipientPreview').textContent='';$('#formError').textContent='';$('#batchDialog').showModal()}
-$('#loginForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);$('#loginError').textContent='';try{await api('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({identifier:f.get('identifier'),password:f.get('password')})});$('#login').classList.add('hidden');await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Signed in')}catch(err){$('#loginError').textContent=err.message}};
-$('#showSignup').onclick=()=>{$('#loginForm').hidden=true;$('#signupForm').hidden=false;$('#signupError').textContent=''};
-$('#showLogin').onclick=()=>{$('#signupForm').hidden=true;$('#loginForm').hidden=false;$('#loginError').textContent=''};
+$('#loginForm').onsubmit=async e=>{
+  e.preventDefault();
+  const f=new FormData(e.currentTarget);
+  $('#loginError').textContent='';
+  try{
+    const res=await api('/api/login',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({identifier:f.get('identifier'),password:f.get('password')})
+    });
+    if(res.mfaRequired&&res.mfaToken){
+      $('#loginForm').hidden=true;
+      $('#mfaForm').hidden=false;
+      $('#mfaTokenInput').value=res.mfaToken;
+      $('#mfaCodeInput').value='';
+      $('#mfaError').textContent='';
+      $('#mfaCodeInput').focus();
+      return;
+    }
+    $('#login').classList.add('hidden');
+    await refresh();
+    window.dispatchEvent(new Event('ordergrid:auth-ready'));
+    toast('Signed in');
+  }catch(err){
+    $('#loginError').textContent=err.message;
+  }
+};
+if($('#mfaForm')){$('#mfaForm').onsubmit=async e=>{
+  e.preventDefault();
+  const code=$('#mfaCodeInput').value.trim();
+  const mfaToken=$('#mfaTokenInput').value;
+  $('#mfaError').textContent='';
+  try{
+    await api('/api/login/mfa',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({mfaToken,code})
+    });
+    $('#login').classList.add('hidden');
+    $('#mfaForm').hidden=true;
+    $('#loginForm').hidden=false;
+    await refresh();
+    window.dispatchEvent(new Event('ordergrid:auth-ready'));
+    toast('Signed in');
+  }catch(err){
+    $('#mfaError').textContent=err.message;
+  }
+};}
+if($('#cancelMfa')){$('#cancelMfa').onclick=()=>{
+  $('#mfaForm').hidden=true;
+  $('#loginForm').hidden=false;
+  $('#mfaError').textContent='';
+};}
+$('#showSignup').onclick=()=>{$('#loginForm').hidden=true;$('#mfaForm').hidden=true;$('#signupForm').hidden=false;$('#signupError').textContent=''};
+$('#showLogin').onclick=()=>{$('#signupForm').hidden=true;$('#mfaForm').hidden=true;$('#loginForm').hidden=false;$('#loginError').textContent=''};
 $('#signupForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),password=String(f.get('password')||''),confirmPassword=String(f.get('confirmPassword')||'');$('#signupError').textContent='';if(password!==confirmPassword){$('#signupError').textContent='Passwords do not match';return}try{await api('/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:f.get('email'),password,setupCode:f.get('setupCode'),replaceBootstrapOwner:f.get('replaceBootstrapOwner')==='on'})});$('#login').classList.add('hidden');$('#signupForm').hidden=true;$('#loginForm').hidden=false;await refresh();window.dispatchEvent(new Event('ordergrid:auth-ready'));toast('Owner account ready')}catch(err){$('#signupError').textContent=err.message}};
 async function finishSignedIn(message){
   $('#login').classList.add('hidden');
   $('#signupForm').hidden=true;
+  if($('#mfaForm'))$('#mfaForm').hidden=true;
   $('#loginForm').hidden=false;
   await refresh();
   window.dispatchEvent(new Event('ordergrid:auth-ready'));
@@ -29,7 +82,7 @@ async function finishSignedIn(message){
 async function handleGoogleCredential(response){
   $('#googleLoginError').textContent='';
   try{
-    await api('/api/login/google',{
+    const res=await api('/api/login/google',{
       method:'POST',
       headers:{'content-type':'application/json'},
       body:JSON.stringify({
@@ -38,6 +91,15 @@ async function handleGoogleCredential(response){
         replaceBootstrapOwner:Boolean($('#googleReplaceOwner')?.checked)
       })
     });
+    if(res.mfaRequired&&res.mfaToken){
+      $('#loginForm').hidden=true;
+      $('#mfaForm').hidden=false;
+      $('#mfaTokenInput').value=res.mfaToken;
+      $('#mfaCodeInput').value='';
+      $('#mfaError').textContent='';
+      $('#mfaCodeInput').focus();
+      return;
+    }
     await finishSignedIn('Signed in with Google');
   }catch(err){
     $('#googleLoginError').textContent=err.message;

@@ -7,11 +7,13 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-Strict%205.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![Database](https://img.shields.io/badge/PostgreSQL-16%2B%20Relational-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Fastify](https://img.shields.io/badge/API-Fastify%205.x-000000?style=for-the-badge&logo=fastify&logoColor=white)
-![Tests](https://img.shields.io/badge/Test%20Suite-47%20Passing-00C853?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Pilot%20%2F%20Pre--production-orange?style=for-the-badge)
+![Security](https://img.shields.io/badge/Security-Hardened%20%26%20MFA-blue?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-Passing-00C853?style=for-the-badge)
 
 **Deterministic Multi-Account Procurement, Isolated Browser Sandboxing, Dynamic Unit Allocation, Single-Use Virtual Card Protection, and Automated GST Invoicing.**
 
-[What is OrderGrid?](#what-ordergrid-does) · [How It Works](#how-ordergrid-works) · [System Architecture](#system-architecture) · [Key Capabilities](#core-capabilities) · [Security & Boundaries](#security-compliance--operational-boundary) · [Configuration & Setup](#configuration--environment-variables)
+[What is OrderGrid?](#what-ordergrid-does) · [How It Works](#how-ordergrid-works) · [System Architecture](#system-architecture) · [Key Capabilities](#core-capabilities) · [Security & Boundaries](#security-compliance--operational-boundary) · [Operational Runbooks](#operational-runbooks) · [Known Limitations](#known-limitations) · [Configuration & Setup](#configuration--environment-variables)
 
 </div>
 
@@ -177,13 +179,71 @@ OrderGrid is engineered around strict compliance, data protection, and ethical a
 > OrderGrid automates legitimate procurement workflows on behalf of authorized account owners. It **does NOT** include stealth scripts, user-agent or fingerprint spoofing, proxy rotation, CAPTCHA bypasses, or OTP interception without user authorization.
 
 - **Zero Raw Card Storage**: Full card PAN and CVV credentials are never stored in the database. Card access uses ephemeral provider tokens.
-- **AES-256-GCM Encryption**: All credentials and sensitive tokens are encrypted at rest using AES-256-GCM authenticated encryption.
+- **AES-256-GCM Dual-Key Encryption**: All credentials, bank tokens, and browser session cookies are encrypted at rest using AES-256-GCM with dual-key rotation support.
+- **Brute-Force & Lockout Protection**: Exponential backoff locks IP/account pairs upon consecutive authentication failures (1s, 2s, 4s, 8s, up to 15m), with constant-time scrypt timing normalization against user enumeration.
+- **Multi-Factor Authentication (TOTP)**: RFC 6238-compliant TOTP MFA enforced for privileged roles (`OWNER`, `APPROVER`) with single-use cryptographic recovery codes.
 - **Role-Based Access Control (RBAC)**:
   - `OWNER`: Full administrative, workspace, and financial connector configuration.
   - `APPROVER`: Commercial limit approval and batch sign-off.
   - `BUYER`: Batch creation, product probing, and execution monitoring.
   - `AUDITOR`: Read-only compliance, invoice review, and audit inspection.
-- **Fail-Closed Security Model**: Demo and showroom servers fail closed (`401 Unauthorized`) when environment credentials are not configured.
+- **Fail-Closed Security Model**: Demo and showroom servers fail closed (`401 Unauthorized`) when environment credentials are not configured. Backdoors are strictly forbidden in production.
+
+---
+
+## Operational Runbooks
+
+### 1. Unlocking Locked Accounts & IP Addresses
+When an operator or automated agent triggers rate limit thresholds or enters incorrect credentials repeatedly, their identifier or IP is throttled in the `login_throttle` table.
+```bash
+# Unlock specific account identifier or IP
+node scripts/unlock-account.mjs user@ordergrid.internal
+node scripts/unlock-account.mjs 192.168.1.50
+```
+
+### 2. Resetting TOTP Multi-Factor Authentication (MFA)
+If an operator loses access to their authenticator device and has exhausted recovery codes, an administrator with database/server access can reset MFA:
+```bash
+node scripts/reset-mfa.mjs user@ordergrid.internal
+```
+
+### 3. Resetting Owner Password via Secure CLI
+To avoid insecure environment variable backdoors in production, owner password resets are performed via an authenticated CLI script:
+```bash
+# Prompts securely for new password, updates scrypt hash, and revokes all active sessions
+node scripts/reset-owner-password.mjs owner@ordergrid.internal
+```
+
+### 4. Zero-Downtime Dual-Key Encryption Key Rotation
+When rotating database encryption keys (`DATA_ENCRYPTION_KEY_BASE64`):
+```bash
+# Step 1: Set DATA_ENCRYPTION_KEY_PREVIOUS_BASE64 in your environment to the current key
+# Step 2: Set DATA_ENCRYPTION_KEY_BASE64 to the newly generated key
+# Step 3: Run atomic re-encryption migration script
+node scripts/rotate-encryption-key.mjs --old-key "$OLD_KEY" --new-key "$NEW_KEY"
+
+# Step 4: After migration completes, unset DATA_ENCRYPTION_KEY_PREVIOUS_BASE64
+```
+
+### 5. Production Deployment & Verification
+OrderGrid deployments are strictly pinned to immutable release tags (`vX.Y.Z`) or full 40-character Git commit SHAs. Deploying floating branch names like `main` is prevented.
+```bash
+# Deploy a verified immutable release
+./scripts/deploy.sh v1.0.0
+# or with a 40-character SHA
+./scripts/deploy.sh 5d082e340e4cf8d80c3c52e85e492ca4ce986423
+```
+
+---
+
+## Known Limitations
+
+OrderGrid is currently in **Pilot / Pre-production** status. Operators must be aware of the following operational constraints:
+
+1. **Retailer CAPTCHAs & Anti-Bot Challenges**: OrderGrid strictly adheres to ethical automation and does **not** employ automated CAPTCHA solvers or stealth fingerprint evasions. If a retailer presents an interactive challenge (e.g. Arkose Labs / reCAPTCHA), the worker pauses and surfaces an operator notification for manual completion in headed mode.
+2. **Flipkart OTP-First Verification**: Initial Flipkart session creation requires an SMS OTP delivered to the registered phone number. This requires an operator to enter the OTP via the dashboard or headed browser during initial setup.
+3. **Issuer Closure Endpoints**: Certain banking APIs do not support synchronous programmatic single-use card termination. If an issuer API lacks a closure endpoint, OrderGrid cleanly marks the card as `CLEANUP_REQUIRED` and records an audit log for financial reconciliation.
+4. **Pre-Production Architecture**: OrderGrid is optimized for dedicated single-tenant enterprise deployments. High-concurrency browser automation requires adequate host memory (minimum 2GB RAM per concurrent browser profile).
 
 ---
 
@@ -197,7 +257,11 @@ OrderGrid is engineered around strict compliance, data protection, and ethical a
 | `DATABASE_URL` | String | *Required* | PostgreSQL connection string. |
 | `SESSION_SECRET` | String | *Required (32+ chars)* | Cryptographic secret for signing session cookies. |
 | `DATA_ENCRYPTION_KEY_BASE64` | String | *Required (40+ chars)* | Base64-encoded 256-bit AES key for database encryption. |
+| `DATA_ENCRYPTION_KEY_PREVIOUS_BASE64` | String | *Optional* | Previous AES key for zero-downtime key rotation. |
 | `WORKER_API_TOKEN` | String | *Required in Prod* | Machine-to-machine authentication token for automation workers. |
+| `LOGIN_RATE_LIMIT_MAX` | Number | `20` | Maximum login attempts per window before rate-limiting. |
+| `MFA_RATE_LIMIT_MAX` | Number | `10` | Maximum MFA verification attempts per window. |
+| `MFA_REQUIRED_ROLES` | String | `OWNER,APPROVER` | Comma-separated roles requiring mandatory TOTP MFA. |
 | `CARD_FUNDING_MAX_OVERAGE_PCT` | Number | `10` | Maximum percentage allowed above basket price for virtual card funding. |
 | `OTP_MIN_INTERVAL_MINUTES` | Number | `30` | Minimum cooldown period between consecutive OTP requests on an account. |
 | `OTP_RATE_LIMIT_COOLDOWN_HOURS` | Number | `6` | Cooldown period when a retailer returns rate-limit errors. |
@@ -233,11 +297,17 @@ npm run dev
 
 ### 2. Running Verification & Test Suites
 
-OrderGrid includes comprehensive test coverage verifying card safety, state machines, and contracts:
+OrderGrid includes a comprehensive test suite across unit, integration, and load testing layers:
 
 ```bash
-# Run all unit and integration tests (47 tests)
+# Run all unit tests (security, card safety, MFA, encryption, state machines)
 npm test
+
+# Run PostgreSQL integration tests against containerized database
+npm run test:integration
+
+# Run concurrency load test (100 parallel requests)
+npm run test:load
 
 # Run TypeScript static typecheck and JS syntax validations
 npm run typecheck

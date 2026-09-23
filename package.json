@@ -15,6 +15,8 @@
     "worker": "node dist/worker.js",
     "db:migrate": "node dist/migrate.js",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test test/integration/*.test.ts",
+    "test:load": "node scripts/load-smoke.mjs",
     "typecheck": "tsc --noEmit && npm run check:js",
     "check:js": "node --check public/app.js && node --check public/dashboard.js && node --check public/user-dashboard.js && node --check public/bulk.js && node --check public/human-actions.js && node --check public/notifications.js && node --check public/funding.js && node --check public/wizard.js && node --check public/navigation.js && node --check public/fulfilment.js && node --check public/control-center.js && node --check public/automation-center.js && node --check public/autopilot.js && node --check public/rewards.js && node --check public/sw.js && node --check public/gst.js && node --check agent/index.mjs && node --check agent/cdp.mjs && node --check agent/lib.mjs && node --check scripts/install-managed-chrome.mjs && node --check cloudflare/worker.mjs",
     "agent": "node agent/index.mjs",

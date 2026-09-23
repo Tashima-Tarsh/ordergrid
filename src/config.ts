@@ -20,7 +20,8 @@ const schema = z.object({
   OTP_MIN_INTERVAL_MINUTES: z.coerce.number().int().min(1).default(30),
   OTP_RATE_LIMIT_COOLDOWN_HOURS: z.coerce.number().int().min(1).default(6),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
-  BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
+  DATA_ENCRYPTION_KEY_PREVIOUS_BASE64: z.string().min(40).optional(),
+  BOOTSTRAP_ADMIN_EMAIL: z.string().email().default("admin@ordergrid.internal"),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),
   BOOTSTRAP_ADMIN_SECRET: z.string().min(14).optional(),
   ORDERGRID_SIGNUP_CODE: z.string().min(12).max(512).optional(),
@@ -46,6 +47,10 @@ const schema = z.object({
   CARDHOLDER_PAN: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
   CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional(),
   CARD_FUNDING_MAX_OVERAGE_PCT: z.coerce.number().int().min(0).max(100).default(10),
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(20),
+  MFA_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+  MFA_REQUIRED_ROLES: z.string().default("OWNER,APPROVER"),
+  MFA_TRUST_GOOGLE_SIGNIN: z.union([z.boolean(), z.enum(["true","false"])]).default("false").transform(v => v === true || v === "true"),
   AWS_REGION: z.string().default("ap-southeast-2"),
   BEDROCK_REGION: z.string().default("ap-southeast-2"),
   BEDROCK_MODEL_ID: z.string().default("apac.amazon.nova-lite-v1:0"),
@@ -76,8 +81,14 @@ const schema = z.object({
     if(value.DATA_ENCRYPTION_KEY_BASE64.length<40||knownInsecureSecrets.has(value.DATA_ENCRYPTION_KEY_BASE64)){
       ctx.addIssue({code:"custom",path:["DATA_ENCRYPTION_KEY_BASE64"],message:"DATA_ENCRYPTION_KEY_BASE64 must be a secure random base64 key (min 40 chars) and must not use the repository default"});
     }
+    if(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64&&(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64.length<40||knownInsecureSecrets.has(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64))){
+      ctx.addIssue({code:"custom",path:["DATA_ENCRYPTION_KEY_PREVIOUS_BASE64"],message:"DATA_ENCRYPTION_KEY_PREVIOUS_BASE64 must be a secure random base64 key (min 40 chars) and must not use the repository default"});
+    }
     if(value.BOOTSTRAP_ADMIN_PASSWORD&&knownInsecureSecrets.has(value.BOOTSTRAP_ADMIN_PASSWORD)){
       ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_PASSWORD"],message:"BOOTSTRAP_ADMIN_PASSWORD must not use the repository default in production"});
+    }
+    if(process.env.ORDERGRID_OWNER_RECOVERY_USERNAME||process.env.ORDERGRID_OWNER_RECOVERY_HASH){
+      ctx.addIssue({code:"custom",path:["ORDERGRID_OWNER_RECOVERY_USERNAME"],message:"ORDERGRID_OWNER_RECOVERY_* backdoor environment variables are strictly forbidden in production. Use scripts/reset-owner-password.mjs instead."});
     }
   }
 });

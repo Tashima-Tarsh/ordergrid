@@ -100,7 +100,7 @@ export async function loadTenantIssuer(
     };
     const credentials=rows[0].provider==="direct_card"||rows[0].integration_mode==="DIRECT_CARD"
       ? null
-      : decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as EnKashTenantCredentials|GenericBankCredentials;
+      : decryptJson({ciphertext:rows[0].ciphertext,iv:rows[0].iv,authTag:rows[0].auth_tag},[config.DATA_ENCRYPTION_KEY_BASE64, config.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64]) as EnKashTenantCredentials|GenericBankCredentials;
     const issuer=issuerFromStored(config,String(rows[0].provider),credentials,metadata);
     return {
       issuer,
