@@ -1,10 +1,10 @@
 const CACHE='ordergrid-product-v57';
 const ASSETS=[
-  './','./index.html','./styles.css?v=57','./finance.css?v=57','./premium.css?v=57','./overview-premium.css?v=57','./dashboard.css?v=57',
-  './customer.css?v=57','./control-center.css?v=57','./workspace-premium.css?v=57','./fulfilment.css?v=57','./gst-premium.css?v=57','./bulk-premium.css?v=57',
-  './app.js?v=57','./dashboard.js?v=57','./funding.js?v=57','./rewards.js?v=57','./bulk.js?v=57','./notifications.js?v=57',
-  './control-center.js?v=57','./navigation.js?v=57','./fulfilment.js?v=57','./gst.js?v=57',
-  './wizard.js?v=57','./manifest.webmanifest','./app-icon.svg'
+  './','./index.html','./styles.css','./finance.css','./premium.css','./overview-premium.css','./dashboard.css',
+  './customer.css','./control-center.css','./workspace-premium.css','./fulfilment.css','./gst-premium.css','./bulk-premium.css',
+  './app.js','./dashboard.js','./funding.js','./rewards.js','./bulk.js','./notifications.js',
+  './control-center.js','./navigation.js','./fulfilment.js','./gst.js',
+  './wizard.js','./manifest.webmanifest','./app-icon.svg'
 ];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
