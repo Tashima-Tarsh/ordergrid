@@ -50,9 +50,9 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
       return {status:"NOT_REQUIRED" as const,cardId:null};
     }
 
-    // Check existing card assigned to basket or linked by checkout_basket_id
+    // Check existing card assigned to basket or linked by checkout_basket_id (ignoring CLOSED/CANCELLED)
     const existing=await client.query(
-      "select * from virtual_cards where tenant_id=$1 and (id=$2 or checkout_basket_id=$3) order by created_at desc limit 1 for update",
+      "select * from virtual_cards where tenant_id=$1 and (id=$2 or checkout_basket_id=$3) and status not in ('CLOSED','CANCELLED') order by created_at desc limit 1 for update",
       [tenantId,row.virtual_card_id??null,basketId]
     );
     cardRow=existing.rows[0]||null;
@@ -60,6 +60,21 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     if(cardRow&&cardRow.status==="ACTIVE"&&Number(cardRow.balance_minor)>0&&row.virtual_card_id===cardRow.id){
       await client.query("commit");
       return {status:"CARD_ASSIGNED" as const,cardId:String(cardRow.id)};
+    }
+
+    if(cardRow&&cardRow.status==="ISSUING"){
+      if(cardRow.issuing_started_at&&new Date(cardRow.issuing_started_at).getTime()<Date.now()-5*60_000){
+        await client.query("update virtual_cards set status='ISSUE_UNCERTAIN',updated_at=now() where id=$1",[cardRow.id]);
+        await client.query("commit");
+        return {status:"ISSUE_UNCERTAIN" as const,cardId:String(cardRow.id)};
+      }
+      await client.query("commit");
+      return {status:"ISSUE_IN_PROGRESS" as const,cardId:String(cardRow.id)};
+    }
+
+    if(cardRow&&cardRow.status==="ISSUE_UNCERTAIN"){
+      await client.query("commit");
+      return {status:"ISSUE_UNCERTAIN" as const,cardId:String(cardRow.id)};
     }
 
     if(!cardRow){
@@ -82,7 +97,7 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     await client.query("rollback").catch(()=>{});
     if(String(error?.code)==="23505"){
       const existing=await db.query(
-        "select * from virtual_cards where tenant_id=$1 and checkout_basket_id=$2 limit 1",
+        "select * from virtual_cards where tenant_id=$1 and checkout_basket_id=$2 and status not in ('CLOSED','CANCELLED') limit 1",
         [tenantId,basketId]
       );
       if(existing.rows[0]){
@@ -120,21 +135,52 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
   let maskedNumber=cardRow.masked_number?String(cardRow.masked_number):undefined;
 
   if(!providerCardId||providerCardId.startsWith("PENDING:")){
-    const issued=await state.issuer.createCard({
-      cardholder,
-      label:`OrderGrid ${row.retailer} ${basketId.slice(0,8)}`,
-      amountMinor
-    });
-    providerCardId=issued.providerCardId;
-    providerAccountId=issued.providerAccountId;
-    maskedNumber=issued.maskedNumber;
-    await db.query(
+    const claim=await db.query(
       `update virtual_cards
-       set provider=$1,provider_card_id=$2,provider_account_id=$3,masked_number=$4,
-           issuer_connection_id=$5,status='PENDING_ISSUE',updated_at=now()
-       where id=$6`,
-      [issued.provider,providerCardId,providerAccountId,maskedNumber??null,state.connectionId,cardId]
+       set status='ISSUING',issuing_started_at=now(),updated_at=now()
+       where id=$1 and status='PENDING_ISSUE' and provider_card_id like 'PENDING:%'
+       returning *`,
+      [cardId]
     );
+    if(!claim.rows[0]){
+      const cur=await db.query("select status from virtual_cards where id=$1",[cardId]);
+      const curStatus=cur.rows[0]?.status;
+      if(curStatus==="ISSUE_UNCERTAIN")return {status:"ISSUE_UNCERTAIN" as const,cardId};
+      return {status:"ISSUE_IN_PROGRESS" as const,cardId};
+    }
+
+    let issued;
+    try{
+      issued=await state.issuer.createCard({
+        cardholder,
+        label:`OrderGrid ${row.retailer} ${basketId}`,
+        amountMinor
+      });
+    }catch(error){
+      await db.query("update virtual_cards set status='PENDING_ISSUE',issuing_started_at=null,updated_at=now() where id=$1 and status='ISSUING'",[cardId]).catch(()=>{});
+      throw error;
+    }
+
+    try{
+      const updated=await db.query(
+        `update virtual_cards
+         set provider=$1,provider_card_id=$2,provider_account_id=$3,masked_number=$4,
+             issuer_connection_id=$5,status='PENDING_ISSUE',issuing_started_at=null,updated_at=now()
+         where id=$6 and status='ISSUING'
+         returning *`,
+        [issued.provider,issued.providerCardId,issued.providerAccountId,issued.maskedNumber??null,state.connectionId,cardId]
+      );
+      if(!updated.rows[0]){
+        await db.query("update virtual_cards set status='ISSUE_UNCERTAIN',updated_at=now() where id=$1",[cardId]);
+        return {status:"ISSUE_UNCERTAIN" as const,cardId};
+      }
+      providerCardId=issued.providerCardId;
+      providerAccountId=issued.providerAccountId;
+      maskedNumber=issued.maskedNumber;
+    }catch{
+      await db.query("update virtual_cards set status='ISSUE_UNCERTAIN',updated_at=now() where id=$1",[cardId]).catch(()=>{});
+      return {status:"ISSUE_UNCERTAIN" as const,cardId};
+    }
   }
 
   const capabilities=(state.metadata?.capabilities??{}) as Record<string,unknown>;
@@ -206,12 +252,14 @@ export async function cleanupBasketVirtualCard(db:Db,config:Config,tenantId:stri
 
 export async function reconcileOrphanVirtualCards(db:Db,tenantId:string){
   const {rows}=await db.query(
-    `select vc.id,vc.provider,vc.provider_card_id,vc.status,vc.created_at,vc.checkout_basket_id,cb.status basket_status
+    `select vc.id,vc.provider,vc.provider_card_id,vc.status,vc.created_at,vc.issuing_started_at,vc.checkout_basket_id,cb.status basket_status
      from virtual_cards vc
      left join checkout_baskets cb on cb.id=vc.checkout_basket_id and cb.tenant_id=vc.tenant_id
      where vc.tenant_id=$1
        and (
          (vc.status='PENDING_ISSUE' and vc.created_at<now()-interval '10 minutes')
+         or (vc.status='ISSUING' and coalesce(vc.issuing_started_at,vc.created_at)<now()-interval '5 minutes')
+         or vc.status in ('ISSUE_UNCERTAIN','CLEANUP_REQUIRED')
          or (vc.status in ('CONTROL_FAILED','LOAD_FAILED') and vc.updated_at<now()-interval '30 minutes')
          or (cb.status in ('CANCELLED','FAILED','EXPIRED') and vc.status='ACTIVE')
        )`,
