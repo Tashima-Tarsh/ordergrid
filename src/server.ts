@@ -179,7 +179,16 @@ await app.register(helmet,{
     upgradeInsecureRequests: config.APP_ORIGIN.startsWith("https") ? [] : null
   }}
 });
-await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
+await app.register(rateLimit, {
+  max: 600,
+  timeWindow: "1 minute",
+  errorResponseBuilder: (_req, context) => ({
+    statusCode: 429,
+    error: "rate_limited",
+    message: "Rate limit exceeded. Please try again later.",
+    retryAfterSeconds: Math.ceil(context.ttl / 1000)
+  })
+}); await app.register(cookie, { secret: config.SESSION_SECRET });
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
 await app.register(staticPlugin,{
   root:join(dirname(fileURLToPath(import.meta.url)),"../public"),
@@ -4274,7 +4283,45 @@ app.post("/api/retailer-accounts/:id/toggle",async(req,reply)=>{
   return rows[0];
 });
 
-app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error",requestId:req.id});});
+app.setErrorHandler((error: any, req, reply) => {
+  const statusCode = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 600
+    ? error.statusCode
+    : error instanceof z.ZodError
+    ? 400
+    : 500;
+
+  if (statusCode < 500) {
+    req.log.warn({ err: error, statusCode, url: req.url }, "Client request error");
+    if (error instanceof z.ZodError) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        issues: error.issues,
+        message: error.issues.map(e => `${e.path.join(".")}: ${e.message}`).join(", ")
+      });
+    }
+    if (typeof error.errorResponseBuilder === "function" || error.error === "rate_limited" || statusCode === 429) {
+      if (typeof error.retryAfterSeconds === "number") {
+        reply.header("Retry-After", error.retryAfterSeconds.toString());
+      }
+      return reply.code(429).send({
+        error: "rate_limited",
+        message: error.message || "Rate limit exceeded. Please try again later.",
+        ...(typeof error.retryAfterSeconds === "number" ? { retryAfterSeconds: error.retryAfterSeconds } : {})
+      });
+    }
+    return reply.code(statusCode).send({
+      error: error.code || error.error || "client_error",
+      message: error.message || "Bad Request"
+    });
+  }
+
+  req.log.error({ err: error, url: req.url }, "Unhandled server error");
+  return reply.code(500).send({
+    error: "internal_error",
+    requestId: req.id,
+    message: "An internal server error occurred"
+  });
+});
 
 async function bootstrap(){
   const {rows}=await db.query("select count(*)::int count from users");
