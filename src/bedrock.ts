@@ -25,15 +25,21 @@ export class AmazonBedrockService implements BedrockService {
   private client: BedrockRuntimeClient | null = null;
   private modelId: string;
   private region: string;
+  private bearerToken: string | null = null;
 
   constructor(config: Config) {
-    this.region = config.BEDROCK_REGION || config.AWS_REGION || "ap-south-1";
+    this.region = config.BEDROCK_REGION || config.AWS_REGION || "ap-southeast-2";
     this.modelId = config.BEDROCK_MODEL_ID || "apac.amazon.nova-lite-v1:0";
+    this.bearerToken = config.AWS_BEARER_TOKEN_BEDROCK || process.env.AWS_BEARER_TOKEN_BEDROCK || null;
 
     try {
-      this.client = new BedrockRuntimeClient({
+      const clientConfig: any = {
         region: this.region
-      });
+      };
+      if (this.bearerToken) {
+        clientConfig.token = { token: this.bearerToken };
+      }
+      this.client = new BedrockRuntimeClient(clientConfig);
     } catch {
       this.client = null;
     }
