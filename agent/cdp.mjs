@@ -31,7 +31,7 @@ async function fetchWithTimeout(url,options={},timeoutMs=12000){
   finally{clearTimeout(timer)}
 }
 
-class CdpConnection{
+export class CdpConnection{
   constructor(url){
     this.nextId=1;this.pending=new Map();this.socket=new WebSocket(url);
     this.ready=new Promise((resolve,reject)=>{
@@ -88,7 +88,7 @@ async function devtoolsPort(directory,timeoutMs=15000){
   }
   throw new Error("Chrome did not expose a local automation port");
 }
-async function ensureChrome(chrome,directory){
+export async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
   const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--disable-blink-features=AutomationControlled","--new-window"];
@@ -178,17 +178,23 @@ export async function restoreRetailerSessionState({chrome,directory,retailer,ses
   }finally{connection.close();await closeTarget(port,target)}
 }
 
-async function createTarget(port,url){
+export async function createTarget(port,url){
   const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
   if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
   return response.json();
 }
-async function listTargets(port){
+export async function closeTarget(port,target){
+  const targetId=typeof target==="string"?target:target?.id;
+  if(!targetId)return false;
+  const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/close/${targetId}`,{method:"PUT"}).catch(()=>null);
+  return Boolean(response?.ok);
+}
+export async function listTargets(port){
   const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/list`);
   if(!response.ok)throw new Error("Could not inspect retailer session");
   return response.json();
 }
-async function waitReady(connection,timeoutMs=20000){
+export async function waitReady(connection,timeoutMs=20000){
   const deadline=Date.now()+timeoutMs;await connection.send("Runtime.enable");
   while(Date.now()<deadline){
     const remaining=Math.max(500,Math.min(4000,deadline-Date.now()));
@@ -198,7 +204,7 @@ async function waitReady(connection,timeoutMs=20000){
   }
   throw new Error("Retailer page readiness timed out");
 }
-async function evaluate(connection,expression){
+export async function evaluate(connection,expression){
   const result=await connection.send("Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true,userGesture:true});
   if(result.exceptionDetails)throw new Error("Retailer page automation script failed");
   return result.result?.value;
@@ -285,20 +291,15 @@ function retailerAuthScript(credentials){
       return true;
     });
     const isEmail=String(credentials.login||'').includes('@');
-    if(isEmail){
-      const leafElements=[...document.querySelectorAll('*')].filter(s=>/use email/i.test(s.innerText||'')&&s.children.length===0);
-      const useEmail=leafElements[0]||controls.find(x=>/(use email|email-id|use email-id)/i.test(label(x)));
-      if(useEmail){
-        clickElement(useEmail);
-        return {acted:true,action:'LOGIN_SURFACE_OPENED'};
-      }
-    }else{
-      const leafElements=[...document.querySelectorAll('*')].filter(s=>/use phone|phone number|use mobile/i.test(s.innerText||'')&&s.children.length===0);
-      const usePhone=leafElements[0]||controls.find(x=>/(use phone|phone number|use mobile)/i.test(label(x)));
-      if(usePhone){
-        clickElement(usePhone);
-        return {acted:true,action:'LOGIN_SURFACE_OPENED'};
-      }
+    const useEmailBtn=controls.find(x=>/use email/i.test(label(x)))||[...document.querySelectorAll('*')].find(s=>/use email/i.test(s.innerText||'')&&s.children.length===0);
+    const usePhoneBtn=controls.find(x=>/use (?:phone|mobile)/i.test(label(x)))||[...document.querySelectorAll('*')].find(s=>/use (?:phone|mobile)/i.test(s.innerText||'')&&s.children.length===0);
+    if(isEmail&&useEmailBtn){
+      clickElement(useEmailBtn);
+      return {acted:true,action:'LOGIN_SURFACE_OPENED'};
+    }
+    if(!isEmail&&usePhoneBtn){
+      clickElement(usePhoneBtn);
+      return {acted:true,action:'LOGIN_SURFACE_OPENED'};
     }
     let user=nonSearchText.find(x=>isEmail?x.type==='email':(x.type==='tel'||x.type==='number'))
       ||nonSearchText.find(x=>x.type==='email'||x.autocomplete==='username'||/email|user|login|mobile|phone/i.test(fieldMeta(x)))
@@ -714,10 +715,6 @@ export async function executeBasket({chrome,directory,retailer,items,paymentRout
 }
 
 
-async function closeTarget(port,target){
-  if(!target?.id)return;
-  await fetchWithTimeout(`http://127.0.0.1:${port}/json/close/${encodeURIComponent(target.id)}`,{method:"PUT"},3000).catch(()=>null);
-}
 function retailerHost(retailer){
   return retailer==="flipkart"?"flipkart.com":retailer==="amazon-in"?"amazon.in":null;
 }
@@ -965,7 +962,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           continue;
         }
         if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
-          await sleep(1500);
+          await sleep(3000);
           const screenshot=await captureScreen();
           return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
         }
@@ -988,6 +985,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
       const href=String(state?.url||"");
       if(/\/signin|\/login|\/ap\/signin/i.test(href)){
+        if(round<4){
+          await sleep(1000);
+          continue;
+        }
         const screenshot=await captureScreen();
         return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,screenshot};
       }
