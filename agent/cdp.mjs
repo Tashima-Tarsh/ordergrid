@@ -948,10 +948,68 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await connection.send("Page.navigate",{url});
       await sleep(1000);
     }
-    const resetFlipkartToStorefront=async()=>{
-      await connection.send("Page.navigate",{url:flipkartLoginUrl});
-      await sleep(800);
-    };
+    if(retailer==="flipkart"&&accountCredentials?.login){
+      const loginId=String(accountCredentials.login).trim();
+      const isEmail=loginId.includes('@');
+      
+      // Step 1: If email, ensure email input mode
+      if(isEmail){
+        const switchEmail=await evaluate(connection,`(()=>{
+          const span=document.querySelector('span.doAzeC, span.ExvnMI')||[...document.querySelectorAll('*')].find(s=>/^use email-?id$/i.test(s.innerText||'')&&s.children.length===0);
+          if(span){span.click();return {clicked:true};}
+          return {clicked:false};
+        })()`);
+        if(switchEmail?.clicked)await sleep(800);
+      }
+
+      // Step 2: Focus the target login input
+      await evaluate(connection,`(()=>{
+        const isEmail=${JSON.stringify(isEmail)};
+        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder));
+        const targetInput=isEmail
+          ?(inputs.find(i=>i.type==='email'||i.classList.contains('jwCbxy'))||inputs[0])
+          :(inputs.find(i=>i.type==='tel'||i.type==='number')||inputs[0]);
+        if(targetInput){targetInput.focus();targetInput.select?.();}
+      })()`);
+      await sleep(300);
+
+      // Step 3: Type with native CDP keystrokes
+      await connection.send("Input.insertText",{text:loginId});
+      await sleep(400);
+
+      // Step 4: Submit via Enter and Continue button
+      await connection.send("Input.dispatchKeyEvent",{type:"keyDown",key:"Enter",code:"Enter",windowsVirtualKeyCode:13});
+      await connection.send("Input.dispatchKeyEvent",{type:"keyUp",key:"Enter",code:"Enter",windowsVirtualKeyCode:13});
+      await sleep(500);
+
+      await evaluate(connection,`(()=>{
+        const btn=[...document.querySelectorAll('button, [role="button"], input[type="submit"]')].find(b=>/continue|request otp|submit/i.test(b.innerText||''));
+        if(btn)btn.click();
+      })()`);
+
+      // Step 5: Wait for Flipkart to respond with OTP screen
+      await sleep(3500);
+
+      // Step 6: Verify outcome
+      const outcome=await evaluate(connection,`(()=>{
+        const text=(document.body?.innerText||'').replace(/\\s+/g,' ');
+        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden');
+        const otpBoxes=inputs.filter(i=>i.maxLength===1||i.classList.contains('S1KmoO')||i.classList.contains('_2D2x9Y'));
+        const isOtpSent=/(please enter the verification code|enter otp|verification code we've sent|resend otp in)/i.test(text)||otpBoxes.length>=4;
+        const isNewUser=/looks like you're new here|sign up with your/i.test(text);
+        return {isOtpSent,isNewUser,otpBoxCount:otpBoxes.length};
+      })()`);
+
+      if(outcome?.isOtpSent){
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:`Flipkart verification OTP has been sent to ${loginId}. Enter the 6-digit code below to connect.`,url:target.url||url,screenshot};
+      }
+      if(outcome?.isNewUser){
+        const screenshot=await captureScreen();
+        return {status:"REAUTH_REQUIRED",code:"ACCOUNT_NOT_REGISTERED",message:`${loginId} is not registered on Flipkart. Please register or verify the email/mobile.`,url:target.url||url,screenshot};
+      }
+    }
+
     for(let round=0;round<5;round++){
       await waitReady(connection);
       await sleep(round?400:600);
@@ -975,10 +1033,6 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       }
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){
-        if(challenge.code==="LOGIN_REQUIRED"&&retailer==="flipkart"&&round<5){
-          await resetFlipkartToStorefront();
-          continue;
-        }
         const screenshot=await captureScreen();
         return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url,screenshot};
       }
@@ -991,14 +1045,6 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         }
         const screenshot=await captureScreen();
         return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,screenshot};
-      }
-      if(retailer==="flipkart"&&/^https:\/\/(?:www\.)?flipkart\.com\/?(?:[?#].*)?$/i.test(href)){
-        if(retailer==="flipkart"&&round<5){
-          await resetFlipkartToStorefront();
-          continue;
-        }
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart sign-in required.",url:href,screenshot};
       }
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
     }
