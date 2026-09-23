@@ -1084,23 +1084,25 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     for(let round=0;round<5;round++){
       await waitReady(connection);
       await sleep(round?400:600);
-      const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
-      if(acted?.acted){
-        if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){
-          await sleep(800);
+      if(retailer==="amazon-in"){
+        const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
+        if(acted?.acted){
+          if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){
+            await sleep(800);
+            continue;
+          }
+          if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
+            await sleep(3000);
+            const screenshot=await captureScreen();
+            return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Retailer OTP is required to finish sign-in.",url:target.url||url,screenshot};
+          }
+          await sleep(600);
           continue;
         }
-        if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
-          await sleep(3000);
+        if(acted?.challenge){
           const screenshot=await captureScreen();
-          return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
+          return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Retailer OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
         }
-        await sleep(600);
-        continue;
-      }
-      if(acted?.challenge){
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
       }
       const challenge=await evaluate(connection,authChallengeScript());
       if(challenge){

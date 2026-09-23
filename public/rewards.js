@@ -105,12 +105,14 @@
       const sessionMeta=sessionStatus==='READY'
         ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?(challenge==='OTP_COOLDOWN'||isOtpCooling?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
-            :challenge==='OTP_REQUIRED'?'Flipkart sent an OTP. Enter it below to connect this account.'
-            :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
-            :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use manual browser login to connect.'
-            :challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification'
-            :'Retailer verification required')
+          ?(challenge==='OTP_REQUIRED'
+            ?('Flipkart sent an OTP. Enter it below.'+(isOtpCooling?' A new OTP can be requested after '+otpCooldownTime+'.':''))
+            :challenge==='OTP_COOLDOWN'||isOtpCooling
+              ?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
+              :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
+              :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use manual browser login to connect.'
+              :challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification'
+              :'Retailer verification required')
           :sessionStatus==='VERIFYING'
             ?(secureBrowserReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
             :(secureBrowserReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
@@ -124,7 +126,9 @@
         :'';
       const verifyAction=sessionStatus!=='READY'&&(!credentialMissing||otpFirst)
         ?(isOtpCooling
-          ?`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`
+          ?(challenge==='OTP_REQUIRED'
+            ?''
+            :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
           :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
