@@ -9,10 +9,22 @@ apt-get install -y git curl ca-certificates docker.io docker-compose-v2
 systemctl enable --now docker
 usermod -aG docker ubuntu
 
-echo "Cloning repository..."
+ORDERGRID_REF="${ORDERGRID_REF:-v1.0.0}"
+if [[ ! "$ORDERGRID_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9]+)*$ && ! "$ORDERGRID_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "Error: ORDERGRID_REF must be an immutable release tag (e.g. v1.0.0) or 40-character commit SHA. Got: $ORDERGRID_REF" >&2
+  exit 1
+fi
+
+echo "Cloning repository at ref $ORDERGRID_REF..."
 mkdir -p /opt/ordergrid
-git clone https://github.com/Tashima-Tarsh/ordergrid.git /opt/ordergrid
 cd /opt/ordergrid
+if [ ! -d ".git" ]; then
+  git init
+  git remote add origin https://github.com/Tashima-Tarsh/ordergrid.git
+fi
+git fetch --depth 1 origin "$ORDERGRID_REF"
+git checkout --detach "$ORDERGRID_REF"
+echo "$ORDERGRID_REF" > /opt/ordergrid/DEPLOYED_REF
 
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || curl -s ifconfig.me || echo "localhost")
 SESSION_SECRET_VAL=$(openssl rand -hex 32)
