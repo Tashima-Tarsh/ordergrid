@@ -25,6 +25,7 @@ cat <<EOF > /opt/ordergrid/.env
 NODE_ENV=production
 PORT=3000
 APP_ORIGIN=http://${PUBLIC_IP}:3000
+POSTGRES_PASSWORD=${DB_PASSWORD_VAL}
 DATABASE_URL=postgres://ordergrid:${DB_PASSWORD_VAL}@db:5432/ordergrid
 REDIS_URL=redis://redis:6379
 SESSION_SECRET=${SESSION_SECRET_VAL}

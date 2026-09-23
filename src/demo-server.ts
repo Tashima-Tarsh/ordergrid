@@ -13,11 +13,12 @@ import { retailerForProductUrl, verifiedRetailerUrl } from "./retailers.js";
 import { decryptJson, encryptJson } from "./security.js";
 
 const port=Number(process.env.PORT??3000);
-const email=(process.env.DEMO_EMAIL??"demo@ordergrid.in").toLowerCase();
-const password=process.env.DEMO_PASSWORD??"OrderGridDemo2026!";
+const demoIdentifier=(process.env.DEMO_LOGIN_IDENTIFIER||process.env.DEMO_EMAIL||"").trim().toLowerCase();
+const demoPassword=process.env.DEMO_LOGIN_PASSWORD||process.env.DEMO_PASSWORD||"";
 const secret=process.env.SESSION_SECRET??randomBytes(32).toString("hex");
 const showroomRedirect=(process.env.SHOWROOM_REDIRECT_URL??"").trim().replace(/\/$/,"");
 const session=randomBytes(32).toString("base64url");
+const secureCookies=(process.env.APP_ORIGIN||"").startsWith("https");
 type Address={id:string;tenant_id:string;recipient:string;phone:string;line1:string;line2?:string;city:string;state:string;postal_code:string;country:string;reference?:string;amazon_account?:string;flipkart_account?:string};
 type Batch={id:string;tenant_id:string;name:string;status:string;currency:string;estimated_total_minor:number;created_at:string;item_count:number;recipient_count:number;payment_route:string};
 type Item={id:string;tenant_id:string;batchId:string;product_url:string;retailer:string;requested_quantity:number;addressId:string;unit_price_minor:number};
@@ -27,7 +28,9 @@ type Worker={id:string;hostname:string;mode:"BULK";last_seen:number};
 type DemoUser={id:string;tenant_id:string;email:string;role:"OWNER"|"APPROVER"|"BUYER"|"AUDITOR";active:boolean};
 const workspaceId:string=randomUUID();
 const demoUsers=new Map<string,DemoUser>();
-demoUsers.set("demo-owner",{id:"demo-owner",tenant_id:workspaceId,email,role:"OWNER",active:true});
+if(demoIdentifier){
+  demoUsers.set("demo-owner",{id:"demo-owner",tenant_id:workspaceId,email:demoIdentifier,role:"OWNER",active:true});
+}
 const addresses=new Map<string,Address>(),items:Item[]=[],batches:Batch[]=[],tasks:Task[]=[],baskets:Basket[]=[],workers=new Map<string,Worker>();
 const addressesByReference=(reference:string,tenantId=workspaceId)=>[...addresses.values()].find(a=>a.tenant_id===tenantId&&(a.reference||a.id)===reference);
 const activeAddresses=()=>[...addresses.values()].filter(a=>a.tenant_id===workspaceId);
@@ -114,13 +117,17 @@ app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},asy
     email:z.string().min(1).max(320).optional(),
     password:z.string().min(1)
   }).refine(v=>Boolean(v.identifier||v.email),{message:"User ID or email is required"}).parse(req.body);
+  if(!demoIdentifier||!demoPassword){
+    return reply.code(401).send({error:"invalid_credentials"});
+  }
   const userIdentifier=String(body.identifier??body.email??"").trim().toLowerCase();
-  const validEmails=[email,"amyhod3@gmail.com","admin@ordergrid.in","owner@ordergrid.in","nitish","niku906099@gmail.com","nitish906099kumar"];
-  const validPasswords=[password,"OrderGrid2026SecureAdmin!","OrderGridDemo2026!"];
-  const isMatch=(validEmails.some(e=>same(userIdentifier,e))||demoUsers.has(userIdentifier))&&validPasswords.some(p=>same(body.password,p));
-  if(!isMatch&&!validPasswords.some(p=>same(body.password,p)))return reply.code(401).send({error:"invalid_credentials"});
-  reply.setCookie("demo_session",session,{httpOnly:true,secure:false,sameSite:"lax",path:"/",maxAge:43200});
-  reply.setCookie("session",session,{httpOnly:true,secure:false,sameSite:"lax",path:"/",maxAge:43200});
+  const idMatches=same(userIdentifier,demoIdentifier)||(demoUsers.has(userIdentifier)&&same(userIdentifier,demoUsers.get(userIdentifier)?.email||""));
+  const passwordMatches=same(body.password,demoPassword);
+  if(!idMatches||!passwordMatches){
+    return reply.code(401).send({error:"invalid_credentials"});
+  }
+  reply.setCookie("demo_session",session,{httpOnly:true,secure:secureCookies,sameSite:"lax",path:"/",maxAge:43200});
+  reply.setCookie("session",session,{httpOnly:true,secure:secureCookies,sameSite:"lax",path:"/",maxAge:43200});
   return {user:{role:"OWNER"},workspace:{id:workspaceId,name:"OrderGrid Workspace"}};
 });
 app.post("/api/logout",async(_,reply)=>{reply.clearCookie("demo_session",{path:"/"});reply.clearCookie("session",{path:"/"});return {ok:true}});

@@ -217,6 +217,19 @@ openssl rand -hex 32
 > [!IMPORTANT]
 > OrderGrid refuses to start in `production` mode if repository defaults, insecure placeholders, or short keys are detected.
 
+#### Rotate Secrets
+
+On any live deployment, the following secrets must be rotated because historical development defaults may exist in repository history:
+1. `SESSION_SECRET`: Rotate to invalidate existing session cookies.
+2. `WORKER_API_TOKEN`: Rotate across API server and native automation workers.
+3. `DATA_ENCRYPTION_KEY_BASE64`: Rotate and re-encrypt stored encrypted credentials and session states.
+4. `POSTGRES_PASSWORD`: Update database user password and update application `DATABASE_URL`.
+5. `BOOTSTRAP_ADMIN_PASSWORD`: Rotate initial bootstrap admin credentials.
+6. `DEMO_LOGIN_IDENTIFIER` & `DEMO_LOGIN_PASSWORD`: Use dedicated unique demo environment credentials.
+
+> [!NOTE]
+> Do not rewrite git history on shared team branches; instead rotate all production credentials using the commands above.
+
 ```bash
 # Build and migrate
 npm run build

@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ordergrid
       POSTGRES_USER: ordergrid
-      POSTGRES_PASSWORD: OrderGrid2026SecurePostgres!
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -34,7 +34,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - APP_ORIGIN=${APP_ORIGIN:-http://3.106.181.196:3000}
-      - DATABASE_URL=postgres://ordergrid:OrderGrid2026SecurePostgres!@db:5432/ordergrid
+      - DATABASE_URL=postgres://ordergrid:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/ordergrid
       - DB_SSL=false
       - REDIS_URL=redis://redis:6379
       - SESSION_SECRET=${SESSION_SECRET}
