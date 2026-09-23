@@ -6,7 +6,7 @@ export const createDb = (config: Config) => {
     max: config.DB_POOL_MAX,
     idleTimeoutMillis: 20_000,
     connectionTimeoutMillis: 10_000,
-    ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED } : undefined
+    ssl: (config.NODE_ENV === "production" && config.DB_SSL) ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED } : undefined
   };
   if(config.DATABASE_URL)return new pg.Pool({...base,connectionString:config.DATABASE_URL});
   return new pg.Pool({

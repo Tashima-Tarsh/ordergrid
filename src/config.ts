@@ -14,6 +14,7 @@ const schema = z.object({
   ORDERGRID_DB_TOKEN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
   WORKER_API_TOKEN: z.string().min(32).optional(),
+  DB_SSL: z.enum(["true","false"]).default("true").transform(v=>v==="true"),
   DB_SSL_REJECT_UNAUTHORIZED: z.enum(["true","false"]).default("true").transform(v=>v==="true"),
   SESSION_SECRET: z.string().min(32),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
