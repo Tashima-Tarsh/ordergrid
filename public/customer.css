@@ -41,3 +41,41 @@ body.product-shell main{max-width:1280px!important;padding:24px 28px 56px!import
 .managed-credential input{min-width:0;height:34px;padding:0 10px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;font:inherit}
 .managed-credential button{min-height:34px;padding:0 11px;white-space:nowrap}
 @media(max-width:720px){.managed-credential{grid-template-columns:1fr}}
+
+/* Flipkart Popup Browser Modal */
+.retailer-connect-dialog{border:none;border-radius:20px;padding:0;background:transparent;max-width:680px;width:94vw;box-shadow:0 24px 64px rgba(15,23,42,0.28);outline:none;overflow:hidden}
+.retailer-connect-dialog::backdrop{background:rgba(15,23,42,0.65);backdrop-filter:blur(4px)}
+.retailer-connect-shell{background:#fff;border-radius:20px;overflow:hidden;border:1px solid #e2e8f0;display:flex;flex-direction:column}
+.retailer-connect-shell .modal-head{padding:18px 24px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}
+.retailer-connect-shell .modal-head h2{margin:0;font-size:20px;font-weight:700;color:#0f172a}
+.retailer-connect-shell .modal-head .close{background:none;border:none;font-size:24px;color:#64748b;cursor:pointer;padding:0 4px;line-height:1}
+.retailer-connect-shell .modal-head .close:hover{color:#0f172a}
+.retailer-connect-body{padding:20px 24px 24px;display:flex;flex-direction:column;gap:16px}
+.connect-account-info{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#f1f5f9;border-radius:12px}
+.connect-avatar{width:36px;height:36px;border-radius:10px;background:#2874f0;color:#fff;font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.connect-account-info strong{display:block;font-size:14px;color:#0f172a}
+.connect-account-info span{display:block;font-size:12px;color:#64748b}
+
+.connect-status-card{display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe}
+.connect-status-card.otp-ready{background:#fefce8;border-color:#fef08a}
+.connect-status-card.success{background:#f0fdf4;border-color:#bbf7d0}
+.connect-status-card .connect-spinner{width:18px;height:18px;border:2.5px solid #93c5fd;border-top-color:#2563eb;border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0}
+.connect-status-card.otp-ready .connect-spinner{display:none}
+.connect-status-card.success .connect-spinner{display:none}
+.connect-status-text strong{display:block;font-size:14px;color:#1e293b}
+.connect-status-text span{display:block;font-size:12px;color:#64748b;margin-top:2px}
+
+.connect-live-preview{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#0f172a;position:relative}
+.live-preview-badge{position:absolute;top:8px;left:8px;background:rgba(15,23,42,0.75);color:#38bdf8;font-size:9px;font-weight:800;letter-spacing:0.08em;padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);z-index:2}
+.connect-live-image{width:100%;max-height:240px;object-fit:cover;object-position:top center;display:block}
+
+.connect-otp-form{display:flex;flex-direction:column;gap:14px;background:#fafafa;padding:16px;border-radius:12px;border:1px solid #e5e7eb}
+.connect-otp-form label{display:flex;flex-direction:column;gap:6px}
+.connect-otp-form label span{font-size:13px;font-weight:600;color:#374151}
+.connect-otp-input{height:44px;font-size:20px;font-weight:700;letter-spacing:6px;text-align:center;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;outline:none;transition:border-color 0.15s ease}
+.connect-otp-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,0.12)}
+.connect-verify-btn{height:40px;background:#2563eb;color:#fff;border:none;border-radius:10px;font-weight:600;font-size:14px;padding:0 20px;cursor:pointer;transition:background 0.15s ease}
+.connect-verify-btn:hover{background:#1d4ed8}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+
