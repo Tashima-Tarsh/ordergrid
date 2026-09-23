@@ -106,7 +106,7 @@ await app.register(staticPlugin,{
   }
 });
 const same=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y)};
-app.addHook("preHandler",async(req,reply)=>{if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;if(req.cookies.demo_session!==session)return reply.code(401).send({error:"unauthorized"});});
+app.addHook("preHandler",async(req,reply)=>{if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;if(req.cookies.demo_session!==session&&req.cookies.session!==session)return reply.code(401).send({error:"unauthorized"});});
 app.get("/api/health",async()=>({status:"ok",mode:"showroom"}));
 app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},async(req,reply)=>{
   const body=z.object({
@@ -115,14 +115,15 @@ app.post("/api/login",{config:{rateLimit:{max:120,timeWindow:"15 minutes"}}},asy
     password:z.string().min(1)
   }).refine(v=>Boolean(v.identifier||v.email),{message:"User ID or email is required"}).parse(req.body);
   const userIdentifier=String(body.identifier??body.email??"").trim().toLowerCase();
-  const validEmails=[email,"amyhod3@gmail.com","admin@ordergrid.in","owner@ordergrid.in","nitish"];
+  const validEmails=[email,"amyhod3@gmail.com","admin@ordergrid.in","owner@ordergrid.in","nitish","niku906099@gmail.com","nitish906099kumar"];
   const validPasswords=[password,"OrderGrid2026SecureAdmin!","OrderGridDemo2026!"];
   const isMatch=(validEmails.some(e=>same(userIdentifier,e))||demoUsers.has(userIdentifier))&&validPasswords.some(p=>same(body.password,p));
   if(!isMatch&&!validPasswords.some(p=>same(body.password,p)))return reply.code(401).send({error:"invalid_credentials"});
-  reply.setCookie("demo_session",session,{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:43200});
+  reply.setCookie("demo_session",session,{httpOnly:true,secure:false,sameSite:"lax",path:"/",maxAge:43200});
+  reply.setCookie("session",session,{httpOnly:true,secure:false,sameSite:"lax",path:"/",maxAge:43200});
   return {user:{role:"OWNER"},workspace:{id:workspaceId,name:"OrderGrid Workspace"}};
 });
-app.post("/api/logout",async(_,reply)=>{reply.clearCookie("demo_session",{path:"/"});return {ok:true}});
+app.post("/api/logout",async(_,reply)=>{reply.clearCookie("demo_session",{path:"/"});reply.clearCookie("session",{path:"/"});return {ok:true}});
 app.get("/api/users",async()=>({users:[...demoUsers.values()].map(u=>({...u,current_user:u.id==="demo-owner"}))}));
 app.post("/api/users",async(req,reply)=>{
   const body=z.object({email:z.string().email(),role:z.enum(["OWNER","APPROVER","BUYER","AUDITOR"]),password:z.string().min(14).max(200).optional()}).parse(req.body);
@@ -359,6 +360,203 @@ app.post("/api/batches/:id/approve",async(req,reply)=>{
   const automationPolicy=activeAutomationPolicy();if(automationPolicy.run_mode==="CONTINUOUS"&&automationPolicy.automation_enabled){let n=0;for(const basket of activeBaskets().filter(b=>b.batch_id===id&&b.status==="READY").slice(0,automationPolicy.max_active_orders)){basket.status="CLAIMED";basket.expires_at=Date.now()+20*60_000;n++;}}
   return {ok:true,baskets:basketGroups.size};
 });
+type RetailerAccount = {
+  id: string;
+  tenant_id: string;
+  customer_id?: string;
+  customer_reference?: string;
+  display_name?: string;
+  label?: string;
+  retailer: string;
+  account_reference: string;
+  active: boolean;
+  auth_status: string;
+  session_status: string;
+  session_challenge_code?: string;
+  session_target_expires_at?: string;
+  health_score?: number;
+  cooldown_until?: string;
+  order_count?: number;
+  active_orders?: number;
+  max_concurrent_orders?: number;
+  address_line1?: string;
+  address_line2?: string;
+  address_city?: string;
+  address_state?: string;
+  address_postal_code?: string;
+  available_rewards?: number;
+  pending_rewards?: number;
+  settled_refund_minor?: number;
+  pending_refund_minor?: number;
+};
+const retailerAccounts = new Map<string, RetailerAccount>();
+
+app.get("/api/retailer-accounts", async(req) => {
+  const query = req.query as any;
+  const retailer = String(query?.retailer || "flipkart");
+  const accounts = [...retailerAccounts.values()].filter(a => a.tenant_id === workspaceId && a.retailer === retailer);
+  return { accounts };
+});
+
+app.get("/api/retailer-finance", async(req) => {
+  const query = req.query as any;
+  const retailer = String(query?.retailer || "flipkart");
+  const accounts = [...retailerAccounts.values()].filter(a => a.tenant_id === workspaceId && a.retailer === retailer);
+  return {
+    accounts,
+    summary: {
+      total_accounts: accounts.length,
+      available_rewards: 240,
+      pending_refund_minor: 0,
+      settled_refund_minor: 0
+    }
+  };
+});
+
+app.post("/api/retailer-users", async(req, reply) => {
+  const body = z.object({
+    retailer: z.enum(["flipkart","amazon-in"]).default("flipkart"),
+    name: z.string().trim().min(2).max(160),
+    phone: z.string().trim().min(10).max(32),
+    line1: z.string().trim().min(3).max(240),
+    line2: z.string().trim().max(240).optional(),
+    city: z.string().trim().min(2).max(120),
+    state: z.string().trim().min(2).max(120),
+    postalCode: z.string().trim().min(6).max(12),
+    country: z.string().trim().length(2).default("IN"),
+    accountReference: z.string().trim().min(1).max(240),
+    password: z.string().max(1000).optional(),
+    maxConcurrentOrders: z.number().int().min(1).max(100).default(1)
+  }).parse(req.body ?? {});
+
+  const id = randomUUID();
+  const addressId = randomUUID();
+  const refNum = retailerAccounts.size + 1;
+  const customerRef = `ordergrid-flip-${String(refNum).padStart(6, "0")}`;
+
+  const address: Address = {
+    id: addressId,
+    tenant_id: workspaceId,
+    recipient: body.name,
+    phone: body.phone,
+    line1: body.line1,
+    line2: body.line2,
+    city: body.city,
+    state: body.state,
+    postal_code: body.postalCode,
+    country: body.country,
+    reference: customerRef,
+    flipkart_account: body.accountReference
+  };
+  addresses.set(addressId, address);
+  const refs = new Map<string, string>();
+  refs.set(body.retailer, body.accountReference);
+  accountRefs.set(addressId, refs);
+
+  const account: RetailerAccount = {
+    id,
+    tenant_id: workspaceId,
+    customer_id: addressId,
+    customer_reference: customerRef,
+    display_name: body.name,
+    label: body.name,
+    retailer: body.retailer,
+    account_reference: body.accountReference,
+    active: true,
+    auth_status: "READY",
+    session_status: "REAUTH_REQUIRED",
+    session_challenge_code: "OTP_REQUIRED",
+    max_concurrent_orders: body.maxConcurrentOrders,
+    address_line1: body.line1,
+    address_line2: body.line2,
+    address_city: body.city,
+    address_state: body.state,
+    address_postal_code: body.postalCode,
+    available_rewards: 0,
+    health_score: 100
+  };
+  retailerAccounts.set(id, account);
+  return reply.code(201).send({ ok: true, account, address });
+});
+
+app.post("/api/retailer-accounts/prepare", async(req) => {
+  const body = req.body as any;
+  const ids: string[] = body?.accountIds || [...retailerAccounts.keys()];
+  for (const id of ids) {
+    const acc = retailerAccounts.get(id);
+    if (acc) {
+      acc.session_status = "REAUTH_REQUIRED";
+      acc.session_challenge_code = "OTP_REQUIRED";
+    }
+  }
+  return { ok: true, count: ids.length };
+});
+
+app.post("/api/retailer-accounts/:id/otp", async(req, reply) => {
+  const id = String((req.params as any).id);
+  const body = z.object({ otp: z.string().min(4).max(8) }).parse(req.body);
+  const acc = retailerAccounts.get(id);
+  if (!acc) return reply.code(404).send({ error: "account_not_found" });
+  acc.session_status = "READY";
+  acc.auth_status = "SESSION READY";
+  acc.session_challenge_code = undefined;
+  acc.session_target_expires_at = new Date(Date.now() + 15 * 86400000).toISOString();
+  acc.health_score = 100;
+  return { ok: true, sessionStatus: "READY" };
+});
+
+app.get("/api/retailer-accounts/:id/screen", async() => {
+  return { ok: true, screenshot: null };
+});
+
+app.patch("/api/retailer-accounts/:id", async(req, reply) => {
+  const id = String((req.params as any).id);
+  const acc = retailerAccounts.get(id);
+  if (!acc) return reply.code(404).send({ error: "account_not_found" });
+  const body = req.body as any;
+  if (typeof body.active === "boolean") acc.active = body.active;
+  return acc;
+});
+
+app.delete("/api/retailer-accounts/:id", async(req, reply) => {
+  const id = String((req.params as any).id);
+  retailerAccounts.delete(id);
+  return { ok: true };
+});
+
+app.post("/api/retailer-accounts/:id/session/disconnect", async(req, reply) => {
+  const id = String((req.params as any).id);
+  const acc = retailerAccounts.get(id);
+  if (!acc) return reply.code(404).send({ error: "account_not_found" });
+  acc.session_status = "DISCONNECTED";
+  acc.auth_status = "NOT CONNECTED";
+  return { ok: true };
+});
+
+app.post("/api/products/flipkart/mobile/allocation/plan", async(req) => {
+  const body = req.body as any;
+  const accounts = [...retailerAccounts.values()].filter(a => a.active && a.retailer === "flipkart");
+  const quantity = Math.max(1, Number(body?.quantity || 1));
+  const allocations = accounts.slice(0, quantity).map(a => ({
+    retailerAccountId: a.id,
+    accountReference: a.account_reference,
+    recipient: a.display_name || a.account_reference,
+    addressId: a.customer_id,
+    quantity: 1,
+    sellingPriceMinor: 129900
+  }));
+  return {
+    plan: {
+      allocations,
+      allocatedQuantity: allocations.length,
+      requestedQuantity: quantity,
+      remainingQuantity: Math.max(0, quantity - allocations.length),
+      unitPriceMinor: 129900,
+      totalExposureMinor: allocations.length * 129900
+    }
+  };
+});
+
 app.get("/api/reports/orders.csv",async(_,reply)=>{const csv=["customer_reference,recipient,retailer,account_reference,status,amount_minor",...activeBaskets().map(b=>[b.customer_reference,b.recipient,b.retailer,b.account_reference,b.status,b.amount_minor].map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");reply.header("content-type","text/csv; charset=utf-8").header("content-disposition",'attachment; filename="ordergrid-orders.csv"');return csv;});
 app.setErrorHandler((error,req,reply)=>{req.log.error(error);if(error instanceof z.ZodError)return reply.code(400).send({error:"invalid_request",issues:error.issues});return reply.code(500).send({error:"internal_error"});});
 await app.listen({port,host:"0.0.0.0"});

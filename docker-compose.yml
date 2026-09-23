@@ -41,6 +41,9 @@ services:
       - WORKER_API_TOKEN=${WORKER_API_TOKEN:-ordergrid_worker_token_secure_min_32_chars_2026}
       - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL:-amyhod3@gmail.com}
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-OrderGrid2026SecureAdmin!}
+      - AWS_REGION=${AWS_REGION:-ap-south-1}
+      - BEDROCK_REGION=${BEDROCK_REGION:-ap-south-1}
+      - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-apac.amazon.nova-lite-v1:0}
     depends_on:
       db:
         condition: service_healthy
