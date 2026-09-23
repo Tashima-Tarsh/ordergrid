@@ -45,6 +45,7 @@ const schema = z.object({
   CARDHOLDER_GENDER: z.enum(["M","F","O"]).optional(),
   CARDHOLDER_PAN: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional(),
   CARDHOLDER_SPECIAL_DATE: z.string().regex(/^\d{2}-\d{2}-\d{4}$/).optional(),
+  CARD_FUNDING_MAX_OVERAGE_PCT: z.coerce.number().int().min(0).max(100).default(10),
   AWS_REGION: z.string().default("ap-southeast-2"),
   BEDROCK_REGION: z.string().default("ap-southeast-2"),
   BEDROCK_MODEL_ID: z.string().default("apac.amazon.nova-lite-v1:0"),

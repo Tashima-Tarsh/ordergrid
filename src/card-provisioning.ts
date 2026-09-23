@@ -124,11 +124,23 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
     return {status:"CARDHOLDER_PROFILE_REQUIRED" as const,cardId:null};
   }
   const cardholder=configuredHolder??{};
-
   const expectedMinor=Math.max(100,Number(row.amount_minor||0));
-  const maxAllowedCeiling=Math.ceil(expectedMinor*1.5); // 50% max overage safety cap
-  const requestedMinor=Math.max(expectedMinor,Math.floor(Number(fundingAmountMinor||expectedMinor)));
-  const amountMinor=Math.min(requestedMinor,maxAllowedCeiling);
+  const overagePct=typeof config.CARD_FUNDING_MAX_OVERAGE_PCT==="number"?config.CARD_FUNDING_MAX_OVERAGE_PCT:10;
+  const hardCeiling=Math.ceil(expectedMinor*(1+overagePct/100));
+  const requestedMinor=Math.floor(Number(fundingAmountMinor||expectedMinor));
+
+  if(requestedMinor>hardCeiling){
+    await db.query("update checkout_baskets set payment_status='FAILED',updated_at=now() where id=$1 and tenant_id=$2",[basketId,tenantId]);
+    await audit(db,tenantId,userId,"virtual_card.funding_cap_exceeded","checkout_basket",basketId,{
+      expectedMinor,
+      requestedMinor,
+      hardCeiling,
+      overagePct
+    });
+    return {status:"FUNDING_CAP_EXCEEDED" as const,cardId:null};
+  }
+
+  const amountMinor=Math.max(expectedMinor,requestedMinor);
 
   let providerCardId=String(cardRow.provider_card_id||"");
   let providerAccountId=String(cardRow.provider_account_id||"");
