@@ -21,7 +21,7 @@ const schema = z.object({
   OTP_RATE_LIMIT_COOLDOWN_HOURS: z.coerce.number().int().min(1).default(6),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
   DATA_ENCRYPTION_KEY_PREVIOUS_BASE64: z.string().min(40).optional(),
-  BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
+  BOOTSTRAP_ADMIN_EMAIL: z.string().email().default("admin@ordergrid.internal"),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),
   BOOTSTRAP_ADMIN_SECRET: z.string().min(14).optional(),
   ORDERGRID_SIGNUP_CODE: z.string().min(12).max(512).optional(),

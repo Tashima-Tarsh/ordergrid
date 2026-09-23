@@ -32,6 +32,7 @@ jobs:
       APP_ORIGIN: http://localhost:3000
       SESSION_SECRET: ci_session_secret_32_bytes_minimum_length!
       DATA_ENCRYPTION_KEY_BASE64: YXV0b2dlbmVyYXRlZF8zMmJ5dGVfa2V5X2Zvcg==1234567890abcdef
+      BOOTSTRAP_ADMIN_EMAIL: admin@ordergrid.internal
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
