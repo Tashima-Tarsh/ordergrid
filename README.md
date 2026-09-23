@@ -103,6 +103,7 @@ OrderGrid includes specialized engine heuristics designed specifically for high-
 - **One-Order / One-Card Model**: Generates unique virtual card tokens with exact spending limits and expiration windows.
 - **No Card Reuse**: Eliminates merchant cross-account correlation by ensuring no two accounts ever share the same payment instrument.
 - **Commercial Price Gates**: Verifies final payable amounts at the retailer's terminal step against the approved batch total before triggering the order submission.
+- **Honest Card Lifecycle & Orphan Reconciliation**: Cards are only marked `CLOSED` when confirmed closed/unloaded by the issuer. When automated unloading/closure is unsupported by the provider (e.g. EnKash without programmatic closure endpoints) or throws an error, the card transitions to `CLEANUP_REQUIRED`. Cards in `CLEANUP_REQUIRED` must be closed manually in the issuer dashboard.
 
 ---
 

@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { Db } from "./db.js";
+import { audit, type Db } from "./db.js";
 import type { CardholderInput } from "./card-issuer.js";
 import { loadTenantIssuer } from "./issuer-connections.js";
 
@@ -228,26 +228,47 @@ export async function ensureBasketVirtualCard(db:Db,config:Config,tenantId:strin
   }
 }
 
-export async function cleanupBasketVirtualCard(db:Db,config:Config,tenantId:string,basketId:string){
+export async function cleanupBasketVirtualCard(db:Db,config:Config,tenantId:string,basketId:string,actorId:string|null=null){
   const card=await db.query(
-    "select vc.id,vc.provider,vc.provider_card_id,vc.provider_account_id,vc.issuer_connection_id,vc.status,vc.balance_minor from virtual_cards vc where vc.tenant_id=$1 and vc.checkout_basket_id=$2 limit 1",
+    "select vc.id,vc.provider,vc.provider_card_id,vc.provider_account_id,vc.issuer_connection_id,vc.status,vc.balance_minor from virtual_cards vc where vc.tenant_id=$1 and vc.checkout_basket_id=$2 and vc.status not in ('CLOSED','CANCELLED') limit 1",
     [tenantId,basketId]
   );
   const row=card.rows[0];
-  if(!row||row.status==="CLOSED")return {cleaned:false};
+  if(!row)return {cleaned:false,reason:"NO_ACTIVE_CARD"};
+  const cardId=String(row.id);
+  const providerCardId=String(row.provider_card_id||"");
+
+  if(providerCardId.startsWith("PENDING:")){
+    await db.query("update virtual_cards set status='CLOSED',balance_minor=0,updated_at=now() where id=$1",[cardId]);
+    await audit(db,tenantId,actorId,"virtual_card.cleaned","virtual_card",cardId,{basketId,provider:row.provider,reason:"PENDING_UNISSUED"});
+    return {cleaned:true,cardId};
+  }
+
   try{
     const state=await loadTenantIssuer(db,config,tenantId,row.issuer_connection_id);
-    if(state.issuer.configured()&&!String(row.provider_card_id).startsWith("PENDING:")){
-      if(state.issuer.unloadCard&&Number(row.balance_minor)>0){
-        await state.issuer.unloadCard({providerCardId:row.provider_card_id,providerAccountId:row.provider_account_id,amountMinor:Number(row.balance_minor)}).catch(()=>{});
-      }
-      if(state.issuer.closeCard){
-        await state.issuer.closeCard({providerCardId:row.provider_card_id,providerAccountId:row.provider_account_id}).catch(()=>{});
-      }
+    if(!state.issuer.configured()){
+      await db.query("update virtual_cards set status='CLEANUP_REQUIRED',updated_at=now() where id=$1",[cardId]);
+      await audit(db,tenantId,actorId,"virtual_card.cleanup_failed","virtual_card",cardId,{basketId,reason:"ISSUER_NOT_CONFIGURED"});
+      return {cleaned:false,reason:"ISSUER_NOT_CONFIGURED",cardId};
     }
-  }catch{}
-  await db.query("update virtual_cards set status='CLOSED',updated_at=now() where id=$1",[row.id]);
-  return {cleaned:true,cardId:row.id};
+    if(!state.issuer.closeCard){
+      await db.query("update virtual_cards set status='CLEANUP_REQUIRED',updated_at=now() where id=$1",[cardId]);
+      await audit(db,tenantId,actorId,"virtual_card.cleanup_failed","virtual_card",cardId,{basketId,reason:"CLOSE_CARD_UNSUPPORTED"});
+      return {cleaned:false,reason:"CLOSE_CARD_UNSUPPORTED",cardId};
+    }
+    if(state.issuer.unloadCard&&Number(row.balance_minor)>0){
+      await state.issuer.unloadCard({providerCardId,providerAccountId:row.provider_account_id,amountMinor:Number(row.balance_minor)});
+    }
+    await state.issuer.closeCard({providerCardId,providerAccountId:row.provider_account_id});
+    await db.query("update virtual_cards set status='CLOSED',balance_minor=0,updated_at=now() where id=$1",[cardId]);
+    await audit(db,tenantId,actorId,"virtual_card.cleaned","virtual_card",cardId,{basketId,provider:row.provider});
+    return {cleaned:true,cardId};
+  }catch(error:any){
+    const reason=String(error?.message||error||"CLEANUP_FAILED").slice(0,250);
+    await db.query("update virtual_cards set status='CLEANUP_REQUIRED',updated_at=now() where id=$1",[cardId]);
+    await audit(db,tenantId,actorId,"virtual_card.cleanup_failed","virtual_card",cardId,{basketId,error:reason});
+    return {cleaned:false,reason,cardId};
+  }
 }
 
 export async function reconcileOrphanVirtualCards(db:Db,tenantId:string){

@@ -2900,17 +2900,26 @@ app.post("/api/cards/reconcile-orphans",async(req,reply)=>{
   if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const orphans=await reconcileOrphanVirtualCards(db,p.tenantId);
   const cleaned:string[]=[];
+  const cleanupRequired:string[]=[];
   for(const orphan of orphans){
     if(orphan.checkout_basket_id){
-      const res=await cleanupBasketVirtualCard(db,config,p.tenantId,String(orphan.checkout_basket_id));
+      const res=await cleanupBasketVirtualCard(db,config,p.tenantId,String(orphan.checkout_basket_id),p.id);
       if(res.cleaned)cleaned.push(String(orphan.id));
+      else cleanupRequired.push(String(orphan.id));
     }else{
-      await db.query("update virtual_cards set status='CLOSED',updated_at=now() where id=$1",[orphan.id]);
-      cleaned.push(String(orphan.id));
+      if(String(orphan.provider_card_id).startsWith("PENDING:")){
+        await db.query("update virtual_cards set status='CLOSED',balance_minor=0,updated_at=now() where id=$1",[orphan.id]);
+        await audit(db,p.tenantId,p.id,"virtual_card.cleaned","virtual_card",orphan.id,{reason:"PENDING_UNISSUED"});
+        cleaned.push(String(orphan.id));
+      }else{
+        await db.query("update virtual_cards set status='CLEANUP_REQUIRED',updated_at=now() where id=$1",[orphan.id]);
+        await audit(db,p.tenantId,p.id,"virtual_card.cleanup_failed","virtual_card",orphan.id,{reason:"ORPHAN_UNLINKED_MANUAL_CLEANUP_REQUIRED"});
+        cleanupRequired.push(String(orphan.id));
+      }
     }
   }
-  await audit(db,p.tenantId,p.id,"virtual_cards.orphans_reconciled","virtual_card",null,{orphanCount:orphans.length,cleanedCount:cleaned.length});
-  return {reconciled:cleaned.length,cardIds:cleaned};
+  await audit(db,p.tenantId,p.id,"virtual_cards.orphans_reconciled","virtual_card",null,{orphanCount:orphans.length,cleanedCount:cleaned.length,cleanupRequiredCount:cleanupRequired.length});
+  return {reconciled:cleaned.length,cleaned,cleanupRequired};
 });
 
 app.post("/api/cards",async(req,reply)=>{
@@ -3419,7 +3428,10 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
     });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
-    void cleanupBasketVirtualCard(db,config,p.tenantId,id).catch(()=>{});
+    const cleanupResult=await cleanupBasketVirtualCard(db,config,p.tenantId,id,p.id);
+    if(!cleanupResult.cleaned&&cleanupResult.reason!=="NO_ACTIVE_CARD"){
+      app.log.warn({basketId:id,cleanupResult},"Virtual card cleanup required after basket failure");
+    }
     // Apply cooldown and deduct health score on the retailer account that failed
     if(rows[0].retailer_account_id){
       await db.query(
