@@ -83,6 +83,9 @@ const schema = z.object({
     if(value.BOOTSTRAP_ADMIN_PASSWORD&&knownInsecureSecrets.has(value.BOOTSTRAP_ADMIN_PASSWORD)){
       ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_PASSWORD"],message:"BOOTSTRAP_ADMIN_PASSWORD must not use the repository default in production"});
     }
+    if(process.env.ORDERGRID_OWNER_RECOVERY_USERNAME||process.env.ORDERGRID_OWNER_RECOVERY_HASH){
+      ctx.addIssue({code:"custom",path:["ORDERGRID_OWNER_RECOVERY_USERNAME"],message:"ORDERGRID_OWNER_RECOVERY_* backdoor environment variables are strictly forbidden in production. Use scripts/reset-owner-password.mjs instead."});
+    }
   }
 });
 export type Config = z.infer<typeof schema>;

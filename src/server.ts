@@ -740,20 +740,6 @@ app.post("/api/login",{config:{rateLimit:{max:config.LOGIN_RATE_LIMIT_MAX,timeWi
     [identifier]
   );
   let u=rows[0];
-  let usedOneTimeOwnerRecovery=false;
-  if(!u){
-    const oneTimeOwnerRecoveryUsername=(process.env.ORDERGRID_OWNER_RECOVERY_USERNAME||"").trim();
-    const oneTimeOwnerRecoveryHash=(process.env.ORDERGRID_OWNER_RECOVERY_HASH||"").trim();
-    if(oneTimeOwnerRecoveryUsername&&oneTimeOwnerRecoveryHash&&identifier.toLowerCase()===oneTimeOwnerRecoveryUsername.toLowerCase()&&await verifyPassword(input.password,oneTimeOwnerRecoveryHash)){
-      const owner=await db.query("select id,tenant_id,role,mfa_enabled from users where role='OWNER' and active order by created_at asc limit 1");
-      if(owner.rows[0]){
-        u={...owner.rows[0],password_hash:oneTimeOwnerRecoveryHash};
-        usedOneTimeOwnerRecovery=true;
-        await db.query("update users set owner_recovery_enabled=false where id=$1",[u.id]).catch(()=>{});
-        await audit(db,u.tenant_id,u.id,"user.owner_recovery_consumed","user",u.id,{username:oneTimeOwnerRecoveryUsername}).catch(()=>{});
-      }
-    }
-  }
 
   if(!u){
     await dummyVerifyPassword(input.password);
@@ -761,7 +747,7 @@ app.post("/api/login",{config:{rateLimit:{max:config.LOGIN_RATE_LIMIT_MAX,timeWi
     return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
   }
 
-  const passwordOk=usedOneTimeOwnerRecovery||await verifyPassword(input.password,u.password_hash);
+  const passwordOk=await verifyPassword(input.password,u.password_hash);
   if(!passwordOk){
     await recordLoginFailure(db,identifierHash,u.id,u.tenant_id);
     return reply.code(401).send({error:"invalid_credentials",message:"Invalid username/email or password"});
