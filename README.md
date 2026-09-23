@@ -1,289 +1,273 @@
-# OrderGrid Enterprise Procurement Engine
+# OrderGrid Enterprise Procurement & Automated Checkout Engine
 
 <div align="center">
 
-![OrderGrid Architecture](https://img.shields.io/badge/System-OrderGrid%20Enterprise-0A84FF?style=for-the-badge&logo=googlechrome&logoColor=white)
+![OrderGrid Enterprise](https://img.shields.io/badge/System-OrderGrid%20Enterprise-0A84FF?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Node Version](https://img.shields.io/badge/Node.js-22.x%20%7C%2024.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
-![Database](https://img.shields.io/badge/PostgreSQL-16%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-Strict%205.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Database](https://img.shields.io/badge/PostgreSQL-16%2B%20Relational-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Fastify](https://img.shields.io/badge/API-Fastify%205.x-000000?style=for-the-badge&logo=fastify&logoColor=white)
-![Status](https://img.shields.io/badge/Production-Complete%20%26%20Verified-00C853?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Test%20Suite-47%20Passing-00C853?style=for-the-badge)
 
-**Deterministic Multi-Account Procurement, Live Product Verification, Isolated Session Orchestration, Virtual Card Funding, and Compliance-Grade Invoicing.**
+**Deterministic Multi-Account Procurement, Isolated Browser Sandboxing, Dynamic Unit Allocation, Single-Use Virtual Card Protection, and Automated GST Invoicing.**
 
-[Live Production Console](https://ordergrid-production.up.railway.app) · [Architecture Blueprint](#architecture--system-design) · [Flipkart Allocation](#flipkart-mobile-allocation-engine) · [Security Model](#security-compliance--ethical-automation) · [Operations](#deployment--operations)
+[What is OrderGrid?](#what-ordergrid-does) · [How It Works](#how-ordergrid-works) · [System Architecture](#system-architecture) · [Key Capabilities](#core-capabilities) · [Security & Boundaries](#security-compliance--operational-boundary) · [Configuration & Setup](#configuration--environment-variables)
 
 </div>
 
 ---
 
-## Executive Overview
+## What OrderGrid Does
 
-**OrderGrid** is an enterprise-grade ecommerce procurement and fulfilment execution platform built for high-volume, authorized multi-account operations. It solves the critical bottleneck of orchestrating large-scale purchases across disparate customer accounts while maintaining strict transactional integrity, isolated financial boundaries, identity binding, and statutory compliance.
+**OrderGrid** is an enterprise-grade commerce procurement and checkout automation engine. It automates high-volume, authorized purchases across Indian and global e-commerce retailers (such as Flipkart, Amazon.in, and custom enterprise merchant storefronts) while strictly maintaining transactional safety, capital control, session integrity, and statutory compliance.
 
 ### The Problem It Solves
 
-Large procurement operations often fail due to:
-1. **Account Session Collision**: Managing dozens of retailer profiles concurrently without session leakage, fingerprint degradation, or IP contamination.
-2. **Dynamic Stock & Pincode Fragmentation**: Real-time regional pricing, unassigned default sellers, and heterogeneous quantity limits across accounts.
-3. **Financial Contamination & Limit Breaches**: Reusing parent credit cards across multiple orders, triggering merchant anti-fraud blocks.
-4. **Fragile Exception Handling**: Retailer OTPs, 3DS authentication, or stock depletion crashing entire batch operations.
-5. **Tax & Regulatory Gaps**: Disconnected invoice reconciliation, missing multi-state GST schedules, and manual ledger entries.
+High-volume procurement teams and e-commerce aggregators face major operational roadblocks when scaling orders across multiple customer profiles:
 
-### The Solution: OrderGrid Core Innovations
+1. **Session Cross-Contamination**: Managing multiple retailer accounts simultaneously causes cookie collision, session invalidation, and IP cross-linking.
+2. **Dynamic Stock & Pincode Fragmentation**: Real-time regional pricing, unassigned default sellers, and heterogeneous quantity limits per account make manual ordering slow and error-prone.
+3. **Financial Contamination & Capital Exposure**: Sharing credit cards across accounts triggers merchant risk blocks and creates financial reconciliation nightmares.
+4. **OTP & Verification Bottlenecks**: High-frequency login attempts lock retailer accounts due to aggressive OTP rate limits.
+5. **Tax & Ledger Invoicing Overhead**: Manual creation of B2B tax invoices with multi-state GST (CGST, SGST, IGST) and HSN codes creates massive administrative friction.
 
-- **Isolated Browser Virtualization**: Each retailer profile operates in a dedicated, hermetically isolated Chrome DevTools Protocol (CDP) sandbox with persistent session cookies and hardware tokens.
-- **Deterministic Multi-Account Allocator**: Distributes batch unit requirements across verified accounts based on real-time live capacity probing rather than naive fixed assumptions.
-- **Single-Use Virtual Card Engine**: Programmatically provisions, limits, and binds a unique virtual card to exactly one order.
-- **Zero-Loss Exception State Machine**: Automatically pauses challenged transactions (`REQUIRES_ACTION`, `OTP_REQUIRED`, `3DS_VERIFICATION`) into operator queues while remaining healthy orders execute concurrently.
-- **Automated GST & Ledger Generation**: Computes intra-state (CGST/SGST) and inter-state (IGST) schedules with automated B2B invoice generation and Excel reporting.
+### The OrderGrid Solution
+
+OrderGrid provides a centralized control plane and local execution workers that orchestrate end-to-end procurement:
+- **Hermetic Browser Sandboxing**: Dedicated Chrome DevTools Protocol (CDP) browser instances with isolated profiles, storage, and proxy routing per account.
+- **Smart Wave Allocation**: Probes retailer accounts in real time to allocate batch quantities based on actual per-account purchasing capacity.
+- **Atomic Single-Use Virtual Cards**: Dynamically provisions corporate virtual cards with strict hard funding caps tied directly to a single checkout basket.
+- **Automated OTP Rate-Limit Protection**: Enforces exponential cooldown schedules to prevent account suspensions.
+- **Automated GST Invoicing & Export**: Instant calculation of intra-state and inter-state tax schedules with downloadable B2B GST invoices and Excel ledgers.
 
 ---
 
-## Architecture & System Design
+## How OrderGrid Works
+
+OrderGrid coordinates procurement through a structured, multi-stage pipeline:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                             ORDERGRID CONTROL PLANE                              │
-├──────────────────────────┬───────────────────────────┬───────────────────────────┤
-│    Fastify REST API      │   PostgreSQL 16 Engine    │     BullMQ / Redis        │
-│  (Auth, RBAC, Sessions)  │ (Multi-Tenant Relational) │   (Distributed Queues)    │
-└────────────┬─────────────┴─────────────┬─────────────┴─────────────┬─────────────┘
-             │                           │                           │
-             ▼                           ▼                           ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                         NATIVE DESKTOP AUTOMATION WORKER                         │
-├──────────────────────────────────────────────────────────────────────────────────┤
-│  • Adaptive Parallelism (1-8 concurrent profile workers)                         │
-│  • Chrome DevTools Protocol (CDP) WebSocket Engine                               │
-│  • Session Reconciler & Instant Token Exporter                                   │
-└────────────────────────────────────────┬─────────────────────────────────────────┘
-                                         │
-                 ┌───────────────────────┴───────────────────────┐
-                 ▼                                               ▼
-┌──────────────────────────────────┐           ┌──────────────────────────────────┐
-│    Flipkart Retailer Profile     │           │     Amazon / Custom Retailer     │
-│   • Profile Key Sandbox          │           │   • Profile Key Sandbox          │
-│   • Pincode Resolution           │           │   • 1-Click Buy Driver           │
-│   • Live Cart Probing            │           │   • Address Verification         │
-│   • Single-Use Virtual Card      │           │   • Single-Use Virtual Card      │
-└──────────────────────────────────┘           └──────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                     1. RECIPIENT & ACCOUNT BINDING                              │
+│  Import recipients (CSV/XLSX) ──► Bind regional postal codes ──► Secure retailer authentication  │
+└────────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                                 │
+                                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   2. BATCH CREATION & ALLOCATION                                │
+│  Paste product URL ──► Probe live pincode stock ──► Allocate units across ready accounts (Wave) │
+└────────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                                 │
+                                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 3. VIRTUAL CARD PROVISIONING & CAP                              │
+│  Atomic card claim ──► Programmatic card creation ──► Enforce hard funding ceiling (≤ +10%)     │
+└────────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                                 │
+                                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   4. ISOLATED BROWSER EXECUTION                                 │
+│  Launch dedicated CDP profile ──► Inject cart & address ──► Apply virtual card ──► Place order  │
+└────────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                                 │
+                                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  5. CONFIRMATION & STATUTORY LEDGER                             │
+│  Capture retailer Order ID ──► Close/cleanup card ──► Generate multi-state GST invoice & report │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Identity & Entity Chain
+### Detailed Execution Stages
 
-A procurement item is never treated as an anonymous HTTP request. OrderGrid maintains an unbroken, cryptographically auditable chain of custody:
+1. **Account Session Preparation**:
+   - Operators connect retailer accounts (Flipkart / Amazon) via guided or automated login.
+   - Sessions are verified using pure DOM classification heuristics (`classifyLoginOutcome`, `decideSessionReady`) that confirm real account content before marking the session `✓ READY`.
+   - Active tokens and cookies are securely encrypted and stored for persistent 15-day reuse.
 
-$$\text{Tenant} \longrightarrow \text{Customer} \longrightarrow \text{Delivery Address} \longrightarrow \text{Retailer Account} \longrightarrow \text{Isolated Browser Profile} \longrightarrow \text{Product Check} \longrightarrow \text{Virtual Card} \longrightarrow \text{Retailer Order ID} \longrightarrow \text{GST Invoice}$$
+2. **Wave Allocation & Capacity Probing**:
+   - When a bulk order (e.g., 50 units of an electronics item) is entered, OrderGrid analyzes connected accounts.
+   - If accounts have individual purchase limits (e.g., max 2 units/account), OrderGrid automatically distributes 25 accounts $\times$ 2 units without account re-use.
+
+3. **Atomic Virtual Card Provisioning**:
+   - The system initiates an atomic database lock (`UPDATE virtual_cards SET status='ISSUING'`) ensuring that even under concurrent execution, exactly one virtual card is provisioned per checkout basket.
+   - The card is funded up to a strict `CARD_FUNDING_MAX_OVERAGE_PCT` ceiling (default: 10% above estimated price). If the payable amount exceeds this ceiling, the order is halted immediately to protect capital.
+
+4. **Isolated Browser Automation (CDP)**:
+   - The native execution worker connects to Chrome via Chrome DevTools Protocol (CDP).
+   - Each order executes within its own sandbox directory (`profiles/<account_id>`).
+   - The worker navigates to the retailer, validates the exact cart items and price, selects the bound delivery address, inputs virtual card details, and submits the order.
+
+5. **Reconciliation, Card Closure & Tax Invoicing**:
+   - Upon completion, OrderGrid captures the verified retailer order ID (e.g. `OD1234567890`).
+   - The virtual card is automatically unloaded and marked `CLOSED`. If an issuer lacks programmatic closure endpoints, it safely transitions to `CLEANUP_REQUIRED` with full audit logs.
+   - A compliance-grade B2B GST invoice is generated with CGST/SGST/IGST tax splits and HSN codes.
+
+---
+
+## System Architecture
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              ORDERGRID CONTROL PLANE (API)                             │
+│  Fastify 5 REST API · Session Vault · RBAC Engine · PostgreSQL 16 · BullMQ Task Queue  │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │ WebSocket / Secure REST
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        NATIVE DESKTOP AUTOMATION WORKER (AGENT)                        │
+│  Chrome DevTools Protocol (CDP) · Adaptive Concurrency (1-8 profiles) · Token Exporter │
+└────────────────────────┬──────────────────────────────────────┬────────────────────────┘
+                         │                                      │
+                         ▼                                      ▼
+     ┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
+     │      Flipkart Execution Sandbox      │  │        Amazon Execution Sandbox      │
+     │  • Regional Pincode Injection        │  │  • 1-Click Buy Driver                │
+     │  • Single-Submit OTP Gatekeeper      │  │  • Multi-Item Cart Builder           │
+     │  • Cart Probing & Price Protection   │  │  • Address Selector & Card Driver    │
+     └──────────────────────────────────────┘  └──────────────────────────────────────┘
+                         │                                      │
+                         └──────────────────┬───────────────────┘
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                       FINANCIAL & CAPITAL MANAGEMENT ENGINE                            │
+│  • EnKash / Custom Bank API Adapters  • Merchant Channel Controls (E-Commerce Only)   │
+│  • Hard Funding Overage Ceilings      • Honest Cleanup & Orphan Card Reconciler        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Core Capabilities
 
-### 1. Flipkart Mobile Allocation Engine
+### 1. Flipkart & Amazon Multi-Account Allocation
+- **Dynamic Pincode Stock Probing**: Injects customer postal codes to query live local inventory and delivery timeframes.
+- **Heterogeneous Wave Allocation**: Accommodates varying purchase limits across accounts (e.g., account A allows 1 unit, account B allows 2 units) and computes the optimal distribution.
+- **Single-Submit OTP Gatekeeper**: Enforces a single-submission policy on Flipkart login verification to prevent account suspensions from repeated OTP triggers.
 
-OrderGrid includes specialized engine heuristics designed specifically for high-demand consumer electronics and mobile procurement.
+### 2. Isolated Browser Virtualization (CDP Engine)
+- **Hermetic Chrome Sandboxing**: Every account runs inside its own isolated user profile directory. No shared cookies, cache, or local storage.
+- **Adaptive Parallel Execution**: Dynamically scales concurrent checkout instances based on available system RAM and CPU cores.
+- **Session Auto-Refresh & Token Capture**: Automatically captures authenticated session tokens, persisting them encrypted in PostgreSQL for up to 15 days.
 
-- **Dynamic Pincode Resolution**: Injects the account's bound regional postal code to reveal live regional pricing, stock status, and serviceable delivery timelines.
-- **Multi-Account Wave Allocator**: Iterates across session-ready accounts, verifies real unit capacity per profile, and computes optimal batch distribution.
-- **Operator Price Confirmation Fallback**: If a listing displays alternate seller selections or pending geolocation, operators can confirm the verified market price directly within the wizard, immediately locking the account verification.
+### 3. Virtual Card Capital & Safety Architecture
+- **Strict One-Order, One-Card Rule**: A single virtual card is bound to exactly one basket. Zero card reuse prevents merchant fraud flags.
+- **Atomic Issuance Lock**: Partial database unique indexing (`idx_virtual_cards_active_basket`) and atomic state transitions prevent duplicate card creation under concurrency.
+- **Hard Funding Ceiling**: Enforces `CARD_FUNDING_MAX_OVERAGE_PCT` (default 10%). Requests exceeding this cap are blocked with `FUNDING_CAP_EXCEEDED` audit logs without clamping.
+- **Honest Cleanup & Orphan Reconciliation**: Cards are only marked `CLOSED` when confirmed closed by the bank. Cards failing closure transition to `CLEANUP_REQUIRED` for operator review.
 
----
+### 4. Non-Blocking Fault Isolation & Operator Queue
+- **State Machine Resilience**: A failure or 2FA challenge on one account does not block or fail the rest of the batch.
+- **Interactive Action Queue**: Challenge states (`OTP_REQUIRED`, `3DS_VERIFICATION`, `PRICE_REVIEW`) are surfaced cleanly in the operational dashboard.
+- **Exponential OTP Cooldowns**: Automatically tracks and displays OTP wait timers (`30 min` for OTP requests, `6 hours` for rate limits).
 
-### 2. Isolated Browser Profile Orchestration
-
-- **Hermetic Chrome Sandboxing**: Every account identity runs inside its own isolated `profiles/<account_id>` directory.
-- **Adaptive Parallel Execution**: Manages multiple concurrent browser processes without exceeding system RAM or CPU thresholds.
-- **Clean Browser Lifecycle**: Immediately closes automation windows upon successful OTP verification or checkout completion, releasing memory back to the host machine.
-- **Token Capture & 15-Day Session Persistence**: Automatically dumps session cookies, storage state, and tokens back to PostgreSQL, keeping accounts session-ready across restarts.
-
----
-
-### 3. Virtual Card Funding & Commercial Safety
-
-- **One-Order / One-Card Model**: Generates unique virtual card tokens with exact spending limits and expiration windows.
-- **No Card Reuse**: Eliminates merchant cross-account correlation by ensuring no two accounts ever share the same payment instrument.
-- **Commercial Price Gates**: Verifies final payable amounts at the retailer's terminal step against the approved batch total before triggering the order submission.
-- **Honest Card Lifecycle & Orphan Reconciliation**: Cards are only marked `CLOSED` when confirmed closed/unloaded by the issuer. When automated unloading/closure is unsupported by the provider (e.g. EnKash without programmatic closure endpoints) or throws an error, the card transitions to `CLEANUP_REQUIRED`. Cards in `CLEANUP_REQUIRED` must be closed manually in the issuer dashboard.
-
----
-
-### 4. Resilient State Machine & Human Action Handoff
-
-```text
-PENDING ──► ACCOUNT_ALLOCATED ──► SESSION_READY ──► PRICE_VERIFIED ──► CARD_ASSIGNED
-                                                                            │
-      ┌─────────────────────────────────────────────────────────────────────┘
-      ▼
-READY_TO_EXECUTE ──► CHECKOUT_OPENED ──► PAYMENT_SUBMITTED ──► CONFIRMED
-      │
-      ├─► [CHALLENGE DETECTED: OTP / CAPTCHA / 3DS] ──► REQUIRES_ACTION (Operator Queue)
-      └─► [OUT OF STOCK] ──► STOCK_WATCH (Auto-Polling Engine)
-```
-
-- **Non-Blocking Fault Isolation**: A single account failure or verification request pauses only the affected order, allowing the remainder of the 50+ order batch to proceed without interruption.
-- **Interactive Human Action Queue**: Surfaces OTP, CAPTCHA, and 3DS requirements in a dedicated operational cockpit.
+### 5. Multi-State GST & Regulatory Compliance
+- **Dynamic Tax Engine**: Splits intra-state transactions into CGST (9%) + SGST (9%) and inter-state transactions into IGST (18%).
+- **B2B Tax Invoices**: Generates standard GST-compliant invoices with HSN/SAC code `8517` for telecommunications and electronics.
+- **Audit-Ready Exports**: One-click download of batch transaction ledgers in CSV and Excel (`.xlsx`) formats.
 
 ---
 
-### 5. Multi-State GST & Invoice Automation
+## Security, Compliance & Operational Boundary
 
-- **Automated Tax Engine**: Dynamically calculates CGST (9%), SGST (9%), IGST (18%), and custom cess schedules based on supplier vs recipient states.
-- **Instant Tax Invoices**: Generates enterprise-grade PDF/print invoices with HSN/SAC codes (`8517` for telecommunications/mobiles).
-- **Excel Ledger Export**: Full batch export including retailer order numbers, payment references, tax breakdowns, and customer bindings.
-
----
-
-## Security, Compliance & Ethical Automation
-
-OrderGrid is engineered around strict compliance and ethical automation principles:
+OrderGrid is engineered around strict compliance, data protection, and ethical automation principles:
 
 > [!IMPORTANT]
-> **Strict Operational Boundary**:
-> OrderGrid automates standard, legitimate browser workflows for authorized user accounts. It **does NOT** bypass retailer login controls, crack CAPTCHAs, intercept OTPs without operator consent, or bypass bank 3DS/PIN security.
+> **Operational Boundary**:
+> OrderGrid automates legitimate procurement workflows on behalf of authorized account owners. It **does NOT** include stealth scripts, user-agent or fingerprint spoofing, proxy rotation, CAPTCHA bypasses, or OTP interception without user authorization.
 
-- **Cryptographic Secret Protection**: Stored passwords (when intentionally provided) are encrypted at rest with **AES-256-GCM**.
-- **No Raw Card Storage**: Full PAN and CVV credentials are never stored in the database. Virtual card tokens are retrieved via ephemeral provider APIs.
+- **Zero Raw Card Storage**: Full card PAN and CVV credentials are never stored in the database. Card access uses ephemeral provider tokens.
+- **AES-256-GCM Encryption**: All credentials and sensitive tokens are encrypted at rest using AES-256-GCM authenticated encryption.
 - **Role-Based Access Control (RBAC)**:
-  - `OWNER`: Full administrative, tenant, and financial configuration.
-  - `APPROVER`: Commercial limit approval and batch execution sign-off.
-  - `BUYER`: Order creation, product check execution, and session management.
-  - `AUDITOR`: Read-only compliance and invoice inspection.
-- **Immutable Audit Trail**: All state transitions, manual price overrides, card assignments, and order placements are permanently logged to the `audit_logs` ledger.
+  - `OWNER`: Full administrative, workspace, and financial connector configuration.
+  - `APPROVER`: Commercial limit approval and batch sign-off.
+  - `BUYER`: Batch creation, product probing, and execution monitoring.
+  - `AUDITOR`: Read-only compliance, invoice review, and audit inspection.
+- **Fail-Closed Security Model**: Demo and showroom servers fail closed (`401 Unauthorized`) when environment credentials are not configured.
 
 ---
 
-## Production Verification & Test Suite
+## Configuration & Environment Variables
 
-The codebase enforces strict test-driven safety contracts across every layer:
+| Variable | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `NODE_ENV` | String | `development` | Application environment (`development`, `test`, `production`). |
+| `PORT` | Number | `3000` | HTTP server port. |
+| `APP_ORIGIN` | String | *Required* | Public application base URL (e.g. `https://ordergrid.example.com`). |
+| `DATABASE_URL` | String | *Required* | PostgreSQL connection string. |
+| `SESSION_SECRET` | String | *Required (32+ chars)* | Cryptographic secret for signing session cookies. |
+| `DATA_ENCRYPTION_KEY_BASE64` | String | *Required (40+ chars)* | Base64-encoded 256-bit AES key for database encryption. |
+| `WORKER_API_TOKEN` | String | *Required in Prod* | Machine-to-machine authentication token for automation workers. |
+| `CARD_FUNDING_MAX_OVERAGE_PCT` | Number | `10` | Maximum percentage allowed above basket price for virtual card funding. |
+| `OTP_MIN_INTERVAL_MINUTES` | Number | `30` | Minimum cooldown period between consecutive OTP requests on an account. |
+| `OTP_RATE_LIMIT_COOLDOWN_HOURS` | Number | `6` | Cooldown period when a retailer returns rate-limit errors. |
+| `DEMO_LOGIN_IDENTIFIER` | String | *Optional* | Dedicated user identifier for demo/showroom login. |
+| `DEMO_LOGIN_PASSWORD` | String | *Optional* | Dedicated password for demo/showroom login. |
+| `AWS_BEARER_TOKEN_BEDROCK` | String | *Optional* | Amazon Bedrock Nova runtime API key for product extraction. |
+| `BEDROCK_REGION` | String | `ap-southeast-2` | AWS region for Bedrock inference. |
+
+---
+
+## Developer & Deployment Quickstart
+
+### 1. Installation & Local Development
 
 ```bash
-# Run full unit and integration test suite
+# Clone repository
+git clone https://github.com/Tashima-Tarsh/ordergrid.git
+cd ordergrid
+
+# Install dependencies
+npm install
+
+# Setup environment variables
+cp .env.example .env
+# Fill in DATABASE_URL, SESSION_SECRET, and DATA_ENCRYPTION_KEY_BASE64
+
+# Run database migrations
+npm run db:migrate
+
+# Start local server with hot reloading
+npm run dev
+```
+
+### 2. Running Verification & Test Suites
+
+OrderGrid includes comprehensive test coverage verifying card safety, state machines, and contracts:
+
+```bash
+# Run all unit and integration tests (47 tests)
 npm test
 
-# Run frontend UI and DOM element contract verification
-node scripts/smoke-frontend-contract.mjs
-
-# Run backend automation policy engine verification
-node scripts/smoke-automation.mjs
-
-# Run multi-tenant user authentication verification
-node scripts/smoke-users.mjs
-
-# Validate static types and JavaScript modules
+# Run TypeScript static typecheck and JS syntax validations
 npm run typecheck
+
+# Run smoke test contracts
+node scripts/smoke-frontend-contract.mjs
+node scripts/smoke-automation.mjs
+node scripts/smoke-users.mjs
+npm run smoke:demo
 ```
 
-### Verified Test Matrix
+### 3. Running the Native Desktop Automation Worker
 
-| Test Suite | Pass Count | Status |
-| :--- | :---: | :---: |
-| **Unit & Integration (`test/*.test.ts`)** | `27 / 27` | `PASS` |
-| **Frontend Contract (`smoke-frontend-contract.mjs`)** | `100%` | `PASS` |
-| **Automation Engine (`smoke-automation.mjs`)** | `100%` | `PASS` |
-| **Multi-Tenant Security (`smoke-users.mjs`)** | `100%` | `PASS` |
-| **TypeScript & JS Syntax Checks** | `100%` | `PASS` |
-
----
-
-## Deployment & Operations
-
-### 1. Cloud Server Deployment (Railway / Docker)
-
-The central OrderGrid server runs on any standard Node.js/Docker hosting provider.
-
-```bash
-# Environment Variables (.env)
-NODE_ENV=production
-PORT=3000
-DATABASE_URL="postgresql://user:password@host:5432/ordergrid"
-SESSION_SECRET="your-64-char-cryptographic-session-secret"
-DATA_ENCRYPTION_KEY_BASE64="your-44-char-base64-encryption-key"
-WORKER_API_TOKEN="your-secure-machine-to-machine-worker-token"
-APP_ORIGIN="https://ordergrid-production.up.railway.app"
-```
-
-#### Secrets Generation & Production Hardening
-Generate cryptographically strong keys before production deployment:
-```bash
-# Generate SESSION_SECRET (32+ chars)
-openssl rand -hex 32
-
-# Generate DATA_ENCRYPTION_KEY_BASE64 (AES-256-GCM 32-byte key in Base64)
-openssl rand -base64 32
-
-# Generate WORKER_API_TOKEN (32+ chars)
-openssl rand -hex 32
-```
-> [!IMPORTANT]
-> OrderGrid refuses to start in `production` mode if repository defaults, insecure placeholders, or short keys are detected.
-
-#### Rotate Secrets
-
-On any live deployment, the following secrets must be rotated because historical development defaults may exist in repository history:
-1. `SESSION_SECRET`: Rotate to invalidate existing session cookies.
-2. `WORKER_API_TOKEN`: Rotate across API server and native automation workers.
-3. `DATA_ENCRYPTION_KEY_BASE64`: Rotate and re-encrypt stored encrypted credentials and session states.
-4. `POSTGRES_PASSWORD`: Update database user password and update application `DATABASE_URL`.
-5. `BOOTSTRAP_ADMIN_PASSWORD`: Rotate initial bootstrap admin credentials.
-6. `DEMO_LOGIN_IDENTIFIER` & `DEMO_LOGIN_PASSWORD`: Use dedicated unique demo environment credentials.
-
-> [!NOTE]
-> Do not rewrite git history on shared team branches; instead rotate all production credentials using the commands above.
-
-```bash
-# Build and migrate
-npm run build
-npm run db:migrate
-npm start
-```
-
----
-
-### 2. Native Desktop Automation Worker Setup
-
-The native execution worker runs on an authorized workstation with Google Chrome installed.
+The automation worker runs on any machine with Google Chrome installed:
 
 ```powershell
-# Windows PowerShell Execution
-$env:ORDERGRID_URL = "https://ordergrid-production.up.railway.app"
-$env:ORDERGRID_EMAIL = "admin@ordergrid.com"
+# Windows PowerShell
+$env:ORDERGRID_URL = "http://localhost:3000"
+$env:ORDERGRID_EMAIL = "owner@ordergrid.internal"
 $env:ORDERGRID_PASSWORD = "YourSecurePassword"
-$env:ORDERGRID_HEADLESS = ""  # Set to "1" for headless execution
+$env:ORDERGRID_PARALLEL = "4"
+$env:ORDERGRID_HEADLESS = "" # Leave blank to view Chrome, set "1" for headless
 
-# Launch Desktop Worker
 npm run agent
 ```
-
-#### Worker Configuration Flags
-
-| Variable | Default | Description |
-| :--- | :---: | :--- |
-| `ORDERGRID_PARALLEL` | `4` | Number of concurrent checkout browser sandboxes. |
-| `ORDERGRID_PRODUCT_CHECK_PARALLEL` | `4` | Max parallel product verification probes. |
-| `ORDERGRID_SESSION_CLAIM` | `1` | Automatically claims and prepares unassigned retailer accounts. |
-| `ORDERGRID_HEADLESS` | `""` | Runs Chrome headlessly or visibly for operator observation. |
-
----
-
-## User Workflow Quickstart
-
-### Step 1: Connect Retailer Account
-1. Open **Retailer Accounts** in the OrderGrid sidebar.
-2. Click **Connect** next to an account (e.g. `Flipkart`).
-3. The secure browser will launch, navigate to the authentication portal, and await your mobile OTP.
-4. Enter the OTP — OrderGrid captures the session token, marks the account `✓ READY`, and immediately closes the window.
-
-### Step 2: Create a Procurement Batch
-1. Click **New Batch** in the header.
-2. Paste the **Flipkart product URL** (e.g., iPhone 16 / S24 Ultra).
-3. **Single Order**: Select your connected account under *Single-account check*, confirm unit price, and proceed.
-4. **Bulk Multi-Account**: Set total required units (e.g. `20`) and click **Allocate across ready accounts**.
-5. Proceed through **Recipients** (auto-bound addresses) → **Commercial Approval** → **Submit & Execute**.
 
 ---
 
 <div align="center">
 
-**OrderGrid Enterprise Engine** · Built for Reliability, Compliance, and Scale.
+**OrderGrid Enterprise Engine** · Built for Reliability, Transactional Safety, and Scale.
 
 </div>
