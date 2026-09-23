@@ -1484,6 +1484,40 @@ app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
 });
 
 
+app.post("/api/retailer-accounts/:id/session/disconnect",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status='NOT_CONFIGURED',session_challenge_code=null,session_worker_id=null,
+       session_target_expires_at=null,session_data=null,updated_at=now()
+     where id=$1 and tenant_id=$2 and active
+     returning id,retailer,account_reference,session_status`,
+    [id,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  await audit(db,p.tenantId,p.id,"retailer_account.session_disconnected","retailer_account",id,{retailer:rows[0].retailer});
+  return {ok:true,sessionStatus:"NOT_CONFIGURED",account:rows[0]};
+});
+
+app.post("/api/retailer-accounts/:id/session/reconnect",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const id=z.string().uuid().parse((req.params as any).id);
+  const {rows}=await db.query(
+    `update retailer_accounts set
+       session_status='VERIFYING',session_challenge_code=null,session_worker_id=null,
+       session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
+     where id=$1 and tenant_id=$2 and active
+     returning id,retailer,account_reference,session_status`,
+    [id,p.tenantId]
+  );
+  if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  await audit(db,p.tenantId,p.id,"retailer_account.session_reconnect_requested","retailer_account",id,{retailer:rows[0].retailer});
+  return {ok:true,sessionStatus:"VERIFYING",account:rows[0]};
+});
+
 app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});

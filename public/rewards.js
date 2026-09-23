@@ -118,7 +118,7 @@
       const verifyAction=sessionStatus!=='READY'&&(!credentialMissing||otpFirst)
         ?`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`
         :sessionStatus==='READY'
-          ?'<span class="session-connected-chip">✓ Connected</span>'
+          ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
       const identity=account.customer_id
         ?esc(account.display_name||account.label||account.account_reference)+' · '+esc(account.customer_reference||'BOUND USER')
@@ -535,6 +535,22 @@
     }
     const submitOtp=event.target.closest('[data-submit-account-otp]');
     if(submitOtp){
+      openConnectModal(account);
+      return;
+    }
+    const disconnectBtn=event.target.closest('[data-disconnect-session]');
+    if(disconnectBtn){
+      disconnectBtn.disabled=true;
+      try{
+        await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/session/disconnect',{method:'POST'});
+        toast('Account session disconnected.');
+        await load();
+      }catch(error){alert(error.message)}
+      finally{disconnectBtn.disabled=false}
+      return;
+    }
+    const reconnectBtn=event.target.closest('[data-reconnect-session]');
+    if(reconnectBtn){
       openConnectModal(account);
       return;
     }
