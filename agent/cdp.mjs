@@ -720,10 +720,11 @@ function authChallengeScript(){
   return `(()=>{const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,80000).toLowerCase();
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
-    const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
+    const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||x.classList.contains('S1KmoO')||x.classList.contains('_2D2x9Y')||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
     const singleOtp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
-    const otpSentText=/(please enter the otp|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit)/i.test(text);
-    const isOtpActive=digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile)/i.test(text));
+    const otpSentText=/(please enter the otp|please enter the verification|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit|verification code we)/i.test(text);
+    const isOtpActive=digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile|your phone)/i.test(text));
     
     const captcha=Boolean(document.querySelector('iframe[src*="captcha" i],[class*="captcha" i],[id*="captcha" i],input[name*="captcha" i]'))||/captcha|i am not a robot/i.test(text);
     const password=Boolean(document.querySelector('input[type="password"]'));
@@ -765,8 +766,8 @@ function otpSubmitScript(otp){
       try{el.click();}catch{}
     };
     const inputs=[...document.querySelectorAll('input')].filter(visible);
-    
-    const digitInputs=inputs.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1');
+    const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||x.classList.contains('S1KmoO')||x.classList.contains('_2D2x9Y')||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
     const field=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
     
     if(digitInputs.length>=4){
@@ -779,7 +780,7 @@ function otpSubmitScript(otp){
     
     const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a,[role="button"]')].filter(visible);
     const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
-    const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||field?.form?.querySelector('button[type="submit"],input[type="submit"]');
+    const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||document.querySelector('button[type="submit"],input[type="submit"]');
     if(submit){clickElement(submit);return {ok:true,submitted:true};}
     return {ok:true,submitted:false};
   })()`;
@@ -977,21 +978,37 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       if(isEmail){
         const switchEmail=await evaluate(connection,`(()=>{
           const spans=[...document.querySelectorAll('span, button, a')];
-          const span=spans.find(s=>/^use email-?id$/i.test((s.innerText||'').trim()));
-          if(span){span.click();return {clicked:true};}
+          const span=spans.find(s=>/use email.?id/i.test((s.innerText||'').trim()));
+          if(span){
+            span.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+            span.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+            span.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+            span.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            try{span.click();}catch{}
+            return {clicked:true};
+          }
           return {clicked:false};
         })()`);
-        if(switchEmail?.clicked)await sleep(800);
+        if(switchEmail?.clicked)await sleep(1000);
       }
 
       // Step 2: Focus the target login input
       await evaluate(connection,`(()=>{
         const isEmail=${JSON.stringify(isEmail)};
-        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||''));
+        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
         const targetInput=isEmail
-          ?(inputs.find(i=>i.type==='email'||i.classList.contains('jwCbxy'))||inputs[0])
+          ?(inputs.find(i=>i.type==='email'||/email/i.test(i.placeholder||i.name||i.id||'')||i.classList.contains('jwCbxy'))||inputs[0])
           :(inputs.find(i=>i.type==='tel'||i.type==='number'||i.classList.contains('jwCbxy'))||inputs[0]);
-        if(targetInput){targetInput.focus();targetInput.value='';targetInput.select?.();}
+        if(targetInput){
+          targetInput.focus();
+          const proto=Object.getPrototypeOf(targetInput);
+          const desc=Object.getOwnPropertyDescriptor(proto,'value');
+          if(desc?.set)desc.set.call(targetInput,'');
+          else targetInput.value='';
+          targetInput.dispatchEvent(new Event('input',{bubbles:true}));
+          targetInput.dispatchEvent(new Event('change',{bubbles:true}));
+          targetInput.select?.();
+        }
       })()`);
       await sleep(300);
 
@@ -1023,8 +1040,9 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const outcome=await evaluate(connection,`(()=>{
         const text=(document.body?.innerText||'').replace(/\\s+/g,' ');
         const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden');
-        const otpBoxes=inputs.filter(i=>i.maxLength===1||i.classList.contains('S1KmoO')||i.classList.contains('_2D2x9Y'));
-        const isOtpSent=/(please enter the verification code|enter otp|verification code we've sent|resend otp in)/i.test(text)||otpBoxes.length>=4;
+        const nonSearch=inputs.filter(i=>!/search/i.test(i.placeholder||i.name||''));
+        const otpBoxes=nonSearch.filter(i=>i.maxLength===1||i.classList.contains('S1KmoO')||i.classList.contains('_2D2x9Y')||(i.type==='number'&&nonSearch.filter(n=>n.type==='number').length>=4));
+        const isOtpSent=/(please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in)/i.test(text)||otpBoxes.length>=4;
         const isNewUser=/looks like you're new here|sign up with your/i.test(text);
         return {isOtpSent,isNewUser,otpBoxCount:otpBoxes.length};
       })()`);
