@@ -905,6 +905,35 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 }
 
 
+export function classifyLoginOutcome({text='', digitsCount=0, hasOtpInput=false, isRateLimited=false, isNewUser=false, excerpt=''}={}){
+  const normalizedText = String(text||'').replace(/\s+/g,' ');
+  const isOtpSent = /(?:please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in|enter 6-digit|enter the 6-digit)/i.test(normalizedText)
+    || digitsCount >= 4
+    || Boolean(hasOtpInput);
+
+  if (isOtpSent) {
+    return { outcome: "OTP_SENT", code: "OTP_SENT", message: "Flipkart verification OTP has been sent. Enter the 6-digit code below to connect." };
+  }
+  if (isRateLimited || /(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(normalizedText)) {
+    const m = normalizedText.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)[^.!?]{0,100}/i);
+    const msg = excerpt || (m ? m[0] : "Flipkart rate limit reached. Please try again later.");
+    return { outcome: "RATE_LIMITED", code: "RATE_LIMITED", message: msg };
+  }
+  if (isNewUser || /looks like you're new here|sign up with your/i.test(normalizedText)) {
+    return { outcome: "ACCOUNT_NOT_REGISTERED", code: "ACCOUNT_NOT_REGISTERED", message: "Login identifier is not registered on Flipkart. Please register or verify the email/mobile." };
+  }
+  return { outcome: "UNKNOWN", code: "OTP_NOT_SENT", message: "Flipkart did not send an OTP after login submission. Please try manual browser login." };
+}
+
+export function decideSessionReady({url='', evalOk=false, hasAccountContent=false, isLoginUrl=false, hasLoginBtn=false, cookieNames=[]}={}){
+  if (!evalOk) return false;
+  const href = String(url||'');
+  if (isLoginUrl || /\/login|\/signin|\/ap\/signin/i.test(href)) return false;
+  if (hasLoginBtn && !hasAccountContent) return false;
+  if (!hasAccountContent && !href.includes('/account/orders')) return false;
+  return true;
+}
+
 export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null,verifyOnly=false}){
   if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
   const isLinux=process.platform==="linux";
@@ -948,17 +977,25 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     const cookieRes=await connection.send("Network.getAllCookies").catch(()=>({cookies:[]}));
     const cookies=cookieRes.cookies||[];
     const retailerCookies=cookies.filter(c=>String(c.domain||"").replace(/^\./,"").endsWith(host));
-    const hasAuthCookie=retailerCookies.some(c=>["at","rt","SN","S","T","x-main","at-main","sess-at-main"].includes(c.name));
 
-    // Fast check: if session is already active/authenticated, return READY without re-triggering OTP
     const activeCheck=await evaluate(connection,`(()=>{
       const text=(document.body?.innerText||'');
       const isLogin=/(?:account\\/login|\\/login|\\/signin)/i.test(location.href);
       const hasAccount=Boolean(document.querySelector('a[href*="/account"], div[class*="header"] a[href*="/account"]'))||/my account|supercoins|orders/i.test(text);
       const hasLoginBtn=Boolean(document.querySelector('a[href*="/login"], button[class*="login"]'));
-      return {isAuth:Boolean((hasAccount||location.href.includes('/account/orders'))&&!isLogin&&!hasLoginBtn),url:location.href};
+      return {url:location.href,hasAccount,isLogin,hasLoginBtn};
     })()`).catch(()=>null);
-    if((hasAuthCookie||activeCheck?.isAuth)&&!/\/login|\/signin/i.test(activeCheck?.url||"")){
+
+    const isReady=decideSessionReady({
+      url:activeCheck?.url||target.url||url,
+      evalOk:Boolean(activeCheck),
+      hasAccountContent:Boolean(activeCheck?.hasAccount),
+      isLoginUrl:Boolean(activeCheck?.isLogin),
+      hasLoginBtn:Boolean(activeCheck?.hasLoginBtn),
+      cookieNames:retailerCookies.map(c=>c.name)
+    });
+
+    if(isReady){
       return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:activeCheck?.url||url};
     }
 
@@ -1042,7 +1079,6 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
           const digitInputs=inputs.filter(i=>i.maxLength===1||i.getAttribute('maxlength')==='1'||(i.type==='number'&&inputs.filter(n=>n.type==='number').length>=4));
           const singleOtp=inputs.find(i=>i.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(i.name||i.id||i.placeholder||i.getAttribute('aria-label')||'')));
-          const isOtpSent=/(please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in|enter 6-digit|enter the 6-digit)/i.test(text)||digitInputs.length>=4||Boolean(singleOtp);
           const isRateLimited=/(try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(text);
           const isNewUser=/looks like you're new here|sign up with your/i.test(text);
           let excerpt='';
@@ -1050,20 +1086,15 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
             const m=text.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)[^.!?]{0,100}/i);
             excerpt=m?m[0]:'';
           }
-          return {isOtpSent,isRateLimited,isNewUser,excerpt};
+          return {text,digitsCount:digitInputs.length,hasOtpInput:Boolean(singleOtp),isRateLimited,isNewUser,excerpt};
         })()`).catch(()=>null);
 
-        if(check?.isOtpSent){
-          detectedOutcome={status:"REAUTH_REQUIRED",code:"OTP_SENT",message:`Flipkart verification OTP has been sent to ${loginId}. Enter the 6-digit code below to connect.`};
-          break;
-        }
-        if(check?.isRateLimited){
-          detectedOutcome={status:"REAUTH_REQUIRED",code:"RATE_LIMITED",message:check.excerpt||"Flipkart rate limit reached. Please try again later."};
-          break;
-        }
-        if(check?.isNewUser){
-          detectedOutcome={status:"REAUTH_REQUIRED",code:"ACCOUNT_NOT_REGISTERED",message:`${loginId} is not registered on Flipkart. Please register or verify the email/mobile.`};
-          break;
+        if(check){
+          const classified=classifyLoginOutcome(check);
+          if(classified.outcome!=="UNKNOWN"){
+            detectedOutcome={status:"REAUTH_REQUIRED",code:classified.code,message:classified.message};
+            break;
+          }
         }
       }
 
