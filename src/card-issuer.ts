@@ -26,6 +26,8 @@ export interface VirtualCardIssuer {
   createCard(input:{cardholder:CardholderInput;label?:string;amountMinor?:number}):Promise<IssuedCard>;
   configureCard(input:{providerCardId:string;providerAccountId:string;onlineAllowed:boolean;posAllowed:boolean}):Promise<"APPLIED"|"NOT_SUPPORTED">;
   loadCard(input:{providerCardId:string;providerAccountId:string;amountMinor:number;reference:string}):Promise<void>;
+  closeCard?(input:{providerCardId:string;providerAccountId:string}):Promise<void>;
+  unloadCard?(input:{providerCardId:string;providerAccountId:string;amountMinor?:number}):Promise<void>;
 }
 
 export class DisabledVirtualCardIssuer implements VirtualCardIssuer {
@@ -86,12 +88,13 @@ export class EnKashVirtualCardIssuer implements VirtualCardIssuer {
   async createCard(input:{cardholder:CardholderInput;label?:string;amountMinor?:number}):Promise<IssuedCard>{
     const c=input.cardholder;
     if(!c.email||!c.mobile||!c.firstName||!c.lastName||!c.gender||!c.pan||!c.specialDate)throw new Error("cardholder_profile_required");
+    const title=c.gender==="F"?"Ms":"Mr";
     const payload:any=await this.request("/api/v0/partner/enKashCard",{
       companyId:this.config.ENKASH_COMPANY_ID,
       cardAccountId:this.config.ENKASH_CARD_ACCOUNT_ID,
       email:c.email,
       mobile:c.mobile,
-      title:"Mr",
+      title,
       firstName:c.firstName,
       lastName:c.lastName,
       gender:c.gender,

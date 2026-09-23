@@ -18,7 +18,7 @@ import { flipkartProductCandidateUrl, retailerForProductUrl, validateRetailerOrd
 import { syncCheckoutBaskets } from "./baskets.js";
 import { disconnectTenantIssuer, loadTenantIssuer, saveDirectCardConnection, testAndSaveBankConnection, testAndSaveEnKashConnection } from "./issuer-connections.js";
 import { assignAvailableVirtualCard, assignFundingRoute } from "./funding-router.js";
-import { ensureBasketVirtualCard } from "./card-provisioning.js";
+import { cleanupBasketVirtualCard, ensureBasketVirtualCard, reconcileOrphanVirtualCards } from "./card-provisioning.js";
 import { buildGstWorkbook, createGstInvoice, renderGstInvoiceHtml } from "./gst-reporting.js";
 import { stateCodeForName, validateGstin } from "./gst.js";
 import { BANK_VIRTUAL_CARD_PROFILES } from "./bank-card-issuer.js";
@@ -2888,6 +2888,31 @@ app.get("/api/cards",async(req)=>{
   return {cards:rows,provider:state.issuer.provider,configured:state.issuer.configured(),source:state.source};
 });
 
+app.get("/api/cards/orphans",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const orphans=await reconcileOrphanVirtualCards(db,p.tenantId);
+  return {orphans,count:orphans.length};
+});
+
+app.post("/api/cards/reconcile-orphans",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const orphans=await reconcileOrphanVirtualCards(db,p.tenantId);
+  const cleaned:string[]=[];
+  for(const orphan of orphans){
+    if(orphan.checkout_basket_id){
+      const res=await cleanupBasketVirtualCard(db,config,p.tenantId,String(orphan.checkout_basket_id));
+      if(res.cleaned)cleaned.push(String(orphan.id));
+    }else{
+      await db.query("update virtual_cards set status='CLOSED',updated_at=now() where id=$1",[orphan.id]);
+      cleaned.push(String(orphan.id));
+    }
+  }
+  await audit(db,p.tenantId,p.id,"virtual_cards.orphans_reconciled","virtual_card",null,{orphanCount:orphans.length,cleanedCount:cleaned.length});
+  return {reconciled:cleaned.length,cardIds:cleaned};
+});
+
 app.post("/api/cards",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
@@ -3394,6 +3419,7 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
     });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
+    void cleanupBasketVirtualCard(db,config,p.tenantId,id).catch(()=>{});
     // Apply cooldown and deduct health score on the retailer account that failed
     if(rows[0].retailer_account_id){
       await db.query(
