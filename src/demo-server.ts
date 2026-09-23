@@ -88,7 +88,17 @@ await app.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"});
 await app.register(cookie,{secret});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
-await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
+await app.register(staticPlugin,{
+  root:join(dirname(fileURLToPath(import.meta.url)),"../public"),
+  prefix:"/",
+  setHeaders:(res,path)=>{
+    if(path.endsWith(".js")||path.endsWith(".html")||path.endsWith(".css")){
+      res.setHeader("Cache-Control","no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma","no-cache");
+      res.setHeader("Expires","0");
+    }
+  }
+});
 const same=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y)};
 app.addHook("preHandler",async(req,reply)=>{if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login")return;if(req.cookies.demo_session!==session)return reply.code(401).send({error:"unauthorized"});});
 app.get("/api/health",async()=>({status:"ok",mode:"showroom"}));

@@ -169,7 +169,17 @@ await app.register(helmet,{contentSecurityPolicy:{directives:{
 }}});
 await app.register(rateLimit,{max:600,timeWindow:"1 minute"}); await app.register(cookie,{secret:config.SESSION_SECRET});
 await app.register(multipart,{limits:{fileSize:5_000_000,files:1}});
-await app.register(staticPlugin,{root:join(dirname(fileURLToPath(import.meta.url)),"../public"),prefix:"/"});
+await app.register(staticPlugin,{
+  root:join(dirname(fileURLToPath(import.meta.url)),"../public"),
+  prefix:"/",
+  setHeaders:(res,path)=>{
+    if(path.endsWith(".js")||path.endsWith(".html")||path.endsWith(".css")){
+      res.setHeader("Cache-Control","no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma","no-cache");
+      res.setHeader("Expires","0");
+    }
+  }
+});
 
 declare module "fastify" { interface FastifyRequest { principal?:{id:string;homeTenantId:string;tenantId:string;role:string} } }
 
