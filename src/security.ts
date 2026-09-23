@@ -47,10 +47,40 @@ export function encryptJson(value: object, keyB64: string) {
   return { ciphertext, iv, authTag: cipher.getAuthTag() };
 }
 
-export function decryptJson(parts: { ciphertext: Buffer; iv: Buffer; authTag: Buffer }, keyB64: string) {
-  const d = createDecipheriv("aes-256-gcm", Buffer.from(keyB64, "base64"), parts.iv);
-  d.setAuthTag(parts.authTag);
-  return JSON.parse(Buffer.concat([d.update(parts.ciphertext), d.final()]).toString("utf8"));
+export function decryptWithKeys(
+  parts: { ciphertext: Buffer; iv: Buffer; authTag: Buffer },
+  keys: (string | undefined | null)[]
+): any {
+  const validKeys = keys.filter((k): k is string => Boolean(k && k.trim()));
+  if (validKeys.length === 0) {
+    throw new Error("At least one encryption key is required for decryption");
+  }
+
+  let lastError: Error | null = null;
+  for (const keyB64 of validKeys) {
+    try {
+      const key = Buffer.from(keyB64, "base64");
+      if (key.length !== 32) continue;
+      const d = createDecipheriv("aes-256-gcm", key, parts.iv);
+      d.setAuthTag(parts.authTag);
+      const plaintext = Buffer.concat([d.update(parts.ciphertext), d.final()]).toString("utf8");
+      return JSON.parse(plaintext);
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+
+  throw lastError ?? new Error("Failed to decrypt with provided keys");
+}
+
+export function decryptJson(
+  parts: { ciphertext: Buffer; iv: Buffer; authTag: Buffer },
+  keyOrKeys: string | (string | undefined | null)[]
+): any {
+  if (Array.isArray(keyOrKeys)) {
+    return decryptWithKeys(parts, keyOrKeys);
+  }
+  return decryptWithKeys(parts, [keyOrKeys]);
 }
 
 export function computeOtpCooldown(

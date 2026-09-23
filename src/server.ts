@@ -46,6 +46,7 @@ if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
   process.env.WORKER_API_TOKEN ||= randomBytes(48).toString("base64url");
 }
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const encryptionKeys = [config.DATA_ENCRYPTION_KEY_BASE64, config.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64].filter(Boolean) as string[];
 const bedrock=createBedrockService(config);
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -840,7 +841,7 @@ app.post("/api/login/mfa",{config:{rateLimit:{max:config.MFA_RATE_LIMIT_MAX,time
       ciphertext:u.mfa_secret_ciphertext,
       iv:u.mfa_secret_iv,
       authTag:u.mfa_secret_auth_tag
-    },config.DATA_ENCRYPTION_KEY_BASE64);
+    },encryptionKeys);
     decryptedSecret=typeof dec==="string"?dec:dec.secret;
   }catch{
     return reply.code(500).send({error:"mfa_decryption_error",message:"Failed to decrypt MFA credentials"});
@@ -998,7 +999,7 @@ app.post("/api/mfa/disable",async(req,reply)=>{
     authenticated=true;
   }else if(body.code&&u.mfa_secret_ciphertext){
     try{
-      const dec=decryptJson({ciphertext:u.mfa_secret_ciphertext,iv:u.mfa_secret_iv,authTag:u.mfa_secret_auth_tag},config.DATA_ENCRYPTION_KEY_BASE64);
+      const dec=decryptJson({ciphertext:u.mfa_secret_ciphertext,iv:u.mfa_secret_iv,authTag:u.mfa_secret_auth_tag},encryptionKeys);
       const secret=typeof dec==="string"?dec:dec.secret;
       const totp=verifyTotp(body.code,secret,{lastUsedStep:u.mfa_last_used_step});
       if(totp.valid)authenticated=true;
@@ -2429,7 +2430,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           [p.tenantId,row.id]
         );
         if(stored.rows[0]){
-          const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+          const decrypted=decryptJson({ciphertext:stored.rows[0].ciphertext,iv:stored.rows[0].iv,authTag:stored.rows[0].auth_tag},encryptionKeys) as {password?:string};
           if(decrypted.password)credentials.password=String(decrypted.password);
         }
       }
@@ -2440,7 +2441,7 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       );
       if(savedSession.rows[0]){
         try{
-          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},encryptionKeys) as {cookies?:Record<string,unknown>[]};
           if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
         }catch{
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
@@ -2885,7 +2886,7 @@ app.post("/api/execution-worker/:workerId/commands/claim",async(req,reply)=>{
           ciphertext:Buffer.from(String(encrypted.ciphertext),"base64"),
           iv:Buffer.from(String(encrypted.iv),"base64"),
           authTag:Buffer.from(String(encrypted.authTag),"base64")
-        },config.DATA_ENCRYPTION_KEY_BASE64) as {otp?:string};
+        },encryptionKeys) as {otp?:string};
         payload={...payload,otpEncrypted:undefined,otp:String(secret.otp||"")};
       }
       return {
@@ -3568,7 +3569,7 @@ app.post("/api/bulk-queue/:id/open",async(req,reply)=>{
         ciphertext:storedCredential.rows[0].ciphertext,
         iv:storedCredential.rows[0].iv,
         authTag:storedCredential.rows[0].auth_tag
-      },config.DATA_ENCRYPTION_KEY_BASE64) as {password?:string};
+      },encryptionKeys) as {password?:string};
       if(decrypted.password){
         credentials={login:String(rows[0].account_reference),password:String(decrypted.password)};
         await db.query("update private.retailer_credentials set last_used_at=now() where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,rows[0].retailer_account_id]);

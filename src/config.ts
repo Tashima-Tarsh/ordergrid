@@ -20,6 +20,7 @@ const schema = z.object({
   OTP_MIN_INTERVAL_MINUTES: z.coerce.number().int().min(1).default(30),
   OTP_RATE_LIMIT_COOLDOWN_HOURS: z.coerce.number().int().min(1).default(6),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
+  DATA_ENCRYPTION_KEY_PREVIOUS_BASE64: z.string().min(40).optional(),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),
   BOOTSTRAP_ADMIN_SECRET: z.string().min(14).optional(),
@@ -79,6 +80,9 @@ const schema = z.object({
     }
     if(value.DATA_ENCRYPTION_KEY_BASE64.length<40||knownInsecureSecrets.has(value.DATA_ENCRYPTION_KEY_BASE64)){
       ctx.addIssue({code:"custom",path:["DATA_ENCRYPTION_KEY_BASE64"],message:"DATA_ENCRYPTION_KEY_BASE64 must be a secure random base64 key (min 40 chars) and must not use the repository default"});
+    }
+    if(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64&&(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64.length<40||knownInsecureSecrets.has(value.DATA_ENCRYPTION_KEY_PREVIOUS_BASE64))){
+      ctx.addIssue({code:"custom",path:["DATA_ENCRYPTION_KEY_PREVIOUS_BASE64"],message:"DATA_ENCRYPTION_KEY_PREVIOUS_BASE64 must be a secure random base64 key (min 40 chars) and must not use the repository default"});
     }
     if(value.BOOTSTRAP_ADMIN_PASSWORD&&knownInsecureSecrets.has(value.BOOTSTRAP_ADMIN_PASSWORD)){
       ctx.addIssue({code:"custom",path:["BOOTSTRAP_ADMIN_PASSWORD"],message:"BOOTSTRAP_ADMIN_PASSWORD must not use the repository default in production"});
