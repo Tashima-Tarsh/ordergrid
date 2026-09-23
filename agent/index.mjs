@@ -215,7 +215,7 @@ async function main(){
             for(let attempt=0;attempt<2;attempt++){
               try{
                 result=await prepareRetailerSession({
-                  chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null
+                  chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null,verifyOnly:Boolean(account.verifyOnly)
                 });
               }catch(error){
                 result={status:"ERROR",code:"SESSION_WORKER_ERROR",message:String(error.message||error).slice(0,300)};

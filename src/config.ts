@@ -17,6 +17,8 @@ const schema = z.object({
   DB_SSL: z.enum(["true","false"]).default("true").transform(v=>v==="true"),
   DB_SSL_REJECT_UNAUTHORIZED: z.enum(["true","false"]).default("true").transform(v=>v==="true"),
   SESSION_SECRET: z.string().min(32),
+  OTP_MIN_INTERVAL_MINUTES: z.coerce.number().int().min(1).default(30),
+  OTP_RATE_LIMIT_COOLDOWN_HOURS: z.coerce.number().int().min(1).default(6),
   DATA_ENCRYPTION_KEY_BASE64: z.string().min(40),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(14).optional(),

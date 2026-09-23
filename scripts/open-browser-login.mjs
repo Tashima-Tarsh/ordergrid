@@ -1,4 +1,4 @@
-﻿import { spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -30,7 +30,6 @@ async function main() {
     "--remote-debugging-port=0",
     "--no-first-run",
     "--no-default-browser-check",
-    "--disable-blink-features=AutomationControlled",
     "--new-window",
     "https://www.flipkart.com/account/login?ret=/"
   ];

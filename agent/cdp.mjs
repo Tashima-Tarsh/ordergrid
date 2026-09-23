@@ -91,7 +91,7 @@ async function devtoolsPort(directory,timeoutMs=15000){
 export async function ensureChrome(chrome,directory){
   await mkdir(directory,{recursive:true,mode:0o700});
   try{return await devtoolsPort(directory,800)}catch{}
-  const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--disable-blink-features=AutomationControlled","--new-window"];
+  const args=[`--user-data-dir=${directory}`,"--remote-debugging-address=127.0.0.1","--remote-debugging-port=0","--no-first-run","--no-default-browser-check","--new-window"];
   const isLinux=process.platform==="linux";
   if(process.env.ORDERGRID_HEADLESS==="1"||(isLinux&&!process.env.DISPLAY))args.push(
     "--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
@@ -721,7 +721,7 @@ function authChallengeScript(){
     const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
     const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
-    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||x.classList.contains('S1KmoO')||x.classList.contains('_2D2x9Y')||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
+    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
     const singleOtp=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
     const otpSentText=/(please enter the otp|please enter the verification|otp sent to|enter otp sent|resend otp in|enter the 6-digit|enter 6-digit|verification code we)/i.test(text);
     const isOtpActive=digitInputs.length>=4||singleOtp||(otpSentText&&!/enter (email|mobile|your phone)/i.test(text));
@@ -767,7 +767,7 @@ function otpSubmitScript(otp){
     };
     const inputs=[...document.querySelectorAll('input')].filter(visible);
     const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
-    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||x.classList.contains('S1KmoO')||x.classList.contains('_2D2x9Y')||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
+    const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4));
     const field=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
     
     if(digitInputs.length>=4){
@@ -905,12 +905,17 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 }
 
 
-export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null}){
+export async function prepareRetailerSession({chrome,directory,retailer,accountCredentials,sessionState=null,verifyOnly=false}){
   if(sessionState)await restoreRetailerSessionState({chrome,directory,retailer,sessionState}).catch(()=>false);
+  const isLinux=process.platform==="linux";
+  const isHeadless=process.env.ORDERGRID_HEADLESS==="1"||(isLinux&&!process.env.DISPLAY);
+  if(retailer==="flipkart"&&!verifyOnly&&isHeadless){
+    return {status:"ERROR",code:"HEADED_BROWSER_REQUIRED",message:"Headed browser required for retailer login / OTP request"};
+  }
   const port=await ensureChrome(chrome,directory);
   const flipkartLoginUrl="https://www.flipkart.com/";
   const url=retailer==="flipkart"
-    ?"https://www.flipkart.com/account/login?ret=/"
+    ?(verifyOnly?"https://www.flipkart.com/account/orders":"https://www.flipkart.com/account/login?ret=/")
     :retailer==="amazon-in"
       ?"https://www.amazon.in/gp/your-account/order-history"
       :null;
@@ -919,25 +924,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const existing=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
   let target=existing.find(t=>/(account\/login|login|signin|account\/orders|order-history|verify|otp)/i.test(String(t.url||"")))||await createTarget(port,url);
   let connection=new CdpConnection(target.webSocketDebuggerUrl);
-  const stealthScript=`
-    try {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      window.chrome = window.chrome || { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-GB', 'en-US', 'en', 'hi'] });
-    } catch(e){}
-  `;
   const primeConnection=async()=>{
     await connection.send("Page.enable");
     await connection.send("Network.enable").catch(()=>null);
     await connection.send("Emulation.setDeviceMetricsOverride",{width:1280,height:800,deviceScaleFactor:1,mobile:false}).catch(()=>null);
-    await connection.send("Network.setUserAgentOverride",{
-      userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      acceptLanguage:"en-IN,en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7",
-      platform:"Win32"
-    }).catch(()=>null);
-    await connection.send("Page.addScriptToEvaluateOnNewDocument",{source:stealthScript}).catch(()=>null);
-    await connection.send("Runtime.evaluate",{expression:stealthScript,returnByValue:true}).catch(()=>null);
     await connection.send("Page.bringToFront").catch(()=>null);
     await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
   };
@@ -954,30 +944,36 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     await primeConnection();
     await waitReady(connection).catch(()=>null);
     await sleep(1500);
-    const resetFlipkartToStorefront=async()=>{
-      await connection.send("Page.navigate",{url:flipkartLoginUrl});
-      await sleep(800);
-    };
+
+    const cookieRes=await connection.send("Network.getAllCookies").catch(()=>({cookies:[]}));
+    const cookies=cookieRes.cookies||[];
+    const retailerCookies=cookies.filter(c=>String(c.domain||"").replace(/^\./,"").endsWith(host));
+    const hasAuthCookie=retailerCookies.some(c=>["at","rt","SN","S","T","x-main","at-main","sess-at-main"].includes(c.name));
 
     // Fast check: if session is already active/authenticated, return READY without re-triggering OTP
     const activeCheck=await evaluate(connection,`(()=>{
       const text=(document.body?.innerText||'');
       const isLogin=/(?:account\\/login|\\/login|\\/signin)/i.test(location.href);
       const hasAccount=Boolean(document.querySelector('a[href*="/account"], div[class*="header"] a[href*="/account"]'))||/my account|supercoins|orders/i.test(text);
-      const hasLoginBtn=Boolean(document.querySelector('a[href*="/login"], button[class*="login"], a[class*="_1_3w1N"]'));
-      return {isAuth:hasAccount&&!isLogin&&!hasLoginBtn,url:location.href};
+      const hasLoginBtn=Boolean(document.querySelector('a[href*="/login"], button[class*="login"]'));
+      return {isAuth:Boolean((hasAccount||location.href.includes('/account/orders'))&&!isLogin&&!hasLoginBtn),url:location.href};
     })()`).catch(()=>null);
-    if(activeCheck?.isAuth){
-      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:activeCheck.url};
+    if((hasAuthCookie||activeCheck?.isAuth)&&!/\/login|\/signin/i.test(activeCheck?.url||"")){
+      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:activeCheck?.url||url};
+    }
+
+    if(verifyOnly){
+      const screenshot=await captureScreen();
+      return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:activeCheck?.url||url,screenshot};
     }
 
     if(retailer==="flipkart"&&accountCredentials?.login){
       const loginId=String(accountCredentials.login).trim();
       const isEmail=loginId.includes('@');
       
-      // Wait for Flipkart React form elements to mount
+      // Wait for Flipkart form elements to mount
       for(let w=0;w<20;w++){
-        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input.jwCbxy, input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
+        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
         if(hasInput)break;
         await sleep(500);
       }
@@ -1005,8 +1001,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const isEmail=${JSON.stringify(isEmail)};
         const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
         const targetInput=isEmail
-          ?(inputs.find(i=>i.type==='email'||/email/i.test(i.placeholder||i.name||i.id||'')||i.classList.contains('jwCbxy'))||inputs[0])
-          :(inputs.find(i=>i.type==='tel'||i.type==='number'||i.classList.contains('jwCbxy'))||inputs[0]);
+          ?(inputs.find(i=>i.type==='email'||/email/i.test(i.placeholder||i.name||i.id||''))||inputs[0])
+          :(inputs.find(i=>i.type==='tel'||i.type==='number')||inputs[0]);
         if(targetInput){
           targetInput.focus();
           const proto=Object.getPrototypeOf(targetInput);
@@ -1024,11 +1020,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await connection.send("Input.insertText",{text:loginId});
       await sleep(400);
 
-      // Step 4: Submit via Enter and Continue button
-      await connection.send("Input.dispatchKeyEvent",{type:"keyDown",key:"Enter",code:"Enter",windowsVirtualKeyCode:13});
-      await connection.send("Input.dispatchKeyEvent",{type:"keyUp",key:"Enter",code:"Enter",windowsVirtualKeyCode:13});
-      await sleep(500);
-
+      // Step 4: Submit via single Continue click (no Enter key, no duplicate submit)
       await evaluate(connection,`(()=>{
         const buttons=[...document.querySelectorAll('button, input[type="submit"], [role="button"]')];
         const btn=buttons.find(b=>/^continue$/i.test((b.innerText||b.value||'').trim()))||buttons.find(b=>/continue|request otp|submit/i.test((b.innerText||b.value||'').trim()));
@@ -1041,78 +1033,51 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         }
       })()`);
 
-      // Step 5: Wait for Flipkart to respond with OTP screen
-      await sleep(3000);
+      // Step 5: Poll outcome up to 10 seconds
+      let detectedOutcome=null;
+      for(let p=0;p<10;p++){
+        await sleep(1000);
+        const check=await evaluate(connection,`(()=>{
+          const text=(document.body?.innerText||'').replace(/\\s+/g,' ');
+          const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
+          const digitInputs=inputs.filter(i=>i.maxLength===1||i.getAttribute('maxlength')==='1'||(i.type==='number'&&inputs.filter(n=>n.type==='number').length>=4));
+          const singleOtp=inputs.find(i=>i.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(i.name||i.id||i.placeholder||i.getAttribute('aria-label')||'')));
+          const isOtpSent=/(please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in|enter 6-digit|enter the 6-digit)/i.test(text)||digitInputs.length>=4||Boolean(singleOtp);
+          const isRateLimited=/(try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(text);
+          const isNewUser=/looks like you're new here|sign up with your/i.test(text);
+          let excerpt='';
+          if(isRateLimited){
+            const m=text.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)[^.!?]{0,100}/i);
+            excerpt=m?m[0]:'';
+          }
+          return {isOtpSent,isRateLimited,isNewUser,excerpt};
+        })()`).catch(()=>null);
 
-      // Step 6: Verify outcome
-      const outcome=await evaluate(connection,`(()=>{
-        const text=(document.body?.innerText||'').replace(/\\s+/g,' ');
-        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden');
-        const nonSearch=inputs.filter(i=>!/search/i.test(i.placeholder||i.name||''));
-        const otpBoxes=nonSearch.filter(i=>i.maxLength===1||i.classList.contains('S1KmoO')||i.classList.contains('_2D2x9Y')||(i.type==='number'&&nonSearch.filter(n=>n.type==='number').length>=4));
-        const isOtpSent=/(please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in)/i.test(text)||otpBoxes.length>=4;
-        const isNewUser=/looks like you're new here|sign up with your/i.test(text);
-        return {isOtpSent,isNewUser,otpBoxCount:otpBoxes.length};
-      })()`);
+        if(check?.isOtpSent){
+          detectedOutcome={status:"REAUTH_REQUIRED",code:"OTP_SENT",message:`Flipkart verification OTP has been sent to ${loginId}. Enter the 6-digit code below to connect.`};
+          break;
+        }
+        if(check?.isRateLimited){
+          detectedOutcome={status:"REAUTH_REQUIRED",code:"RATE_LIMITED",message:check.excerpt||"Flipkart rate limit reached. Please try again later."};
+          break;
+        }
+        if(check?.isNewUser){
+          detectedOutcome={status:"REAUTH_REQUIRED",code:"ACCOUNT_NOT_REGISTERED",message:`${loginId} is not registered on Flipkart. Please register or verify the email/mobile.`};
+          break;
+        }
+      }
 
-      if(outcome?.isOtpSent){
+      if(detectedOutcome){
         const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:`Flipkart verification OTP has been sent to ${loginId}. Enter the 6-digit code below to connect.`,url:target.url||url,screenshot};
+        return {...detectedOutcome,url:target.url||url,screenshot};
       }
-      if(outcome?.isNewUser){
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:"ACCOUNT_NOT_REGISTERED",message:`${loginId} is not registered on Flipkart. Please register or verify the email/mobile.`,url:target.url||url,screenshot};
-      }
+
+      const screenshot=await captureScreen();
+      return {status:"REAUTH_REQUIRED",code:"OTP_NOT_SENT",message:"Flipkart did not send an OTP after login submission. Please try manual browser login.",url:target.url||url,screenshot};
     }
 
-    for(let round=0;round<5;round++){
-      await waitReady(connection);
-      await sleep(round?400:600);
-      const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
-      if(acted?.acted){
-        if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){
-          await sleep(800);
-          continue;
-        }
-        if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
-          await sleep(3000);
-          const screenshot=await captureScreen();
-          return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url:target.url||url,screenshot};
-        }
-        await sleep(600);
-        continue;
-      }
-      if(acted?.challenge){
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:acted.challenge,message:acted.challenge==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer sign-in is required.",url:target.url||url,screenshot};
-      }
-      const challenge=await evaluate(connection,authChallengeScript());
-      if(challenge){
-        if(challenge.code==="LOGIN_REQUIRED"&&retailer==="flipkart"&&round<5){
-          await resetFlipkartToStorefront();
-          continue;
-        }
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:challenge.code,message:challenge.code==="OTP_REQUIRED"?"Flipkart OTP is required to finish sign-in.":"Retailer verification is required in the preserved account session.",url:target.url||url,screenshot};
-      }
-      const state=await evaluate(connection,`(()=>({url:location.href,text:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,5000)}))()`);
-      const href=String(state?.url||"");
-      if(/\/signin|\/login|\/ap\/signin/i.test(href)){
-        if(retailer==="flipkart"&&round<5){
-          await resetFlipkartToStorefront();
-          continue;
-        }
-        if(round<4){
-          await sleep(1000);
-          continue;
-        }
-        const screenshot=await captureScreen();
-        return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:href,screenshot};
-      }
-      return {status:"READY",code:"SESSION_READY",message:"Retailer session is authenticated and ready.",url:href||url};
-    }
     const screenshot=await captureScreen();
-    return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Flipkart OTP is required to finish sign-in.",url,screenshot};
+    return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:target.url||url,screenshot};
   }catch(error){
     return {status:"ERROR",code:"SESSION_CHECK_ERROR",message:String(error.message).slice(0,300),url};
   }finally{connection.close()}

@@ -1301,6 +1301,7 @@ app.get("/api/retailer-accounts",async(req)=>{
       ra.retailer,ra.account_reference,ra.label,ra.profile_key,ra.auth_status,ra.credential_status,
       ra.active,ra.max_concurrent_orders,ra.last_assigned_at,ra.last_authenticated_at,ra.last_credential_update_at,
       ra.health_score,ra.cooldown_until,
+      ra.otp_last_requested_at,ra.otp_cooldown_until,
       ra.session_status,ra.session_challenge_code,ra.session_checked_at,ra.session_target_expires_at,ra.session_target_days,ra.session_worker_id,ra.updated_at,
       coalesce((select count(*) from checkout_baskets cb where cb.retailer_account_id=ra.id and cb.status in ('CLAIMED','OPENED','REQUIRES_ACTION')),0)::int active_orders,
       coalesce((select sum(case
@@ -1497,9 +1498,11 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
   if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
   clauses.push("(session_status<>'READY' or session_target_expires_at is null or session_target_expires_at<=now())");
+  clauses.push("(otp_cooldown_until is null or otp_cooldown_until<=now())");
   const {rows}=await db.query(
     `update retailer_accounts set
-       session_status='VERIFYING',session_challenge_code=null,session_target_days=$2,session_check_requested_at=now(),
+       session_status='VERIFYING',session_challenge_code=null,session_target_days=$2,
+       session_check_verify_only=false,session_check_requested_at=now(),
        session_check_claimed_at=null,session_worker_id=null,updated_at=now()
      where ${clauses.join(" and ")}
      returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
@@ -1553,10 +1556,19 @@ app.post("/api/retailer-accounts/:id/session/reconnect",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const id=z.string().uuid().parse((req.params as any).id);
+  const account=await db.query("select id,otp_cooldown_until from retailer_accounts where id=$1 and tenant_id=$2 and active",[id,p.tenantId]);
+  if(!account.rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
+  if(account.rows[0].otp_cooldown_until && new Date(account.rows[0].otp_cooldown_until).getTime() > Date.now()){
+    return reply.code(429).send({
+      error:"otp_rate_limited",
+      message:"OTP request is cooling down to protect account health. Please wait or use manual browser login.",
+      cooldownUntil:account.rows[0].otp_cooldown_until
+    });
+  }
   const {rows}=await db.query(
     `update retailer_accounts set
        session_status='VERIFYING',session_challenge_code=null,session_worker_id=null,
-       session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
+       session_check_verify_only=false,session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
      where id=$1 and tenant_id=$2 and active
      returning id,retailer,account_reference,session_status`,
     [id,p.tenantId]
@@ -1981,11 +1993,12 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId]
     );
     const picked=await client.query(
-      `select id,retailer,account_reference,profile_key
+      `select id,retailer,account_reference,profile_key,session_check_verify_only
        from retailer_accounts
        where tenant_id=$1 and active and retailer in ('amazon-in','flipkart')
          and session_check_requested_at is not null
          and session_check_claimed_at is null
+         and (otp_cooldown_until is null or otp_cooldown_until<=now() or session_check_verify_only=true)
        order by case when session_worker_id=$2 then 0 else 1 end,session_check_requested_at,id
        for update skip locked
        limit $3`,
@@ -2024,7 +2037,14 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
         }
       }
-      accounts.push({retailerAccountId:String(row.id),retailer:String(row.retailer),profileKey:String(row.profile_key),credentials,sessionState});
+      accounts.push({
+        retailerAccountId:String(row.id),
+        retailer:String(row.retailer),
+        profileKey:String(row.profile_key),
+        credentials,
+        sessionState,
+        verifyOnly:Boolean(row.session_check_verify_only)
+      });
     }
     return {accounts};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
@@ -2065,17 +2085,31 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
   }
   const {rows}=await db.query(
     `update retailer_accounts set
-       session_status=$1,session_challenge_code=case when $1='READY' then null else $4 end,session_checked_at=now(),
+       session_status=$1,
+       session_challenge_code=case
+         when $1='READY' then null
+         when $4='RATE_LIMITED' then 'OTP_COOLDOWN'
+         when $4='OTP_SENT' then 'OTP_REQUIRED'
+         else $4
+       end,
+       session_checked_at=now(),
        session_target_expires_at=case when $1='READY' then now()+(session_target_days::text||' days')::interval else null end,
        session_check_requested_at=null,session_check_claimed_at=null,
+       otp_last_requested_at=case when $4='OTP_SENT' then now() else otp_last_requested_at end,
+       otp_cooldown_until=case
+         when $1='READY' then null
+         when $4='RATE_LIMITED' then now() + ($5::text||' hours')::interval
+         when $4='OTP_SENT' then now() + ($6::text||' minutes')::interval
+         else otp_cooldown_until
+       end,
        auth_status=case when $1='READY' then 'READY' when $1='REAUTH_REQUIRED' then 'CHALLENGE' else auth_status end,
        credential_status=case when $1='READY' and credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY'
                               when $1='REAUTH_REQUIRED' and credential_status='READY' then 'STORED' else credential_status end,
        last_authenticated_at=case when $1='READY' then now() else last_authenticated_at end,
        updated_at=now()
      where id=$2 and tenant_id=$3
-     returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id`,
-    [body.status,retailerAccountId,p.tenantId,body.code??null]
+     returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id,otp_cooldown_until,otp_last_requested_at`,
+    [body.status,retailerAccountId,p.tenantId,body.code??null,config.OTP_RATE_LIMIT_COOLDOWN_HOURS,config.OTP_MIN_INTERVAL_MINUTES]
   );
   await createNotification({
     tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
@@ -2481,7 +2515,7 @@ app.post("/api/execution-worker/:workerId/commands/:commandId/complete",async(re
   if(commandType==="SUBMIT_OTP"&&body.ok&&commandPayload?.retailerAccountId){
     await db.query(
       `update retailer_accounts
-       set session_status='VERIFYING',session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
+       set session_status='VERIFYING',session_check_verify_only=true,session_check_requested_at=now(),session_check_claimed_at=null,updated_at=now()
        where id=$1 and tenant_id=$2`,
       [String(commandPayload.retailerAccountId),p.tenantId]
     );

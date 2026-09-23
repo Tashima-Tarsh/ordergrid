@@ -60,6 +60,7 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
         `update retailer_accounts
          set session_status='VERIFYING',
              session_challenge_code=null,
+             session_check_verify_only=true,
              session_check_requested_at=coalesce(session_check_requested_at,now()),
              session_check_claimed_at=null,
              updated_at=now()
@@ -67,8 +68,9 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
            and active
            and retailer in ('amazon-in','flipkart')
            and (retailer='flipkart' or credential_status in ('STORED','READY'))
+           and (otp_cooldown_until is null or otp_cooldown_until<=now())
            and (
-             session_status in ('UNKNOWN','ERROR')
+             (session_status in ('UNKNOWN','ERROR') and (session_checked_at is null or session_checked_at<=now()-interval '10 minutes'))
              or (session_status='READY' and (
                session_target_expires_at is null
                or session_target_expires_at<=now()
