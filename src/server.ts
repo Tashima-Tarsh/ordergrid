@@ -2005,23 +2005,21 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
          and session_check_requested_at is not null
          and session_check_claimed_at is null
          and (otp_cooldown_until is null or otp_cooldown_until<=now() or session_check_verify_only=true)
+         and ($4::text<>'MANAGED' or retailer<>'flipkart' or session_check_verify_only=true)
        order by case when session_worker_id=$2 then 0 else 1 end,session_check_requested_at,id
        for update skip locked
        limit $3`,
-      [p.tenantId,workerId,body.limit]
+      [p.tenantId,workerId,body.limit,workerMode]
     );
     const ids=picked.rows.map(r=>r.id);
-    const attemptCooldownDate=new Date(Date.now()+config.OTP_MIN_INTERVAL_MINUTES*60*1000);
     if(ids.length)await client.query(
       `update retailer_accounts
        set session_check_claimed_at=now(),
            session_worker_id=$1,
            session_status='VERIFYING',
-           otp_last_requested_at=case when session_check_verify_only=false then now() else otp_last_requested_at end,
-           otp_cooldown_until=case when session_check_verify_only=false then $4::timestamptz else otp_cooldown_until end,
            updated_at=now()
        where tenant_id=$2 and id=any($3::uuid[])`,
-      [workerId,p.tenantId,ids,attemptCooldownDate.toISOString()]
+      [workerId,p.tenantId,ids]
     );
     await client.query("commit");
     const accounts:any[]=[];
