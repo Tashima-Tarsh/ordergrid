@@ -152,30 +152,37 @@ function safeCookie(cookie){
   return result;
 }
 export async function exportRetailerSessionState({chrome,directory,retailer}){
-  const host=retailerHost(retailer);if(!host)return {cookies:[]};
+  const host=retailerHost(retailer);if(!host)return {cookies:[],localStorage:{}};
   const port=await ensureChrome(chrome,directory);
   const target=await createTarget(port,`https://www.${host}/`);
   const connection=new CdpConnection(target.webSocketDebuggerUrl);
   try{
     await connection.send("Network.enable");
+    await waitReady(connection).catch(()=>null);
     const result=await connection.send("Network.getAllCookies");
     const cookies=(result.cookies||[])
       .filter(cookie=>String(cookie.domain||"").replace(/^\./,"").endsWith(host))
       .map(safeCookie)
       .filter(cookie=>cookie.name&&cookie.domain);
-    return {cookies};
+    const localStorage=await evaluate(connection,`(()=>{const out={};for(let i=0;i<window.localStorage.length;i++){const key=window.localStorage.key(i);if(key!==null)out[key]=window.localStorage.getItem(key)??''}return out})()`).catch(()=>({}));
+    return {cookies,localStorage:localStorage&&typeof localStorage==="object"?localStorage:{}};
   }finally{connection.close();await closeTarget(port,target)}
 }
 export async function restoreRetailerSessionState({chrome,directory,retailer,sessionState}){
   const cookies=Array.isArray(sessionState?.cookies)?sessionState.cookies.map(safeCookie).filter(cookie=>cookie.name&&cookie.domain):[];
-  if(!cookies.length)return false;
+  const localStorage=sessionState?.localStorage&&typeof sessionState.localStorage==="object"&&!Array.isArray(sessionState.localStorage)?sessionState.localStorage:{};
+  if(!cookies.length&&!Object.keys(localStorage).length)return false;
   const host=retailerHost(retailer);if(!host)return false;
   const port=await ensureChrome(chrome,directory);
   const target=await createTarget(port,`https://www.${host}/`);
   const connection=new CdpConnection(target.webSocketDebuggerUrl);
   try{
     await connection.send("Network.enable");
-    await connection.send("Network.setCookies",{cookies});
+    if(cookies.length)await connection.send("Network.setCookies",{cookies});
+    await waitReady(connection).catch(()=>null);
+    if(Object.keys(localStorage).length){
+      await evaluate(connection,`(()=>{const values=${JSON.stringify(localStorage)};for(const [key,value] of Object.entries(values)){try{window.localStorage.setItem(key,String(value))}catch{}}return true})()`).catch(()=>false);
+    }
     return true;
   }finally{connection.close();await closeTarget(port,target)}
 }
@@ -939,7 +946,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const isLinux=process.platform==="linux";
   const isHeadless=process.env.ORDERGRID_HEADLESS==="1"||(isLinux&&!process.env.DISPLAY);
   if(retailer==="flipkart"&&!verifyOnly&&isHeadless){
-    return {status:"ERROR",code:"HEADED_BROWSER_REQUIRED",message:"Headed browser required for retailer login / OTP request"};
+    return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart sign-in must be completed in an interactive desktop Chrome session. Start the OrderGrid desktop worker, open the preserved account browser, sign in there, then verify the session."};
   }
   const port=await ensureChrome(chrome,directory);
   const flipkartLoginUrl="https://www.flipkart.com/";
@@ -1004,107 +1011,18 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:activeCheck?.url||url,screenshot};
     }
 
-    if(retailer==="flipkart"&&accountCredentials?.login){
-      const loginId=String(accountCredentials.login).trim();
-      const isEmail=loginId.includes('@');
-      
-      // Wait for Flipkart form elements to mount
-      for(let w=0;w<20;w++){
-        const hasInput=await evaluate(connection,`Boolean(document.querySelector('input:not([type="hidden"])')||[...document.querySelectorAll('span,button,a')].some(s=>/^use email-?id$/i.test((s.innerText||'').trim())))`);
-        if(hasInput)break;
-        await sleep(500);
-      }
-
-      // Step 1: If email, ensure email input mode
-      if(isEmail){
-        const switchEmail=await evaluate(connection,`(()=>{
-          const spans=[...document.querySelectorAll('span, button, a')];
-          const span=spans.find(s=>/use email.?id/i.test((s.innerText||'').trim()));
-          if(span){
-            span.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
-            span.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
-            span.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
-            span.dispatchEvent(new MouseEvent('click',{bubbles:true}));
-            try{span.click();}catch{}
-            return {clicked:true};
-          }
-          return {clicked:false};
-        })()`);
-        if(switchEmail?.clicked)await sleep(1000);
-      }
-
-      // Step 2: Focus the target login input
-      await evaluate(connection,`(()=>{
-        const isEmail=${JSON.stringify(isEmail)};
-        const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
-        const targetInput=isEmail
-          ?(inputs.find(i=>i.type==='email'||/email/i.test(i.placeholder||i.name||i.id||''))||inputs[0])
-          :(inputs.find(i=>i.type==='tel'||i.type==='number')||inputs[0]);
-        if(targetInput){
-          targetInput.focus();
-          const proto=Object.getPrototypeOf(targetInput);
-          const desc=Object.getOwnPropertyDescriptor(proto,'value');
-          if(desc?.set)desc.set.call(targetInput,'');
-          else targetInput.value='';
-          targetInput.dispatchEvent(new Event('input',{bubbles:true}));
-          targetInput.dispatchEvent(new Event('change',{bubbles:true}));
-          targetInput.select?.();
-        }
-      })()`);
-      await sleep(300);
-
-      // Step 3: Type with native CDP keystrokes
-      await connection.send("Input.insertText",{text:loginId});
-      await sleep(400);
-
-      // Step 4: Submit via single Continue click (no Enter key, no duplicate submit)
-      await evaluate(connection,`(()=>{
-        const buttons=[...document.querySelectorAll('button, input[type="submit"], [role="button"]')];
-        const btn=buttons.find(b=>/^continue$/i.test((b.innerText||b.value||'').trim()))||buttons.find(b=>/continue|request otp|submit/i.test((b.innerText||b.value||'').trim()));
-        if(btn){
-          btn.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
-          btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
-          btn.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
-          btn.dispatchEvent(new MouseEvent('click',{bubbles:true}));
-          try{btn.click();}catch{}
-        }
-      })()`);
-
-      // Step 5: Poll outcome up to 10 seconds
-      let detectedOutcome=null;
-      for(let p=0;p<10;p++){
-        await sleep(1000);
-        const check=await evaluate(connection,`(()=>{
-          const text=(document.body?.innerText||'').replace(/\\s+/g,' ');
-          const inputs=[...document.querySelectorAll('input')].filter(i=>i.type!=='hidden'&&!/search/i.test(i.placeholder||i.name||''));
-          const digitInputs=inputs.filter(i=>i.maxLength===1||i.getAttribute('maxlength')==='1'||(i.type==='number'&&inputs.filter(n=>n.type==='number').length>=4));
-          const singleOtp=inputs.find(i=>i.autocomplete==='one-time-code'||/otp|verification.?code|security.?code/i.test(String(i.name||i.id||i.placeholder||i.getAttribute('aria-label')||'')));
-          const isRateLimited=/(try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(text);
-          const isNewUser=/looks like you're new here|sign up with your/i.test(text);
-          let excerpt='';
-          if(isRateLimited){
-            const m=text.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)[^.!?]{0,100}/i);
-            excerpt=m?m[0]:'';
-          }
-          return {text,digitsCount:digitInputs.length,hasOtpInput:Boolean(singleOtp),isRateLimited,isNewUser,excerpt};
-        })()`).catch(()=>null);
-
-        if(check){
-          const classified=classifyLoginOutcome(check);
-          if(classified.outcome!=="UNKNOWN"){
-            detectedOutcome={status:"REAUTH_REQUIRED",code:classified.code,message:classified.message};
-            break;
-          }
-        }
-      }
-
-      if(detectedOutcome){
-        const screenshot=await captureScreen();
-        return {...detectedOutcome,url:target.url||url,screenshot};
-      }
-
+    if(retailer==="flipkart"){
+      await connection.send("Page.bringToFront").catch(()=>null);
+      await connection.send("Runtime.evaluate",{expression:"window.focus(); true",returnByValue:true,userGesture:true}).catch(()=>null);
       const screenshot=await captureScreen();
-      return {status:"REAUTH_REQUIRED",code:"OTP_NOT_SENT",message:"Flipkart did not send an OTP after login submission. Please try manual browser login.",url:target.url||url,screenshot};
+      const accountLabel=String(accountCredentials?.login||"this Flipkart account");
+      return {
+        status:"REAUTH_REQUIRED",
+        code:"LOGIN_REQUIRED",
+        message:`Complete Flipkart sign-in for ${accountLabel} in the visible Chrome window, including OTP or CAPTCHA if Flipkart asks. Then return to OrderGrid and click Verify sign-in. OrderGrid will reuse the preserved authenticated profile instead of requesting a new OTP for each order.`,
+        url:activeCheck?.url||target.url||url,
+        screenshot
+      };
     }
 
     const resetFlipkartToStorefront=async()=>{
