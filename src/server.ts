@@ -1502,8 +1502,13 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
      returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
     params
   );
-  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
-  return {count:rows.length,accounts:rows};
+  const needsInteractiveFlipkart=rows.some((row:any)=>String(row.retailer)==="flipkart");
+  const desktopWorker=needsInteractiveFlipkart
+    ?await db.query("select 1 from execution_workers where tenant_id=$1 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",[p.tenantId])
+    :{rows:[]};
+  const desktopWorkerOnline=desktopWorker.rows.length>0;
+  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays,desktopWorkerOnline});
+  return {count:rows.length,accounts:rows,desktopWorkerOnline,interactiveLoginRequired:needsInteractiveFlipkart&&!desktopWorkerOnline};
 });
 
 app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
@@ -1958,7 +1963,8 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId,workerId,p.id]
     );
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
-    if(live.rows[0].mode==="MANAGED"){
+    const workerMode=String(live.rows[0].mode||"");
+    if(workerMode==="MANAGED"){
       const desktopWorker=await client.query(
         "select 1 from execution_workers where tenant_id=$1 and id<>$2 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",
         [p.tenantId,workerId]
