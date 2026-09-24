@@ -2,7 +2,7 @@
   const $=s=>document.querySelector(s);
   const esc=value=>{const node=document.createElement('div');node.textContent=String(value??'');return node.innerHTML};
   const moneyMinor=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value||0)/100);
-  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},secureBrowserReady=false;
+  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},secureBrowserReady=false,desktopBrowserReady=false;
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -20,7 +20,7 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
-    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Cloud Secure Browser is starting or temporarily unavailable. Retry shortly; no local worker installation is required.';
+    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'A live OrderGrid execution worker is required. For first-time Flipkart sign-in, start the OrderGrid desktop worker so a visible Chrome window can be used.';
     return message;
   }
   function sessionTargetDays(){
@@ -31,7 +31,7 @@
     const status=$('#secureBrowserStatus');
     if(status){
       status.dataset.ready=secureBrowserReady?'true':'false';
-      status.textContent=secureBrowserReady?'CLOUD BROWSER ONLINE':'CLOUD BROWSER STARTING';
+      status.textContent=desktopBrowserReady?'DESKTOP SIGN-IN ONLINE':secureBrowserReady?'CLOUD CHECKOUT ONLINE · DESKTOP SIGN-IN OFFLINE':'SECURE BROWSER OFFLINE';
     }
   }
   function parseCsv(text){
