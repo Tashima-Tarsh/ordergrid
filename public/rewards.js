@@ -517,7 +517,9 @@
         }
       }catch{}
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      secureBrowserReady=(secureState.workers||[]).length>0;
+      const workers=secureState.workers||[];
+      secureBrowserReady=workers.length>0;
+      desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
@@ -525,7 +527,7 @@
       if(queued&&secureBrowserReady){
         toast(result.count+' users imported · '+queued+' account connection(s) queued.');
       }else if(queued){
-        toast(result.count+' users imported. Secure Browser will authenticate the queued accounts one at a time.');
+        toast(result.count+' users imported. Start the OrderGrid desktop worker to complete each first-time Flipkart sign-in in visible Chrome.');
       }else{
         toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
       }
