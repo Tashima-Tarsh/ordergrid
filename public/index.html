@@ -261,7 +261,7 @@
   <div class="retailer-connect-shell">
     <div class="modal-head">
       <div>
-        <p class="eyebrow">FLIPKART CLOUD SECURE BROWSER</p>
+        <p class="eyebrow">FLIPKART CONNECTION</p>
         <h2 id="connectDialogTitle">Connect Flipkart Account</h2>
       </div>
       <button type="button" class="close" id="closeRetailerConnect">×</button>
@@ -277,18 +277,22 @@
       <div id="connectStatusCard" class="connect-status-card connecting">
         <div class="connect-spinner"></div>
         <div class="connect-status-text">
-          <strong id="connectStatusHeading">Connecting to Flipkart…</strong>
-          <span id="connectStatusMeta">OrderGrid Cloud Secure Browser is opening Flipkart and requesting your login OTP.</span>
+          <strong id="connectStatusHeading">Desktop browser required for first sign-in.</strong>
+          <span id="connectStatusMeta">Open Flipkart in Chrome and sign in with your account.</span>
         </div>
       </div>
       <div id="connectLivePreview" class="connect-live-preview" hidden>
         <div class="live-preview-badge">LIVE FLIPKART BROWSER</div>
         <img id="connectLiveImage" class="connect-live-image" alt="Live Flipkart session view">
       </div>
+      <div id="connectInteractiveActions" class="modal-actions" style="margin-top:16px;">
+        <button type="button" id="openFlipkartSignin" class="connect-verify-btn">Open Flipkart Sign-in</button>
+        <button type="button" id="verifyFlipkartSignin" class="connect-verify-btn" hidden>Verify sign-in</button>
+      </div>
       <form id="connectOtpForm" class="connect-otp-form" hidden>
         <label>
           <span>Enter 6-digit Flipkart OTP</span>
-          <input name="connectOtp" id="connectOtpInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter 6-digit OTP" class="connect-otp-input" required>
+          <input name="connectOtp" id="connectOtpInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter 6-digit OTP" class="connect-otp-input">
         </label>
         <div class="modal-actions">
           <button type="button" class="secondary" id="connectResendOtp">Resend OTP</button>
