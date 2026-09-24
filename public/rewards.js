@@ -105,17 +105,19 @@
       const sessionMeta=sessionStatus==='READY'
         ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?(challenge==='OTP_REQUIRED'
-            ?('Flipkart sent an OTP. Enter it below.'+(isOtpCooling?' A new OTP can be requested after '+otpCooldownTime+'.':''))
-            :challenge==='OTP_COOLDOWN'||isOtpCooling
-              ?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
-              :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
-              :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use manual browser login to connect.'
-              :challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification'
-              :'Retailer verification required')
+          ?(challenge==='LOGIN_REQUIRED'
+            ?(desktopBrowserReady?'Finish sign-in in the visible Flipkart Chrome window, then verify the session.':'Desktop sign-in worker required. Start the OrderGrid desktop worker, then reconnect this account.')
+            :challenge==='OTP_REQUIRED'
+              ?('Retailer OTP is waiting in the preserved session.'+(isOtpCooling?' A new OTP can be requested after '+otpCooldownTime+'.':''))
+              :challenge==='OTP_COOLDOWN'||isOtpCooling
+                ?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
+                :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
+                :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use the visible browser login instead.'
+                :challenge==='CAPTCHA_REQUIRED'?'Complete the retailer CAPTCHA in the visible desktop browser.'
+                :'Retailer verification required')
           :sessionStatus==='VERIFYING'
-            ?(secureBrowserReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
-            :(secureBrowserReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
+            ?(desktopBrowserReady?'Waiting for the preserved desktop browser session…':secureBrowserReady?'Cloud checkout is online, but first-time Flipkart sign-in needs the desktop worker.':'Queued — start the OrderGrid desktop worker for Flipkart sign-in.')
+            :(desktopBrowserReady?'Ready to open secure desktop sign-in':secureBrowserReady?'Cloud checkout online · desktop sign-in offline':'Execution worker offline');
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
@@ -125,11 +127,13 @@
         ?'<div class="managed-credential"><input type="password" autocomplete="current-password" maxlength="1000" placeholder="Retailer password" data-account-password-input><button type="button" data-save-account-password>Save & connect</button></div>'
         :'';
       const verifyAction=sessionStatus!=='READY'&&(!credentialMissing||otpFirst)
-        ?(isOtpCooling
-          ?(challenge==='OTP_REQUIRED'
-            ?''
-            :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
-          :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
+        ?(challenge==='LOGIN_REQUIRED'
+          ?`<button type="button" class="secondary" data-verify-session>${desktopBrowserReady?'Complete sign-in':'Desktop sign-in required'}</button>`
+          :isOtpCooling
+            ?(challenge==='OTP_REQUIRED'
+              ?''
+              :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
+            :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
@@ -168,7 +172,9 @@
     else console.error(accountResult.reason);
     if(financeResult.status==='fulfilled')finance=financeResult.value;
     else console.error(financeResult.reason);
-    secureBrowserReady=secureBrowserResult.status==='fulfilled'&&(secureBrowserResult.value.workers||[]).length>0;
+    const workers=secureBrowserResult.status==='fulfilled'?(secureBrowserResult.value.workers||[]):[];
+    secureBrowserReady=workers.length>0;
+    desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
     render();
   }
   function openRetailerUser(){
