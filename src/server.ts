@@ -1573,8 +1573,12 @@ app.post("/api/retailer-accounts/:id/session/reconnect",async(req,reply)=>{
     [id,p.tenantId]
   );
   if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
-  await audit(db,p.tenantId,p.id,"retailer_account.session_reconnect_requested","retailer_account",id,{retailer:rows[0].retailer});
-  return {ok:true,sessionStatus:"VERIFYING",account:rows[0]};
+  const desktopWorker=String(rows[0].retailer)==="flipkart"
+    ?await db.query("select 1 from execution_workers where tenant_id=$1 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",[p.tenantId])
+    :{rows:[{}]};
+  const desktopWorkerOnline=desktopWorker.rows.length>0;
+  await audit(db,p.tenantId,p.id,"retailer_account.session_reconnect_requested","retailer_account",id,{retailer:rows[0].retailer,desktopWorkerOnline});
+  return {ok:true,sessionStatus:"VERIFYING",account:rows[0],desktopWorkerOnline,interactiveLoginRequired:String(rows[0].retailer)==="flipkart"&&!desktopWorkerOnline};
 });
 
 app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
@@ -2035,15 +2039,15 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           if(decrypted.password)credentials.password=String(decrypted.password);
         }
       }
-      let sessionState:null|{cookies:Record<string,unknown>[]} = null;
+      let sessionState:null|{cookies:Record<string,unknown>[];localStorage?:Record<string,string>} = null;
       const savedSession=await db.query(
         "select ciphertext,iv,auth_tag from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2 and expires_at>now() limit 1",
         [p.tenantId,row.id]
       );
       if(savedSession.rows[0]){
         try{
-          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
-          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[];localStorage?:Record<string,string>};
+          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies,...(restored.localStorage&&typeof restored.localStorage==="object"?{localStorage:restored.localStorage}:{})};
         }catch{
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
         }
@@ -2068,7 +2072,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
     code:z.string().max(100).optional(),
     message:z.string().max(500).optional(),
-    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional(),
+    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250),localStorage:z.record(z.string(),z.string()).optional()}).nullable().optional(),
     screenshot:z.string().max(1_000_000).nullable().optional()
   }).parse(req.body);
   const account=await db.query(
