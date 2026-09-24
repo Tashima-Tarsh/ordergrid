@@ -250,6 +250,9 @@
     const isReady=String(account.session_status)==='READY';
     if($('#connectManualActions'))$('#connectManualActions').hidden=true;
     if($('#connectManualError'))$('#connectManualError').textContent='';
+    if($('#connectInstallBrowser'))$('#connectInstallBrowser').hidden=desktopBrowserReady;
+    if($('#connectOpenBrowser'))$('#connectOpenBrowser').hidden=!desktopBrowserReady;
+    if($('#connectVerifyLogin'))$('#connectVerifyLogin').disabled=!desktopBrowserReady;
 
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
@@ -302,10 +305,20 @@
     connectPollTimer=setInterval(async()=>{
       pollCount++;
       try{
-        const [resp,screenResp]=await Promise.allSettled([
+        const [resp,screenResp,workerResp]=await Promise.allSettled([
           request('/api/retailer-accounts?retailer='+encodeURIComponent(account.retailer||'flipkart')+'&limit=1000'),
-          request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount?.id||account.id)+'/screen')
+          request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount?.id||account.id)+'/screen'),
+          request('/api/execution-workers')
         ]);
+        if(workerResp.status==='fulfilled'){
+          const workers=workerResp.value.workers||[];
+          secureBrowserReady=workers.length>0;
+          desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
+          if($('#connectInstallBrowser'))$('#connectInstallBrowser').hidden=desktopBrowserReady;
+          if($('#connectOpenBrowser'))$('#connectOpenBrowser').hidden=!desktopBrowserReady;
+          if($('#connectVerifyLogin'))$('#connectVerifyLogin').disabled=!desktopBrowserReady;
+          renderSecureBrowserStatus();
+        }
         const updatedAccounts=resp.status==='fulfilled'?(resp.value.accounts||[]):[];
         if(updatedAccounts.length)accounts=updatedAccounts;
         const target=updatedAccounts.find(x=>x.id===(activeConnectingAccount?.id||account.id));
