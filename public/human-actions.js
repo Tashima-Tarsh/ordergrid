@@ -9,6 +9,7 @@
     CAPTCHA:{label:'CAPTCHA',tone:'attention',help:'Retailer CAPTCHA cannot be bypassed. This account remains paused until authorised verification can be completed.'},
     RETAILER_LOGIN:{label:'Retailer login',tone:'attention',help:'OrderGrid will retry the encrypted saved credential; additional retailer verification remains protected.'},
     PAYMENT_METHOD:{label:'Payment setup',tone:'payment',help:'Add or confirm the approved payment method in the retailer session.'},
+    RECONCILIATION_REQUIRED:{label:'Order reconciliation',tone:'attention',help:'Final submit was dispatched. OrderGrid reconciles confirmed order ID via retailer order history.'},
     REVIEW:{label:'Review required',tone:'review',help:'Review the retailer step, then the worker will resume from the same account profile.'}
   };
   let actions=[];
@@ -56,15 +57,19 @@
     $('#humanActionQueue').innerHTML=actions.length?actions.map(action=>{
       const meta=actionMeta[action.action_type]||actionMeta.REVIEW;
       const worker=action.worker_online?'MANAGED SESSION ONLINE':'MANAGED EXECUTION RECONNECTING';
+      const stagePill=action.checkout_stage?`<span class="pill stage-pill">${esc(action.checkout_stage)}</span>`:'';
+      const deliveryInfo=[action.delivery_estimate,action.delivery_seller].filter(Boolean).join(' · ');
       const actionControl=action.action_type==='RETAILER_OTP'
-        ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-order-otp-input><button type="button" data-submit-order-otp '+(action.worker_online?'':'disabled')+'>Verify OTP</button></div>'
-        :'<span class="managed-action-note">'+(action.worker_online?'Order remains paused safely until this protected step is completed.':'Order remains queued; managed execution will reconnect automatically.')+'</span>';
+        ?`<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-order-otp-input><button type="button" data-submit-order-otp ${action.worker_online?'':'disabled'}>Verify OTP</button> <button type="button" class="secondary" data-focus-session ${action.worker_online?'':'disabled'}>Open Browser</button></div>`
+        :`<div class="managed-actions"><button type="button" class="secondary" data-focus-session ${action.worker_online?'':'disabled'}>Open Browser</button><span class="managed-action-note">${action.worker_online?'Order remains paused safely until this protected step is completed.':'Order remains queued; managed execution will reconnect automatically.'}</span></div>`;
       return `
         <article class="human-action-row" data-basket-id="${esc(action.id)}">
-          <div class="human-action-badge ${esc(meta.tone)}">${esc(meta.label)}</div>
+          <div class="human-action-badge ${esc(meta.tone)}">${esc(meta.label)} ${stagePill}</div>
           <div class="human-action-copy">
             <strong>${esc(action.customer_reference||action.recipient)} · ${esc(action.retailer)}</strong>
-            <span>${esc(action.account_label||action.account_reference||'Retailer account')} · ${esc(action.recipient)}</span>
+            ${action.product_title?`<span><strong>Product:</strong> ${esc(action.product_title)}</span>`:''}
+            <span>${esc(action.account_label||action.account_reference||'Retailer account')} · ${esc(action.recipient)} · ${esc(action.postal_code||'')}</span>
+            ${deliveryInfo?`<small class="human-action-delivery">Delivery: ${esc(deliveryInfo)}</small>`:''}
             <small>${esc(meta.help)}</small>
             ${action.failure_message?'<small class="human-action-reason">'+esc(action.failure_message)+'</small>':''}
           </div>
@@ -81,6 +86,17 @@
     }catch(error){console.error(error)}
   }
   host.addEventListener('click',async event=>{
+    const focusButton=event.target.closest('[data-focus-session]');
+    if(focusButton){
+      const row=focusButton.closest('[data-basket-id]');if(!row)return;
+      focusButton.disabled=true;
+      try{
+        await request('/api/human-actions/'+encodeURIComponent(row.dataset.basketId)+'/focus',{method:'POST'});
+        toast('Focused retailer browser window for authorized interaction.');
+      }catch(error){alert(error.message)}
+      finally{setTimeout(()=>{focusButton.disabled=false},1500)}
+      return;
+    }
     const button=event.target.closest('[data-submit-order-otp]');if(!button)return;
     const row=button.closest('[data-basket-id]');if(!row)return;
     const input=row.querySelector('[data-order-otp-input]');

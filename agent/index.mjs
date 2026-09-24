@@ -47,12 +47,35 @@ async function login(){
     }catch{}
   }
 }
+class KeyedMutex {
+  constructor() {
+    this.chains = new Map();
+  }
+  async withLock(key, fn) {
+    const stringKey = String(key || "default");
+    const current = this.chains.get(stringKey) || Promise.resolve();
+    let release;
+    const next = new Promise(resolve => { release = resolve; });
+    this.chains.set(stringKey, current.then(() => next, () => next));
+    try {
+      await current;
+      return await fn();
+    } finally {
+      release();
+      if (this.chains.get(stringKey) === next) {
+        this.chains.delete(stringKey);
+      }
+    }
+  }
+}
+const profileMutex = new KeyedMutex();
+
 async function heartbeat(workerId){
   const mode=process.env.ORDERGRID_MANAGED_WORKER==="1"?"MANAGED":"DESKTOP";
   await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode})});
 }
-async function postProgress(workerId,basketId,state,code,message){
-  await api(`/api/bulk-queue/${basketId}/progress`,{method:"POST",body:JSON.stringify({workerId,state,code,message})});
+async function postProgress(workerId,basketId,state,code,message,extra={}){
+  await api(`/api/bulk-queue/${basketId}/progress`,{method:"POST",body:JSON.stringify({workerId,state,code,message,...extra})});
 }
 async function runPool(groups,limit,handler){
   let next=0;
@@ -149,29 +172,32 @@ async function main(){
 
       for(const command of foregroundCommands){
         try{
-          if(command.command==="FOCUS_SESSION"){
-            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
-            const focused=await focusRetailerSession({chrome,directory,retailer:command.retailer});
-            if(!focused.ok)throw new Error(focused.reason||"Could not focus retailer session");
-            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
-            continue;
-          }
-          if(command.command==="SUBMIT_OTP"){
-            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId||command.checkoutBasketId));
-            const result=await submitRetailerOtp({chrome,directory,retailer:command.retailer,otp:String(command.payload?.otp||"")});
-            if(!result?.ok)throw new Error(result?.reason||"Retailer OTP submission failed");
-            const sessionState=await exportRetailerSessionState({chrome,directory,retailer:command.retailer}).catch(()=>null);
-            if(command.retailerAccountId){
-              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(command.retailerAccountId)}`,{
-                method:"POST",
-                body:JSON.stringify({status:"READY",code:"SESSION_READY",message:"Flipkart session verified via OTP and saved.",sessionState})
-              }).catch(()=>{});
+          const lockKey=command.profileKey||command.retailerAccountId||command.checkoutBasketId||"default";
+          await profileMutex.withLock(lockKey,async()=>{
+            if(command.command==="FOCUS_SESSION"){
+              const directory=join(profileRoot(),profileKey(lockKey));
+              const focused=await focusRetailerSession({chrome,directory,retailer:command.retailer});
+              if(!focused.ok)throw new Error(focused.reason||"Could not focus retailer session");
+              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true})});
+              return;
             }
-            await closeProfileBrowser({directory}).catch(()=>{});
-            await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
-            continue;
-          }
-          throw new Error("Unsupported worker command");
+            if(command.command==="SUBMIT_OTP"){
+              const directory=join(profileRoot(),profileKey(lockKey));
+              const result=await submitRetailerOtp({chrome,directory,retailer:command.retailer,otp:String(command.payload?.otp||"")});
+              if(!result?.ok)throw new Error(result?.reason||"Retailer OTP submission failed");
+              const sessionState=await exportRetailerSessionState({chrome,directory,retailer:command.retailer}).catch(()=>null);
+              if(command.retailerAccountId){
+                await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(command.retailerAccountId)}`,{
+                  method:"POST",
+                  body:JSON.stringify({status:"READY",code:"SESSION_READY",message:"Flipkart session verified via OTP and saved.",sessionState})
+                }).catch(()=>{});
+              }
+              await closeProfileBrowser({directory}).catch(()=>{});
+              await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
+              return;
+            }
+            throw new Error("Unsupported worker command");
+          });
         }catch(error){
           await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:false,error:String(error.message).slice(0,300)})}).catch(()=>{});
         }
@@ -180,14 +206,17 @@ async function main(){
       if(productCommands.length){
         await runAdaptiveProductCheckPool(productCommands,productCheckState,async command=>{
           let result=null,error=null;
+          const lockKey=command.profileKey||command.retailerAccountId||"default";
           try{
             if(command.retailer!=="flipkart")throw new Error("PRODUCT_CHECK currently supports Flipkart only");
-            const directory=join(profileRoot(),profileKey(command.profileKey||command.retailerAccountId));
-            result=await inspectFlipkartMobile({
-              chrome,
-              directory,
-              productUrl:String(command.payload?.productUrl||""),
-              postalCode:String(command.payload?.postalCode||"")
+            const directory=join(profileRoot(),profileKey(lockKey));
+            result=await profileMutex.withLock(lockKey,async()=>{
+              return await inspectFlipkartMobile({
+                chrome,
+                directory,
+                productUrl:String(command.payload?.productUrl||""),
+                postalCode:String(command.payload?.postalCode||"")
+              });
             });
             await api(`/api/execution-worker/${encodeURIComponent(workerId)}/commands/${encodeURIComponent(command.id)}/complete`,{method:"POST",body:JSON.stringify({ok:true,result})});
             await closeProfileBrowser({directory}).catch(()=>{});
@@ -210,12 +239,15 @@ async function main(){
           const sessionConcurrency=Math.min(5,parallel);
           await runPool(sessionAccounts.map(a=>[a]),sessionConcurrency,async group=>{
             const account=group[0];
-            const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
+            const lockKey=account.profileKey||account.retailerAccountId||"default";
+            const directory=join(profileRoot(),profileKey(lockKey));
             let result=null;
             for(let attempt=0;attempt<2;attempt++){
               try{
-                result=await prepareRetailerSession({
-                  chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null,verifyOnly:Boolean(account.verifyOnly)
+                result=await profileMutex.withLock(lockKey,async()=>{
+                  return await prepareRetailerSession({
+                    chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null,verifyOnly:Boolean(account.verifyOnly)
+                  });
                 });
               }catch(error){
                 result={status:"ERROR",code:"SESSION_WORKER_ERROR",message:String(error.message||error).slice(0,300)};
@@ -228,7 +260,7 @@ async function main(){
             }
             result=result||{status:"ERROR",code:"SESSION_WORKER_ERROR",message:"Hosted retailer browser did not return a session result."};
             const sessionState=result.status==="READY"
-              ?await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null)
+              ?await profileMutex.withLock(lockKey,async()=>await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null))
               :null;
             const reported=await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/${encodeURIComponent(account.retailerAccountId)}`,{
               method:"POST",
@@ -256,11 +288,27 @@ async function main(){
             try{
               const {body}=await api(`/api/bulk-queue/${basket.id}/open`,{method:"POST",body:JSON.stringify({workerId})});
               for(const item of body.items||[])if(!allowedRetailerUrl(item.executionUrl))throw new Error("OrderGrid returned an untrusted retailer URL");
-              const directory=join(profileRoot(),profileKey(body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`));
+              const lockKey=body.profileKey||body.retailerAccountId||`${body.customerId||basket.id}:${basket.retailer}`;
+              const directory=join(profileRoot(),profileKey(lockKey));
               await mkdir(directory,{recursive:true,mode:0o700});
               started.add(basket.id);
               const wasWaitingStock=basket.status==="WAITING_STOCK";
-              let result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume});
+
+              const finalSubmitCallback=async(attemptId)=>{
+                const res=await api(`/api/bulk-queue/${basket.id}/start-final-submit`,{
+                  method:"POST",
+                  body:JSON.stringify({workerId,attemptId})
+                });
+                return res.body;
+              };
+
+              let result=await profileMutex.withLock(lockKey,async()=>{
+                return await executeBasket({
+                  chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,resume,
+                  onStartFinalSubmit:finalSubmitCallback
+                });
+              });
+
               if(result.state==="OUT_OF_STOCK"){
                 await api(`/api/bulk-queue/${basket.id}/stock-wait`,{
                   method:"POST",
@@ -285,19 +333,31 @@ async function main(){
                   body:JSON.stringify({workerId,amountMinor:Number(result.amountMinor),currency:result.currency||"INR"})
                 })).body;
                 if(!decision.allowed){
-                  await postProgress(workerId,basket.id,"CHALLENGE","PRICE_POLICY_REVIEW_REQUIRED","Commercial policy review required before final retailer submission");
+                  await postProgress(workerId,basket.id,"CHALLENGE","PRICE_POLICY_REVIEW_REQUIRED","Commercial policy review required before final retailer submission",{stage:"COMMERCIAL"});
                   output.write(`Commercial review ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer} · expected ₹${(Number(decision.expectedAmountMinor||0)/100).toFixed(2)} · observed ₹${(Number(decision.observedAmountMinor||0)/100).toFixed(2)}\n`);
                   continue;
                 }
-                result=await executeBasket({chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,commercialApprovedAmountMinor:Number(decision.approvedAmountMinor),resume:true});
+                result=await profileMutex.withLock(lockKey,async()=>{
+                  return await executeBasket({
+                    chrome,directory,retailer:basket.retailer,items:body.items,paymentRoute:body.paymentRoute,address:body.address,accountCredentials:body.credentials||null,commercialApprovedAmountMinor:Number(decision.approvedAmountMinor),resume:true,
+                    onStartFinalSubmit:finalSubmitCallback
+                  });
+                });
               }
               if(result.state==="CONFIRMED"&&result.orderId){
                 await api(`/api/bulk-queue/${basket.id}/confirm`,{method:"POST",body:JSON.stringify({workerId,retailerOrderId:result.orderId})});
                 started.delete(basket.id);
                 await closeProfileBrowser({directory}).catch(()=>{});
                 output.write(`Confirmed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer} · ${result.orderId}\n`);
+              }else if(result.state==="CHALLENGE"&&["CONFIRMATION_PENDING","ORDER_ID_NOT_FOUND","RECONCILIATION_REQUIRED"].includes(result.code)){
+                await postProgress(workerId,basket.id,"CHALLENGE",result.code,result.message||"Final submit was sent, awaiting order reconciliation.",{stage:"CONFIRMATION"});
+                started.delete(basket.id);
+                await closeProfileBrowser({directory}).catch(()=>{});
+                output.write(`Confirmation pending ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.code}\n`);
               }else if(result.state==="CHALLENGE"){
-                await postProgress(workerId,basket.id,"CHALLENGE",result.code||"RETAILER_CHALLENGE",result.message||"Retailer action is required");
+                await postProgress(workerId,basket.id,"CHALLENGE",result.code||"RETAILER_CHALLENGE",result.message||"Retailer action is required",{
+                  stage:result.stage,deliveryEstimate:result.deliveryEstimate,deliverySeller:result.deliverySeller,deliveryStockState:result.deliveryStockState,observedPayableMinor:result.observedPayableMinor
+                });
                 output.write(`Challenge ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.code||"REVIEW_REQUIRED"}\n`);
               }else if(result.state==="FAILED"){
                 await postProgress(workerId,basket.id,"FAILED",result.code||"EXECUTION_FAILED",result.message||"Checkout execution failed");
@@ -305,7 +365,9 @@ async function main(){
                 await closeProfileBrowser({directory}).catch(()=>{});
                 output.write(`Failed ${body.customerReference||basket.customer_reference||basket.recipient} · ${basket.retailer}: ${result.message||result.code}\n`);
               }else{
-                await postProgress(workerId,basket.id,"RUNNING",result.code,result.message);
+                await postProgress(workerId,basket.id,"RUNNING",result.code,result.message,{
+                  stage:result.stage,deliveryEstimate:result.deliveryEstimate,deliverySeller:result.deliverySeller,deliveryStockState:result.deliveryStockState,observedPayableMinor:result.observedPayableMinor
+                });
               }
             }catch(error){
               await postProgress(workerId,basket.id,"FAILED","WORKER_ERROR",String(error.message).slice(0,400)).catch(()=>{});
@@ -321,9 +383,12 @@ async function main(){
         try{
           const claim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/claim`,{method:"POST",body:JSON.stringify({limit:25})})).body;
           for(const account of claim.accounts||[]){
-            const directory=join(profileRoot(),profileKey(account.profileKey||account.retailerAccountId));
+            const lockKey=account.profileKey||account.retailerAccountId||"default";
+            const directory=join(profileRoot(),profileKey(lockKey));
             try{
-              const observed=await reconcileRetailerAccount({chrome,directory,retailer:account.retailer,orders:account.orders||[]});
+              const observed=await profileMutex.withLock(lockKey,async()=>{
+                return await reconcileRetailerAccount({chrome,directory,retailer:account.retailer,orders:account.orders||[]});
+              });
               await api(`/api/execution-worker/${encodeURIComponent(workerId)}/reconciliation/${encodeURIComponent(account.retailerAccountId)}`,{
                 method:"POST",
                 body:JSON.stringify({

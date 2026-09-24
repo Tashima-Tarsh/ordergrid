@@ -2002,17 +2002,14 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId,workerId,body.limit,isManaged]
     );
     const ids=picked.rows.map(r=>r.id);
-    const attemptCooldownDate=new Date(Date.now()+config.OTP_MIN_INTERVAL_MINUTES*60*1000);
     if(ids.length)await client.query(
       `update retailer_accounts
        set session_check_claimed_at=now(),
            session_worker_id=$1,
            session_status='VERIFYING',
-           otp_last_requested_at=case when session_check_verify_only=false then now() else otp_last_requested_at end,
-           otp_cooldown_until=case when session_check_verify_only=false then $4::timestamptz else otp_cooldown_until end,
            updated_at=now()
        where tenant_id=$2 and id=any($3::uuid[])`,
-      [workerId,p.tenantId,ids,attemptCooldownDate.toISOString()]
+      [workerId,p.tenantId,ids]
     );
     await client.query("commit");
     const accounts:any[]=[];
@@ -2342,9 +2339,12 @@ app.get("/api/human-actions",async(req)=>{
   const {rows}=await db.query(`
     select cb.id,cb.batch_id,cb.status,cb.retailer,cb.account_reference,cb.failure_code,cb.failure_message,
       cb.execution_worker_id,cb.payment_status,cb.virtual_card_id,cb.updated_at,
+      cb.checkout_stage,cb.delivery_estimate,cb.delivery_seller,cb.delivery_stock_state,
+      cb.observed_payable_minor,cb.confirmation_state,cb.cart_verified_at,cb.address_verified_at,
       c.external_reference customer_reference,a.recipient,a.city,a.postal_code,
       ra.label account_label,ra.profile_key,
       coalesce(sum(po.amount_minor),0)::bigint amount_minor,
+      string_agg(distinct bi.title, ', ') as product_title,
       ew.last_seen worker_last_seen,
       (ew.last_seen>now()-interval '30 seconds') worker_online,
       case
@@ -2354,6 +2354,7 @@ app.get("/api/human-actions",async(req)=>{
         when cb.failure_code ~* 'CAPTCHA' then 'CAPTCHA'
         when cb.failure_code ~* 'LOGIN|PASSWORD|AUTH' then 'RETAILER_LOGIN'
         when cb.failure_code ~* 'PAYMENT_METHOD|CARD_ASSIGNMENT|PAYMENT_SETUP' then 'PAYMENT_METHOD'
+        when cb.failure_code in ('CONFIRMATION_PENDING','ORDER_ID_NOT_FOUND','RECONCILIATION_REQUIRED') then 'RECONCILIATION_REQUIRED'
         else 'REVIEW'
       end action_type
     from checkout_baskets cb
@@ -2361,6 +2362,7 @@ app.get("/api/human-actions",async(req)=>{
     join addresses a on a.id=cb.address_id
     join retailer_accounts ra on ra.id=cb.retailer_account_id
     left join purchase_orders po on po.checkout_basket_id=cb.id
+    left join batch_items bi on bi.id=po.batch_item_id
     left join execution_workers ew on ew.tenant_id=cb.tenant_id and ew.id=cb.execution_worker_id
     where cb.tenant_id=$1
       and cb.status in ('REQUIRES_ACTION','FAILED')
@@ -2558,13 +2560,17 @@ app.post("/api/execution-worker/:workerId/reconciliation/claim",async(req,reply)
         coalesce((select sum(po.amount_minor) from purchase_orders po where po.checkout_basket_id=cb.id and po.tenant_id=cb.tenant_id),0)::bigint amount_minor
       from checkout_baskets cb
       join retailer_accounts ra on ra.id=cb.retailer_account_id
-      where cb.tenant_id=$1 and cb.execution_worker_id=$2 and cb.status='CONFIRMED'
+      where cb.tenant_id=$1 and cb.execution_worker_id=$2
+        and (
+          cb.status='CONFIRMED'
+          or cb.confirmation_state in ('CONFIRMATION_PENDING','RECONCILIATION_REQUIRED')
+          or cb.failure_code in ('CONFIRMATION_PENDING','ORDER_ID_NOT_FOUND','RECONCILIATION_REQUIRED')
+        )
         and cb.retailer in ('flipkart','amazon-in')
-        and cb.retailer_order_id is not null
         and (cb.reconciliation_next_at is null or cb.reconciliation_next_at<=now())
-        and cb.confirmed_at>now()-interval '180 days'
+        and (cb.confirmed_at>now()-interval '180 days' or cb.final_submit_started_at>now()-interval '180 days' or cb.created_at>now()-interval '180 days')
         and cb.reconciliation_status<>'RUNNING'
-      order by coalesce(cb.reconciliation_next_at,cb.confirmed_at),cb.confirmed_at
+      order by coalesce(cb.reconciliation_next_at,cb.confirmed_at,cb.created_at),cb.created_at
       for update of cb skip locked
       limit $3
     `,[p.tenantId,workerId,body.limit]);
@@ -2581,7 +2587,9 @@ app.post("/api/execution-worker/:workerId/reconciliation/claim",async(req,reply)
       if(!groups.has(key))groups.set(key,{retailerAccountId:key,retailer:row.retailer,profileKey:row.profile_key,basketIds:[],orders:[]});
       const group=groups.get(key)!;
       group.basketIds.push(String(row.id));
-      group.orders.push({basketId:String(row.id),retailerOrderId:String(row.retailer_order_id),amountMinor:Number(row.amount_minor||0)});
+      if(row.retailer_order_id){
+        group.orders.push({basketId:String(row.id),retailerOrderId:String(row.retailer_order_id),amountMinor:Number(row.amount_minor||0)});
+      }
     }
     return {accounts:[...groups.values()]};
   }catch(error){await client.query("rollback");throw error}finally{client.release()}
@@ -2631,10 +2639,39 @@ app.post("/api/execution-worker/:workerId/reconciliation/:retailerAccountId",asy
       );
     }
     for(const observation of body.observations){
-      const basket=await client.query(
-        "select id,virtual_card_id from checkout_baskets where tenant_id=$1 and retailer_account_id=$2 and retailer_order_id=$3 limit 1",
+      let basket=await client.query(
+        "select id,virtual_card_id,batch_id,status from checkout_baskets where tenant_id=$1 and retailer_account_id=$2 and retailer_order_id=$3 limit 1",
         [p.tenantId,retailerAccountId,observation.retailerOrderId]
       );
+      if(!basket.rows[0]){
+        basket=await client.query(
+          "select id,virtual_card_id,batch_id,status from checkout_baskets where tenant_id=$1 and retailer_account_id=$2 and id=any($3::uuid[]) and (status<>'CONFIRMED' or retailer_order_id is null) order by created_at desc limit 1",
+          [p.tenantId,retailerAccountId,body.basketIds]
+        );
+        if(basket.rows[0]){
+          const matchedId=basket.rows[0].id;
+          await client.query(
+            "update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=coalesce(confirmed_at,now()),confirmation_state='CONFIRMED',checkout_stage='CONFIRMED',failure_code=null,failure_message=null,stock_watch_enabled=false,stock_next_check_at=null,updated_at=now() where id=$2 and tenant_id=$3",
+            [observation.retailerOrderId,matchedId,p.tenantId]
+          );
+          await client.query(
+            "update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",
+            [observation.retailerOrderId,matchedId,p.tenantId]
+          );
+          await client.query(
+            "update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",
+            [basket.rows[0].batch_id]
+          );
+          const notifyUser=await basketNotificationUser(p.tenantId,matchedId);
+          await createNotification({
+            tenantId:p.tenantId,userId:notifyUser,basketId:matchedId,type:"ORDER_CONFIRMED",
+            title:"Order reconciled and confirmed",
+            message:`OrderGrid verified retailer order ${observation.retailerOrderId} during order reconciliation.`,
+            idempotencyKey:`order-reconciled:${matchedId}:${observation.retailerOrderId}`,
+            payload:{retailerOrderId:observation.retailerOrderId}
+          });
+        }
+      }
       const basketId=basket.rows[0]?.id??null;
       await client.query(`
         insert into retailer_order_observations(
@@ -3414,16 +3451,49 @@ app.patch("/api/bulk-queue/:id/stock-watch",async(req,reply)=>{
 
 app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
-  const body=z.object({workerId:z.string().min(8).max(128),state:z.enum(["RUNNING","CHALLENGE","FAILED"]),code:z.string().max(80).optional(),message:z.string().max(500).optional()}).parse(req.body);
+  const body=z.object({
+    workerId:z.string().min(8).max(128),
+    state:z.enum(["RUNNING","CHALLENGE","FAILED"]),
+    code:z.string().max(80).optional(),
+    message:z.string().max(500).optional(),
+    stage:z.enum(["CART","ADDRESS","DELIVERY","PAYMENT","COMMERCIAL","FINAL_SUBMIT","CONFIRMATION"]).optional(),
+    deliveryEstimate:z.string().max(200).optional(),
+    deliverySeller:z.string().max(200).optional(),
+    deliveryStockState:z.string().max(100).optional(),
+    observedPayableMinor:z.number().int().nonnegative().optional(),
+    cartVerified:z.boolean().optional(),
+    addressVerified:z.boolean().optional()
+  }).parse(req.body);
   const status=body.state==="RUNNING"?"OPENED":body.state==="CHALLENGE"?"REQUIRES_ACTION":"FAILED";
-  const {rows}=await db.query(
-    "update checkout_baskets set status=$1,failure_code=$2,failure_message=$3,expires_at=case when $1='OPENED' then now()+interval '20 minutes' else expires_at end,updated_at=now() where id=$4 and tenant_id=$5 and execution_worker_id=$6 and status in ('CLAIMED','OPENED','REQUIRES_ACTION') returning id,status,retailer_account_id",
-    [status,body.code??null,body.message??null,id,p.tenantId,body.workerId]
-  );
+  const isConfirmationPending=["CONFIRMATION_PENDING","ORDER_ID_NOT_FOUND","RECONCILIATION_REQUIRED"].includes(String(body.code||""));
+  const {rows}=await db.query(`
+    update checkout_baskets set
+      status=$1,
+      failure_code=$2,
+      failure_message=$3,
+      expires_at=case when $1='OPENED' then now()+interval '20 minutes' else expires_at end,
+      checkout_stage=coalesce($7,checkout_stage),
+      delivery_estimate=coalesce($8,delivery_estimate),
+      delivery_seller=coalesce($9,delivery_seller),
+      delivery_stock_state=coalesce($10,delivery_stock_state),
+      observed_payable_minor=coalesce($11,observed_payable_minor),
+      cart_verified_at=case when $12::boolean then coalesce(cart_verified_at,now()) else cart_verified_at end,
+      address_verified_at=case when $13::boolean then coalesce(address_verified_at,now()) else address_verified_at end,
+      confirmation_state=case when $14::boolean then 'CONFIRMATION_PENDING' else confirmation_state end,
+      reconciliation_status=case when $14::boolean then 'PENDING' else reconciliation_status end,
+      reconciliation_next_at=case when $14::boolean then now() else reconciliation_next_at end,
+      updated_at=now()
+    where id=$4 and tenant_id=$5 and execution_worker_id=$6 and status in ('CLAIMED','OPENED','REQUIRES_ACTION')
+    returning id,status,retailer_account_id,checkout_stage,confirmation_state
+  `,[
+    status,body.code??null,body.message??null,id,p.tenantId,body.workerId,
+    body.stage??null,body.deliveryEstimate??null,body.deliverySeller??null,body.deliveryStockState??null,
+    body.observedPayableMinor??null,Boolean(body.cartVerified),Boolean(body.addressVerified),isConfirmationPending
+  ]);
   if(!rows[0])return reply.code(409).send({error:"basket_not_owned_by_worker"});
   if(body.state==="CHALLENGE"){
-    const authStatus=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"")?"CHALLENGE":"CHALLENGE";
     const isRetailerAuth=/LOGIN|PASSWORD|AUTH|OTP|CAPTCHA/i.test(body.code??"");
+    const authStatus=isRetailerAuth?"CHALLENGE":"CHALLENGE";
     await db.query(
       `update retailer_accounts set auth_status=$1,
        session_status=case when $2 then 'REAUTH_REQUIRED' else session_status end,
@@ -3436,10 +3506,10 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
     const notifyUser=await basketNotificationUser(p.tenantId,id);
     await createNotification({
       tenantId:p.tenantId,userId:notifyUser,basketId:id,type:"HUMAN_ACTION_REQUIRED",
-      title:isRetailerAuth?"Retailer verification required":"Payment verification required",
+      title:isRetailerAuth?"Retailer verification required":isConfirmationPending?"Order reconciliation required":"Payment verification required",
       message:body.message??"This order needs a protected human verification step before automation can continue.",
       idempotencyKey:`human-action:${id}:${body.code??"REVIEW"}`,
-      payload:{code:body.code??null}
+      payload:{code:body.code??null,stage:body.stage??null}
     });
   }else if(body.state==="FAILED"){
     await db.query("update checkout_baskets set payment_status=case when payment_status='PENDING' then 'FAILED' else payment_status end,updated_at=now() where id=$1 and tenant_id=$2",[id,p.tenantId]);
@@ -3472,8 +3542,8 @@ app.post("/api/bulk-queue/:id/progress",async(req,reply)=>{
       }
     }
   }
-  await audit(db,p.tenantId,p.id,"bulk_basket.progress","checkout_basket",id,{workerId:body.workerId,state:body.state,code:body.code??null,retailerAccountId:rows[0].retailer_account_id});
-  return {id:rows[0].id,status:rows[0].status};
+  await audit(db,p.tenantId,p.id,"bulk_basket.progress","checkout_basket",id,{workerId:body.workerId,state:body.state,code:body.code??null,stage:body.stage??null,retailerAccountId:rows[0].retailer_account_id});
+  return {id:rows[0].id,status:rows[0].status,stage:rows[0].checkout_stage,confirmationState:rows[0].confirmation_state};
 });
 
 app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
@@ -3511,6 +3581,51 @@ app.get("/api/bulk-baskets/:id/browser-checkout",async(req,reply)=>{
 
 app.post("/api/bulk-queue/:id/retry",async(req,reply)=>{const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);if(!["OWNER","APPROVER","BUYER"].includes(p.role))return reply.code(403).send({error:"forbidden"});const {rows}=await db.query("update checkout_baskets set status='READY',claimed_by=null,execution_worker_id=null,expires_at=null,opened_at=null,failure_code=null,failure_message=null,updated_at=now() where id=$1 and tenant_id=$2 and status in ('REQUIRES_ACTION','FAILED') returning id,status",[id,p.tenantId]);if(!rows[0])return reply.code(409).send({error:"basket_not_retryable"});await audit(db,p.tenantId,p.id,"bulk_basket.retry_requested","checkout_basket",id);return rows[0];});
 
+app.post("/api/bulk-queue/:id/start-final-submit",async(req,reply)=>{
+  const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
+  const body=z.object({
+    workerId:z.string().min(8).max(128),
+    attemptId:z.string().max(128).optional()
+  }).parse(req.body);
+  const client=await db.connect();
+  try{
+    await client.query("begin");
+    const locked=await client.query(
+      "select id,status,final_submit_started_at,final_submit_attempt_id,confirmation_state from checkout_baskets where id=$1 and tenant_id=$2 and execution_worker_id=$3 and status in ('CLAIMED','OPENED') and expires_at>now() for update",
+      [id,p.tenantId,body.workerId]
+    );
+    if(!locked.rows[0]){
+      await client.query("rollback");
+      return reply.code(409).send({error:"basket_unavailable_or_expired"});
+    }
+    const row=locked.rows[0];
+    if(row.final_submit_started_at||["SUBMITTING","SUBMITTED","CONFIRMED"].includes(row.confirmation_state)){
+      await client.query("rollback");
+      return reply.code(409).send({
+        error:"final_submit_already_started",
+        allowed:false,
+        confirmationState:row.confirmation_state,
+        finalSubmitStartedAt:row.final_submit_started_at
+      });
+    }
+    const attemptId=body.attemptId||randomBytes(16).toString("hex");
+    const {rows}=await client.query(
+      `update checkout_baskets
+       set final_submit_started_at=now(),
+           final_submit_attempt_id=$1,
+           confirmation_state='SUBMITTING',
+           checkout_stage='FINAL_SUBMIT',
+           updated_at=now()
+       where id=$2 and tenant_id=$3
+       returning id,final_submit_started_at,final_submit_attempt_id,confirmation_state,checkout_stage`,
+      [attemptId,id,p.tenantId]
+    );
+    await client.query("commit");
+    await audit(db,p.tenantId,p.id,"bulk_basket.final_submit_started","checkout_basket",id,{workerId:body.workerId,attemptId});
+    return {allowed:true,startedAt:rows[0].final_submit_started_at,attemptId:rows[0].final_submit_attempt_id};
+  }catch(e){await client.query("rollback");throw e}finally{client.release()}
+});
+
 app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
   const p=req.principal!,id=z.string().uuid().parse((req.params as any).id);
   const body=z.object({workerId:z.string().min(8).max(128),retailerOrderId:z.string().min(3).max(80)}).parse(req.body);
@@ -3523,7 +3638,7 @@ app.post("/api/bulk-queue/:id/confirm",async(req,reply)=>{
     );
     if(!locked.rows[0]){await client.query("rollback");return reply.code(409).send({error:"basket_unavailable_or_expired"})}
     await client.query("update purchase_orders set status='CONFIRMED',retailer_order_id=$1,failure_code=null,failure_message=null,updated_at=now() where checkout_basket_id=$2 and tenant_id=$3 and status in ('REQUIRES_ACTION','PLACED')",[retailerOrderId,id,p.tenantId]);
-    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,stock_watch_enabled=false,stock_next_check_at=null,stock_last_message=case when stock_watch_started_at is not null then 'Order placed after stock became available' else stock_last_message end,updated_at=now() where id=$2",[retailerOrderId,id]);
+    await client.query("update checkout_baskets set status='CONFIRMED',payment_status='CONFIRMED',retailer_order_id=$1,confirmed_at=now(),confirmation_state='CONFIRMED',checkout_stage='CONFIRMED',reconciliation_status='PENDING',reconciliation_next_at=now()+interval '2 hours',reconciliation_error=null,stock_watch_enabled=false,stock_next_check_at=null,stock_last_message=case when stock_watch_started_at is not null then 'Order placed after stock became available' else stock_last_message end,updated_at=now() where id=$2",[retailerOrderId,id]);
     await client.query("update retailer_accounts set auth_status='READY',credential_status=case when credential_status in ('STORED','VERIFICATION_REQUIRED') then 'READY' else credential_status end,last_authenticated_at=now(),session_status='READY',session_challenge_code=null,session_checked_at=now(),session_target_expires_at=now()+(session_target_days::text||' days')::interval,session_worker_id=$3,updated_at=now() where id=$1 and tenant_id=$2",[locked.rows[0].retailer_account_id,p.tenantId,body.workerId]);
     await client.query("update order_batches b set status=case when not exists(select 1 from checkout_baskets x where x.batch_id=b.id and x.status<>'CONFIRMED') then 'COMPLETE' else 'PARTIAL' end,updated_at=now() where b.id=$1",[locked.rows[0].batch_id]);
     await client.query("commit");
