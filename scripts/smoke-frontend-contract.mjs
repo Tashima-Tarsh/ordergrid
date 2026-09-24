@@ -241,6 +241,10 @@ must(cdp.includes("Complete Flipkart sign-in for"),"retailer session contract: v
 must(cdp.includes("click Verify sign-in"),"retailer session contract: operator-controlled post-login verification guidance missing");
 must(cdp.includes("window.localStorage"),"retailer session contract: origin storage must be preserved with cookies");
 must(server.includes("($4::text<>'MANAGED' or retailer<>'flipkart' or session_check_verify_only=true)"),"retailer session contract: managed workers must not claim interactive Flipkart login");
+must(server.includes("ra.session_worker_id=$2"),"retailer checkout contract: Flipkart basket execution must stay on the worker that owns the authenticated profile");
+must(server.includes("for update of cb skip locked"),"retailer checkout contract: session-owner basket claim must lock only checkout baskets");
+must(server.includes('app.get("/api/secure-browser/setup.cmd"'),"retailer session contract: one-click Windows secure browser installer route missing");
+must(html.includes('id="connectInstallBrowser"'),"retailer session contract: secure browser installer action missing from Flipkart connect UI");
 must(!server.includes("otp_last_requested_at=case when session_check_verify_only=false then now()"),"retailer session contract: claiming a session job must not falsely consume OTP cooldown");
 must(html.includes('id="connectManualActions"'),"retailer session contract: visible-browser sign-in actions missing");
 must(files["public/rewards.js"].includes("DESKTOP SIGN-IN ONLINE"),"retailer session contract: desktop sign-in worker state missing");
