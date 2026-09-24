@@ -40,15 +40,19 @@ services:
       - SESSION_SECRET=${SESSION_SECRET}
       - DATA_ENCRYPTION_KEY_BASE64=${DATA_ENCRYPTION_KEY_BASE64}
       - WORKER_API_TOKEN=${WORKER_API_TOKEN}
+      - ORDERGRID_MANAGED_EXECUTION=${ORDERGRID_MANAGED_EXECUTION:-true}
       - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL}
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD}
       - AWS_REGION=${AWS_REGION:-ap-southeast-2}
       - BEDROCK_REGION=${BEDROCK_REGION:-ap-southeast-2}
       - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-apac.amazon.nova-lite-v1:0}
       - AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK:-}
+    volumes:
+      - ordergrid_profiles:/app/.ordergrid
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   pgdata:
+  ordergrid_profiles:
