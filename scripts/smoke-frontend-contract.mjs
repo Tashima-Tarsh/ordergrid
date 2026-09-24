@@ -236,17 +236,19 @@ must(server.includes('app.post("/api/retailer-accounts/:id/otp"'),"retailer sess
 must(server.includes('app.post("/api/human-actions/:id/otp"'),"retailer session contract: order OTP endpoint missing");
 must(managedOtpMigration.includes("'SUBMIT_OTP'"),"retailer session contract: managed OTP migration missing");
 must(managedOtpMigration.includes("session_challenge_code"),"retailer session contract: session challenge tracking missing");
-must(cdp.includes("OTP_REQUESTED"),"retailer session contract: Flipkart login identifier must request OTP without a password");
-must(cdp.includes("const explicitOtp=controls.find"),"retailer session contract: visible Flipkart Request OTP controls must work even after the identifier field disappears");
-must(cdp.includes("login with otp|log in with otp|use otp|continue with otp"),"retailer session contract: alternate Flipkart OTP control labels must be supported");
-must(cdp.includes("LOGIN_IDENTIFIER_ENTERED"),"retailer session contract: Flipkart identifier entry must allow the UI to enable its OTP button before clicking");
-must(cdp.includes('[role="button"]'),"retailer session contract: Flipkart role-button login controls must be supported");
-must(cdp.includes("nonSearchText"),"retailer session contract: live Flipkart text login field fallback missing");
-must(cdp.includes("LOGIN_SURFACE_OPENED"),"retailer session contract: Flipkart storefront login control must be opened before OTP entry");
-must(cdp.includes('const flipkartLoginUrl="https://www.flipkart.com/"'),"retailer session contract: Flipkart LOGIN_REQUIRED must use the storefront login surface");
-must(cdp.includes('challenge.code==="LOGIN_REQUIRED"'),"retailer session contract: Flipkart login challenge redirect missing");
-must(cdp.includes('if(retailer==="flipkart"&&round<5)'),"retailer session contract: Flipkart login-page fallback must return to storefront");
-must(cdp.includes("resetFlipkartToStorefront"),"retailer session contract: broken Flipkart login targets must be replaced with a fresh storefront tab");
+must(cdp.includes("Flipkart sign-in must be completed in an interactive desktop Chrome session"),"retailer session contract: headless workers must refuse first-time Flipkart sign-in");
+must(cdp.includes("Complete Flipkart sign-in for"),"retailer session contract: visible Chrome sign-in handoff missing");
+must(cdp.includes("click Verify sign-in"),"retailer session contract: operator-controlled post-login verification guidance missing");
+must(cdp.includes("window.localStorage"),"retailer session contract: origin storage must be preserved with cookies");
+must(server.includes("($4::text<>'MANAGED' or retailer<>'flipkart' or session_check_verify_only=true)"),"retailer session contract: managed workers must not claim interactive Flipkart login");
+must(server.includes("ra.session_worker_id=$2"),"retailer checkout contract: Flipkart basket execution must stay on the worker that owns the authenticated profile");
+must(server.includes("for update of cb skip locked"),"retailer checkout contract: session-owner basket claim must lock only checkout baskets");
+must(server.includes('app.get("/api/secure-browser/setup.cmd"'),"retailer session contract: one-click Windows secure browser installer route missing");
+must(html.includes('id="connectInstallBrowser"'),"retailer session contract: secure browser installer action missing from Flipkart connect UI");
+must(!server.includes("otp_last_requested_at=case when session_check_verify_only=false then now()"),"retailer session contract: claiming a session job must not falsely consume OTP cooldown");
+must(html.includes('id="connectManualActions"'),"retailer session contract: visible-browser sign-in actions missing");
+must(files["public/rewards.js"].includes("DESKTOP SIGN-IN ONLINE"),"retailer session contract: desktop sign-in worker state missing");
+must(files["public/rewards.js"].includes("I signed in — verify session")||html.includes("I signed in — verify session"),"retailer session contract: explicit post-login verification action missing");
 must(cdp.includes("Chrome DevTools command timed out"),"cloud browser contract: CDP commands must have a bounded timeout");
 must(cdp.includes("fetchWithTimeout"),"cloud browser contract: local DevTools HTTP calls must have a bounded timeout");
 must(cdp.includes("Retailer page readiness timed out"),"cloud browser contract: retailer readiness must fail closed on timeout");
@@ -337,9 +339,9 @@ must(count(files["public/rewards.js"],"formElement.reset()")===3,"retailer form 
 must(server.includes('app.get("/api/worker-bootstrap"'),"worker bootstrap contract: legacy authenticated bootstrap endpoint missing");
 must(server.includes("workerToken:config.WORKER_API_TOKEN"),"worker bootstrap contract: machine token handoff missing");
 must(workerInstaller.includes("ConvertFrom-SecureString"),"worker installer contract: optional legacy local credentials must remain protected");
-must(!files["public/rewards.js"].includes("start the secure browser worker"),"retailer session contract: worker startup jargon must stay out of customer UI");
-must(!files["public/human-actions.js"].includes("Start the native OrderGrid worker"),"human action contract: customer must not be asked to run a worker");
-must(files["public/rewards.js"].includes("Cloud Secure Browser is starting automatically"),"retailer session contract: hosted browser startup guidance missing");
+must(files["public/rewards.js"].includes("desktop worker"),"retailer session contract: interactive Flipkart sign-in must explain the desktop worker requirement");
+must(!files["public/human-actions.js"].includes("Start the native OrderGrid worker"),"human action contract: checkout OTP actions must not depend on manual worker instructions");
+must(files["public/rewards.js"].includes("Cloud checkout is online"),"retailer session contract: cloud checkout and desktop sign-in roles must be distinguished");
 
 console.log("Frontend/card connector contract OK");
 

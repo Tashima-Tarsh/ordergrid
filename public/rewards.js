@@ -2,7 +2,7 @@
   const $=s=>document.querySelector(s);
   const esc=value=>{const node=document.createElement('div');node.textContent=String(value??'');return node.innerHTML};
   const moneyMinor=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value||0)/100);
-  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},secureBrowserReady=false;
+  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},secureBrowserReady=false,desktopBrowserReady=false;
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -20,7 +20,7 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
-    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'OrderGrid Cloud Secure Browser is starting or temporarily unavailable. Retry shortly; no local worker installation is required.';
+    if(/worker.*offline|execution worker|session worker|managed execution offline/i.test(message))return 'A live OrderGrid execution worker is required. For first-time Flipkart sign-in, start the OrderGrid desktop worker so a visible Chrome window can be used.';
     return message;
   }
   function sessionTargetDays(){
@@ -31,7 +31,7 @@
     const status=$('#secureBrowserStatus');
     if(status){
       status.dataset.ready=secureBrowserReady?'true':'false';
-      status.textContent=secureBrowserReady?'CLOUD BROWSER ONLINE':'CLOUD BROWSER STARTING';
+      status.textContent=desktopBrowserReady?'DESKTOP SIGN-IN ONLINE':secureBrowserReady?'CLOUD CHECKOUT ONLINE · DESKTOP SIGN-IN OFFLINE':'SECURE BROWSER OFFLINE';
     }
   }
   function parseCsv(text){
@@ -105,17 +105,19 @@
       const sessionMeta=sessionStatus==='READY'
         ?'Connected · verified until '+sessionUntil
         :sessionStatus==='REAUTH_REQUIRED'
-          ?(challenge==='OTP_REQUIRED'
-            ?('Flipkart sent an OTP. Enter it below.'+(isOtpCooling?' A new OTP can be requested after '+otpCooldownTime+'.':''))
-            :challenge==='OTP_COOLDOWN'||isOtpCooling
-              ?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
-              :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
-              :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use manual browser login to connect.'
-              :challenge==='CAPTCHA_REQUIRED'?'Retailer CAPTCHA requires authorised manual verification'
-              :'Retailer verification required')
+          ?(challenge==='LOGIN_REQUIRED'
+            ?(desktopBrowserReady?'Finish sign-in in the visible Flipkart Chrome window, then verify the session.':'Desktop sign-in worker required. Start the OrderGrid desktop worker, then reconnect this account.')
+            :challenge==='OTP_REQUIRED'
+              ?('Retailer OTP is waiting in the preserved session.'+(isOtpCooling?' A new OTP can be requested after '+otpCooldownTime+'.':''))
+              :challenge==='OTP_COOLDOWN'||isOtpCooling
+                ?`⏳ OTP cooldown active until ${otpCooldownTime}. Flipkart rate-limited or cooling down.`
+                :challenge==='ACCOUNT_NOT_REGISTERED'?'Flipkart login identifier not registered or unverified.'
+                :challenge==='OTP_NOT_SENT'?'Flipkart did not send OTP. Use the visible browser login instead.'
+                :challenge==='CAPTCHA_REQUIRED'?'Complete the retailer CAPTCHA in the visible desktop browser.'
+                :'Retailer verification required')
           :sessionStatus==='VERIFYING'
-            ?(secureBrowserReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
-            :(secureBrowserReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
+            ?(desktopBrowserReady?'Waiting for the preserved desktop browser session…':secureBrowserReady?'Cloud checkout is online, but first-time Flipkart sign-in needs the desktop worker.':'Queued — start the OrderGrid desktop worker for Flipkart sign-in.')
+            :(desktopBrowserReady?'Ready to open secure desktop sign-in':secureBrowserReady?'Cloud checkout online · desktop sign-in offline':'Execution worker offline');
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
@@ -125,11 +127,13 @@
         ?'<div class="managed-credential"><input type="password" autocomplete="current-password" maxlength="1000" placeholder="Retailer password" data-account-password-input><button type="button" data-save-account-password>Save & connect</button></div>'
         :'';
       const verifyAction=sessionStatus!=='READY'&&(!credentialMissing||otpFirst)
-        ?(isOtpCooling
-          ?(challenge==='OTP_REQUIRED'
-            ?''
-            :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
-          :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
+        ?(challenge==='LOGIN_REQUIRED'
+          ?`<button type="button" class="secondary" data-verify-session>${desktopBrowserReady?'Complete sign-in':'Desktop sign-in required'}</button>`
+          :isOtpCooling
+            ?(challenge==='OTP_REQUIRED'
+              ?''
+              :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
+            :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
@@ -168,7 +172,9 @@
     else console.error(accountResult.reason);
     if(financeResult.status==='fulfilled')finance=financeResult.value;
     else console.error(financeResult.reason);
-    secureBrowserReady=secureBrowserResult.status==='fulfilled'&&(secureBrowserResult.value.workers||[]).length>0;
+    const workers=secureBrowserResult.status==='fulfilled'?(secureBrowserResult.value.workers||[]):[];
+    secureBrowserReady=workers.length>0;
+    desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
     render();
   }
   function openRetailerUser(){
@@ -199,11 +205,13 @@
         body:JSON.stringify({retailer,targetDays:sessionTargetDays()})
       });
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      secureBrowserReady=(secureState.workers||[]).length>0;
+      const workers=secureState.workers||[];
+      secureBrowserReady=workers.length>0;
+      desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
       renderSecureBrowserStatus();
-      toast(secureBrowserReady
-        ?result.count+' account(s) queued. Authentication will proceed one account at a time.'
-        :result.count+' account(s) queued. Secure Browser is starting and will process them one at a time.');
+      toast(result.interactiveLoginRequired
+        ?result.count+' account(s) queued. Start the OrderGrid desktop worker to complete Flipkart sign-in in visible Chrome.'
+        :result.count+' account(s) queued for secure session verification.');
       await load();
     }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
@@ -238,32 +246,52 @@
     if($('#connectOtpInput'))$('#connectOtpInput').value='';
 
     const isOtpWaiting=String(account.session_status)==='REAUTH_REQUIRED'&&String(account.session_challenge_code)==='OTP_REQUIRED';
+    const isLoginRequired=String(account.session_status)==='REAUTH_REQUIRED'&&String(account.session_challenge_code)==='LOGIN_REQUIRED';
     const isReady=String(account.session_status)==='READY';
+    if($('#connectManualActions'))$('#connectManualActions').hidden=true;
+    if($('#connectManualError'))$('#connectManualError').textContent='';
+    if($('#connectInstallBrowser'))$('#connectInstallBrowser').hidden=desktopBrowserReady;
+    if($('#connectOpenBrowser'))$('#connectOpenBrowser').hidden=!desktopBrowserReady;
+    if($('#connectVerifyLogin'))$('#connectVerifyLogin').disabled=!desktopBrowserReady;
 
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='✓ Account Connected';
       $('#connectStatusMeta').textContent='Flipkart session is verified and ready for checkout.';
       $('#connectOtpForm').hidden=true;
+    }else if(isLoginRequired){
+      $('#connectStatusCard').className='connect-status-card otp-ready';
+      $('#connectStatusHeading').textContent='Finish Flipkart sign-in in Chrome';
+      $('#connectStatusMeta').textContent=desktopBrowserReady
+        ?'Use the visible preserved Chrome window for login, OTP and any CAPTCHA. Then click “I signed in — verify session”.'
+        :'The desktop sign-in worker is offline. Start it first, then reconnect this account.';
+      $('#connectOtpForm').hidden=true;
+      if($('#connectManualActions'))$('#connectManualActions').hidden=false;
     }else if(isOtpWaiting){
       $('#connectStatusCard').className='connect-status-card otp-ready';
-      $('#connectStatusHeading').textContent='Flipkart OTP required';
-      $('#connectStatusMeta').textContent=`Enter the 6-digit verification code sent to ${account.account_reference}.`;
+      $('#connectStatusHeading').textContent='Retailer OTP required';
+      $('#connectStatusMeta').textContent='Complete the OTP in the preserved visible browser session.';
       $('#connectOtpForm').hidden=false;
       setTimeout(()=>$('#connectOtpInput')?.focus(),150);
     }else{
       $('#connectStatusCard').className='connect-status-card connecting';
-      $('#connectStatusHeading').textContent='Connecting to Flipkart…';
-      $('#connectStatusMeta').textContent=secureBrowserReady
-        ?'OrderGrid Cloud Secure Browser is opening Flipkart and requesting your login OTP…'
-        :'Cloud Secure Browser is starting and opening Flipkart…';
+      $('#connectStatusHeading').textContent='Preparing secure Flipkart session…';
+      $('#connectStatusMeta').textContent=desktopBrowserReady
+        ?'OrderGrid will open the account in visible desktop Chrome for first sign-in.'
+        :secureBrowserReady
+          ?'Cloud checkout is online, but first-time Flipkart sign-in needs the desktop worker.'
+          :'Start the OrderGrid desktop worker to open a visible Flipkart sign-in session.';
       $('#connectOtpForm').hidden=true;
 
       try{
-        await request('/api/retailer-accounts/prepare',{
+        const prepared=await request('/api/retailer-accounts/prepare',{
           method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays()})
         });
+        if(prepared.interactiveLoginRequired){
+          $('#connectStatusHeading').textContent='Desktop sign-in required';
+          $('#connectStatusMeta').textContent='Start the OrderGrid desktop worker. AWS will keep handling checkout and verification after the authenticated session is established.';
+        }
       }catch(err){
         console.error('Prepare error:',err);
       }
@@ -277,10 +305,20 @@
     connectPollTimer=setInterval(async()=>{
       pollCount++;
       try{
-        const [resp,screenResp]=await Promise.allSettled([
+        const [resp,screenResp,workerResp]=await Promise.allSettled([
           request('/api/retailer-accounts?retailer='+encodeURIComponent(account.retailer||'flipkart')+'&limit=1000'),
-          request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount?.id||account.id)+'/screen')
+          request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount?.id||account.id)+'/screen'),
+          request('/api/execution-workers')
         ]);
+        if(workerResp.status==='fulfilled'){
+          const workers=workerResp.value.workers||[];
+          secureBrowserReady=workers.length>0;
+          desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
+          if($('#connectInstallBrowser'))$('#connectInstallBrowser').hidden=desktopBrowserReady;
+          if($('#connectOpenBrowser'))$('#connectOpenBrowser').hidden=!desktopBrowserReady;
+          if($('#connectVerifyLogin'))$('#connectVerifyLogin').disabled=!desktopBrowserReady;
+          renderSecureBrowserStatus();
+        }
         const updatedAccounts=resp.status==='fulfilled'?(resp.value.accounts||[]):[];
         if(updatedAccounts.length)accounts=updatedAccounts;
         const target=updatedAccounts.find(x=>x.id===(activeConnectingAccount?.id||account.id));
@@ -299,15 +337,25 @@
           connectPollTimer=null;
           $('#connectStatusCard').className='connect-status-card success';
           $('#connectStatusHeading').textContent='✓ Connected to Flipkart!';
-          $('#connectStatusMeta').textContent='Session verified and saved. Ready for instant batch purchases.';
+          $('#connectStatusMeta').textContent='Authenticated session verified and saved for checkout reuse.';
           $('#connectOtpForm').hidden=true;
+          if($('#connectManualActions'))$('#connectManualActions').hidden=true;
           render();
           toast(`${target.account_reference} connected successfully!`);
           setTimeout(()=>{closeConnectModal()},1400);
+        }else if(st==='REAUTH_REQUIRED'&&ch==='LOGIN_REQUIRED'){
+          $('#connectStatusCard').className='connect-status-card otp-ready';
+          $('#connectStatusHeading').textContent='Finish Flipkart sign-in in Chrome';
+          $('#connectStatusMeta').textContent=desktopBrowserReady
+            ?'Complete login, OTP and any CAPTCHA in visible Chrome, then verify the session.'
+            :'Desktop sign-in worker is offline. Start it, then reconnect this account.';
+          $('#connectOtpForm').hidden=true;
+          if($('#connectManualActions'))$('#connectManualActions').hidden=false;
         }else if(st==='REAUTH_REQUIRED'&&ch==='OTP_REQUIRED'){
           $('#connectStatusCard').className='connect-status-card otp-ready';
-          $('#connectStatusHeading').textContent='Flipkart OTP required';
-          $('#connectStatusMeta').textContent=`Enter the 6-digit verification code sent to ${target.account_reference}.`;
+          $('#connectStatusHeading').textContent='Retailer OTP required';
+          $('#connectStatusMeta').textContent='Complete the OTP in the preserved browser session.';
+          if($('#connectManualActions'))$('#connectManualActions').hidden=true;
           if($('#connectOtpForm').hidden){
             $('#connectOtpForm').hidden=false;
             $('#connectOtpInput').focus();
@@ -315,8 +363,8 @@
         }else if(st==='VERIFYING'){
           if($('#connectOtpForm').hidden){
             $('#connectStatusCard').className='connect-status-card connecting';
-            $('#connectStatusHeading').textContent='Connecting to Flipkart…';
-            $('#connectStatusMeta').textContent='Cloud Secure Browser is communicating with Flipkart…';
+            $('#connectStatusHeading').textContent='Checking Flipkart session…';
+            $('#connectStatusMeta').textContent=desktopBrowserReady?'Waiting for the desktop browser session…':'Waiting for an eligible execution worker…';
           }
         }
 
@@ -325,13 +373,42 @@
           connectPollTimer=null;
           $('#connectStatusCard').className='connect-status-card';
           $('#connectStatusHeading').textContent='Connection timeout';
-          $('#connectStatusMeta').textContent='Flipkart did not respond in time. Click Resend OTP or retry.';
+          $('#connectStatusMeta').textContent='Flipkart sign-in was not verified in time. Keep the desktop worker online and retry session verification.';
         }
       }catch(err){
         console.error('Polling error:',err);
       }
     },700);
   }
+
+  $('#connectOpenBrowser')?.addEventListener('click',async()=>{
+    if(!activeConnectingAccount)return;
+    const btn=$('#connectOpenBrowser');btn.disabled=true;
+    if($('#connectManualError'))$('#connectManualError').textContent='';
+    try{
+      await request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount.id)+'/focus-session',{method:'POST'});
+      toast('Flipkart browser focused on the desktop worker.');
+    }catch(error){
+      if($('#connectManualError'))$('#connectManualError').textContent=customerError(error);
+    }finally{setTimeout(()=>{btn.disabled=false},600)}
+  });
+
+  $('#connectVerifyLogin')?.addEventListener('click',async()=>{
+    if(!activeConnectingAccount)return;
+    const btn=$('#connectVerifyLogin');btn.disabled=true;const previous=btn.textContent;btn.textContent='Verifying…';
+    if($('#connectManualError'))$('#connectManualError').textContent='';
+    try{
+      const result=await request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount.id)+'/session/reconnect',{method:'POST'});
+      $('#connectStatusCard').className='connect-status-card connecting';
+      $('#connectStatusHeading').textContent='Verifying authenticated session…';
+      $('#connectStatusMeta').textContent=result.interactiveLoginRequired
+        ?'Desktop worker is offline. Start it, then verify again.'
+        :'OrderGrid is checking the preserved Flipkart profile without requesting a new OTP.';
+      if($('#connectManualActions'))$('#connectManualActions').hidden=true;
+    }catch(error){
+      if($('#connectManualError'))$('#connectManualError').textContent=customerError(error);
+    }finally{btn.disabled=false;btn.textContent=previous}
+  });
 
   $('#connectOtpForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
@@ -453,7 +530,9 @@
         }
       }catch{}
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      secureBrowserReady=(secureState.workers||[]).length>0;
+      const workers=secureState.workers||[];
+      secureBrowserReady=workers.length>0;
+      desktopBrowserReady=workers.some(worker=>String(worker.mode||'').toUpperCase()==='DESKTOP');
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
@@ -461,7 +540,7 @@
       if(queued&&secureBrowserReady){
         toast(result.count+' users imported · '+queued+' account connection(s) queued.');
       }else if(queued){
-        toast(result.count+' users imported. Secure Browser will authenticate the queued accounts one at a time.');
+        toast(result.count+' users imported. Start the OrderGrid desktop worker to complete each first-time Flipkart sign-in in visible Chrome.');
       }else{
         toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
       }

@@ -1502,8 +1502,13 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
      returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
     params
   );
-  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
-  return {count:rows.length,accounts:rows};
+  const needsInteractiveFlipkart=rows.some((row:any)=>String(row.retailer)==="flipkart");
+  const desktopWorker=needsInteractiveFlipkart
+    ?await db.query("select 1 from execution_workers where tenant_id=$1 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",[p.tenantId])
+    :{rows:[]};
+  const desktopWorkerOnline=desktopWorker.rows.length>0;
+  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays,desktopWorkerOnline});
+  return {count:rows.length,accounts:rows,desktopWorkerOnline,interactiveLoginRequired:needsInteractiveFlipkart&&!desktopWorkerOnline};
 });
 
 app.post("/api/retailer-accounts/:id/focus-session",async(req,reply)=>{
@@ -1568,8 +1573,12 @@ app.post("/api/retailer-accounts/:id/session/reconnect",async(req,reply)=>{
     [id,p.tenantId]
   );
   if(!rows[0])return reply.code(404).send({error:"retailer_account_not_found"});
-  await audit(db,p.tenantId,p.id,"retailer_account.session_reconnect_requested","retailer_account",id,{retailer:rows[0].retailer});
-  return {ok:true,sessionStatus:"VERIFYING",account:rows[0]};
+  const desktopWorker=String(rows[0].retailer)==="flipkart"
+    ?await db.query("select 1 from execution_workers where tenant_id=$1 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",[p.tenantId])
+    :{rows:[{}]};
+  const desktopWorkerOnline=desktopWorker.rows.length>0;
+  await audit(db,p.tenantId,p.id,"retailer_account.session_reconnect_requested","retailer_account",id,{retailer:rows[0].retailer,desktopWorkerOnline});
+  return {ok:true,sessionStatus:"VERIFYING",account:rows[0],desktopWorkerOnline,interactiveLoginRequired:String(rows[0].retailer)==="flipkart"&&!desktopWorkerOnline};
 });
 
 app.post("/api/retailer-accounts/:id/otp",async(req,reply)=>{
@@ -1958,7 +1967,8 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId,workerId,p.id]
     );
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
-    if(live.rows[0].mode==="MANAGED"){
+    const workerMode=String(live.rows[0].mode||"");
+    if(workerMode==="MANAGED"){
       const desktopWorker=await client.query(
         "select 1 from execution_workers where tenant_id=$1 and id<>$2 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",
         [p.tenantId,workerId]
@@ -1999,23 +2009,21 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
          and session_check_requested_at is not null
          and session_check_claimed_at is null
          and (otp_cooldown_until is null or otp_cooldown_until<=now() or session_check_verify_only=true)
+         and ($4::text<>'MANAGED' or retailer<>'flipkart' or session_check_verify_only=true)
        order by case when session_worker_id=$2 then 0 else 1 end,session_check_requested_at,id
        for update skip locked
        limit $3`,
-      [p.tenantId,workerId,body.limit]
+      [p.tenantId,workerId,body.limit,workerMode]
     );
     const ids=picked.rows.map(r=>r.id);
-    const attemptCooldownDate=new Date(Date.now()+config.OTP_MIN_INTERVAL_MINUTES*60*1000);
     if(ids.length)await client.query(
       `update retailer_accounts
        set session_check_claimed_at=now(),
            session_worker_id=$1,
            session_status='VERIFYING',
-           otp_last_requested_at=case when session_check_verify_only=false then now() else otp_last_requested_at end,
-           otp_cooldown_until=case when session_check_verify_only=false then $4::timestamptz else otp_cooldown_until end,
            updated_at=now()
        where tenant_id=$2 and id=any($3::uuid[])`,
-      [workerId,p.tenantId,ids,attemptCooldownDate.toISOString()]
+      [workerId,p.tenantId,ids]
     );
     await client.query("commit");
     const accounts:any[]=[];
@@ -2031,15 +2039,15 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           if(decrypted.password)credentials.password=String(decrypted.password);
         }
       }
-      let sessionState:null|{cookies:Record<string,unknown>[]} = null;
+      let sessionState:null|{cookies:Record<string,unknown>[];localStorage?:Record<string,string>} = null;
       const savedSession=await db.query(
         "select ciphertext,iv,auth_tag from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2 and expires_at>now() limit 1",
         [p.tenantId,row.id]
       );
       if(savedSession.rows[0]){
         try{
-          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
-          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[];localStorage?:Record<string,string>};
+          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies,...(restored.localStorage&&typeof restored.localStorage==="object"?{localStorage:restored.localStorage}:{})};
         }catch{
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
         }
@@ -2064,7 +2072,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
     code:z.string().max(100).optional(),
     message:z.string().max(500).optional(),
-    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional(),
+    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250),localStorage:z.record(z.string(),z.string()).optional()}).nullable().optional(),
     screenshot:z.string().max(1_000_000).nullable().optional()
   }).parse(req.body);
   const account=await db.query(
@@ -2293,7 +2301,7 @@ app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=a
 
 app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK","INTERACTIVE","MANUAL","MANAGED","DESKTOP"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
 app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,last_seen from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId]);return {workers:rows};});
-app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
+app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select cb.id from checkout_baskets cb left join retailer_accounts ra on ra.id=cb.retailer_account_id and ra.tenant_id=cb.tenant_id where cb.tenant_id=$1 and cb.status='CLAIMED' and cb.execution_worker_id is null and cb.expires_at>now() and (cb.retailer<>'flipkart' or (ra.session_status='READY' and ra.session_worker_id=$2 and (ra.session_target_expires_at is null or ra.session_target_expires_at>now()))) order by cb.created_at for update of cb skip locked limit $3",[p.tenantId,workerId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 
 
 app.get("/api/notifications",async(req)=>{
