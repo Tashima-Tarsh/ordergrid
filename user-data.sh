@@ -36,6 +36,7 @@ BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD_VAL}
 AWS_REGION=ap-south-1
 BEDROCK_REGION=ap-south-1
 BEDROCK_MODEL_ID=apac.amazon.nova-lite-v1:0
+ORDERGRID_MANAGED_EXECUTION=true
 EOF
 
 echo "Building and starting Docker services..."

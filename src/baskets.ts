@@ -8,8 +8,9 @@ async function assignRetailerAccount(
   retailer:string
 ){
   const candidate=await client.query(
-    `select ra.id,ra.account_reference
+    `select ra.id,ra.account_reference,ra.session_status
      from retailer_accounts ra
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
      left join lateral (
        select count(*)::int active_orders
        from checkout_baskets active_cb
@@ -21,6 +22,7 @@ async function assignRetailerAccount(
        and ra.retailer=$2
        and ra.active
        and ra.auth_status not in ('LOCKED','DISABLED')
+       and (ra.retailer<>'flipkart' or (ra.session_status='READY' and (ra.session_target_expires_at is null or ra.session_target_expires_at>now()) and ew.last_seen>now()-interval '30 seconds'))
        and (ra.customer_id=$3 or ra.customer_id is null)
        and (ra.cooldown_until is null or ra.cooldown_until<=now())
        and usage.active_orders < ra.max_concurrent_orders
@@ -44,22 +46,27 @@ async function assignRetailerAccount(
     if(!customer.rows[0])throw new Error("basket_customer_not_found");
     const fallback=await client.query(
       `insert into retailer_accounts(
-         tenant_id,customer_id,retailer,account_reference,auth_status,active,max_concurrent_orders
+         tenant_id,customer_id,retailer,account_reference,auth_status,session_status,active,max_concurrent_orders
        )
-       values($1,$2,$3,$4,'AUTH_REQUIRED',true,1)
+       values($1,$2,$3,$4,'AUTH_REQUIRED','NOT_CONFIGURED',true,1)
        on conflict(tenant_id,customer_id,retailer) where customer_id is not null
        do update set updated_at=now()
-       returning id,account_reference`,
+       returning id,account_reference,session_status`,
       [tenantId,customerId,retailer,String(customer.rows[0].external_reference)]
     );
     account=fallback.rows[0];
   }
 
+  const isReady=account.session_status==='READY';
   await client.query(
     `update checkout_baskets
-     set retailer_account_id=$1,account_reference=$2,updated_at=now()
+     set retailer_account_id=$1,account_reference=$2,
+         status=case when $5::boolean=false and $6='flipkart' then 'REQUIRES_ACTION' else status end,
+         failure_code=case when $5::boolean=false and $6='flipkart' then 'LOGIN_REQUIRED' else failure_code end,
+         failure_message=case when $5::boolean=false and $6='flipkart' then 'Flipkart authentication is required for this account' else failure_message end,
+         updated_at=now()
      where id=$3 and tenant_id=$4`,
-    [account.id,account.account_reference,basketId,tenantId]
+    [account.id,account.account_reference,basketId,tenantId,isReady,retailer]
   );
   await client.query(
     "update retailer_accounts set last_assigned_at=now(),updated_at=now() where id=$1 and tenant_id=$2",

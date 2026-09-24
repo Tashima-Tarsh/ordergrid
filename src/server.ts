@@ -1485,24 +1485,28 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
   const body=z.object({
     retailer:z.enum(["amazon-in","flipkart"]).optional(),
     accountIds:z.array(z.string().uuid()).max(1000).optional(),
-    targetDays:z.number().int().min(1).max(90).default(15)
+    targetDays:z.number().int().min(1).max(90).default(15),
+    verifyOnly:z.boolean().optional()
   }).parse(req.body??{});
-  const params:any[]=[p.tenantId,body.targetDays];
+  const verifyOnly=Boolean(body.verifyOnly);
+  const params:any[]=[p.tenantId,body.targetDays,verifyOnly];
   const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
   if(body.accountIds?.length){params.push(body.accountIds);clauses.push(`id=any($${params.length}::uuid[])`)}
-  clauses.push("(session_status<>'READY' or session_target_expires_at is null or session_target_expires_at<=now())");
-  clauses.push("(otp_cooldown_until is null or otp_cooldown_until<=now())");
+  if(!verifyOnly){
+    clauses.push("(session_status<>'READY' or session_target_expires_at is null or session_target_expires_at<=now())");
+    clauses.push("(otp_cooldown_until is null or otp_cooldown_until<=now())");
+  }
   const {rows}=await db.query(
     `update retailer_accounts set
        session_status='VERIFYING',session_challenge_code=null,session_target_days=$2,
-       session_check_verify_only=false,session_check_requested_at=now(),
+       session_check_verify_only=$3,session_check_requested_at=now(),
        session_check_claimed_at=null,session_worker_id=null,updated_at=now()
      where ${clauses.join(" and ")}
-     returning id,retailer,account_reference,label,profile_key,session_status,session_target_days`,
+     returning id,retailer,account_reference,label,profile_key,session_status,session_target_days,session_check_verify_only`,
     params
   );
-  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays});
+  await audit(db,p.tenantId,p.id,"retailer_sessions.prepare_requested","retailer_account",null,{count:rows.length,retailer:body.retailer??"amazon-in+flipkart",targetDays:body.targetDays,verifyOnly});
   return {count:rows.length,accounts:rows};
 });
 
@@ -1958,16 +1962,8 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
       [p.tenantId,workerId,p.id]
     );
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
-    if(live.rows[0].mode==="MANAGED"){
-      const desktopWorker=await client.query(
-        "select 1 from execution_workers where tenant_id=$1 and id<>$2 and mode='DESKTOP' and last_seen>now()-interval '30 seconds' limit 1",
-        [p.tenantId,workerId]
-      );
-      if(desktopWorker.rows.length>0){
-        await client.query("commit");
-        return {accounts:[]};
-      }
-    }
+    const workerMode=String(live.rows[0].mode||"DESKTOP");
+    const isManaged=workerMode==="MANAGED";
     const waiting=await client.query(
       `select id,session_challenge_code
        from retailer_accounts
@@ -1999,10 +1995,11 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
          and session_check_requested_at is not null
          and session_check_claimed_at is null
          and (otp_cooldown_until is null or otp_cooldown_until<=now() or session_check_verify_only=true)
+         and ($4::boolean=false or retailer<>'flipkart' or session_check_verify_only=true)
        order by case when session_worker_id=$2 then 0 else 1 end,session_check_requested_at,id
        for update skip locked
        limit $3`,
-      [p.tenantId,workerId,body.limit]
+      [p.tenantId,workerId,body.limit,isManaged]
     );
     const ids=picked.rows.map(r=>r.id);
     const attemptCooldownDate=new Date(Date.now()+config.OTP_MIN_INTERVAL_MINUTES*60*1000);
@@ -2031,15 +2028,20 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
           if(decrypted.password)credentials.password=String(decrypted.password);
         }
       }
-      let sessionState:null|{cookies:Record<string,unknown>[]} = null;
+      let sessionState:null|{cookies?:Record<string,unknown>[]; localStorage?:Record<string,unknown>} = null;
       const savedSession=await db.query(
         "select ciphertext,iv,auth_tag from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2 and expires_at>now() limit 1",
         [p.tenantId,row.id]
       );
       if(savedSession.rows[0]){
         try{
-          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]};
-          if(Array.isArray(restored.cookies))sessionState={cookies:restored.cookies};
+          const restored=decryptJson({ciphertext:savedSession.rows[0].ciphertext,iv:savedSession.rows[0].iv,authTag:savedSession.rows[0].auth_tag},config.DATA_ENCRYPTION_KEY_BASE64) as {cookies?:Record<string,unknown>[]; localStorage?:Record<string,unknown>};
+          if(restored && (Array.isArray(restored.cookies) || restored.localStorage)){
+            sessionState={
+              cookies: Array.isArray(restored.cookies)?restored.cookies:[],
+              localStorage: (restored.localStorage && typeof restored.localStorage==="object")?restored.localStorage:{}
+            };
+          }
         }catch{
           await db.query("delete from private.retailer_session_states where tenant_id=$1 and retailer_account_id=$2",[p.tenantId,row.id]);
         }
@@ -2064,7 +2066,10 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
     status:z.enum(["READY","REAUTH_REQUIRED","ERROR"]),
     code:z.string().max(100).optional(),
     message:z.string().max(500).optional(),
-    sessionState:z.object({cookies:z.array(z.record(z.string(),z.unknown())).max(250)}).nullable().optional(),
+    sessionState:z.object({
+      cookies:z.array(z.record(z.string(),z.unknown())).max(500).optional(),
+      localStorage:z.record(z.string(),z.unknown()).optional()
+    }).nullable().optional(),
     screenshot:z.string().max(1_000_000).nullable().optional()
   }).parse(req.body);
   const account=await db.query(
