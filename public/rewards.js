@@ -233,7 +233,7 @@
     if(dialog&&typeof dialog.close==='function')dialog.close();
   }
 
-  async function openConnectModal(account, autoLaunch=true){
+  async function openConnectModal(account){
     activeConnectingAccount=account;
     if(connectPollTimer){clearInterval(connectPollTimer);connectPollTimer=null}
     const dialog=$('#retailerConnectDialog');
@@ -247,34 +247,24 @@
     if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
 
     const isReady=String(account.session_status)==='READY';
-    const openBtn=$('#openFlipkartSignin'),verifyBtn=$('#verifyFlipkartSignin');
-
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='CONNECTED';
       $('#connectStatusMeta').textContent='Session verified and ready for checkout.';
-      if(openBtn){openBtn.hidden=false;openBtn.textContent='Reopen Flipkart Sign-in'}
-      if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
     }else{
-      if(autoLaunch){
-        try{
-          window.open('https://www.flipkart.com/account/login?ret=/', '_blank', 'width=900,height=750,noopener,noreferrer');
-          request('/api/retailer-accounts/prepare',{
-            method:'POST',headers:{'content-type':'application/json'},
-            body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
-          }).catch(()=>{});
-        }catch(e){}
-      }
       $('#connectStatusCard').className='connect-status-card connecting';
-      $('#connectStatusHeading').textContent='WAITING FOR SIGN-IN';
-      $('#connectStatusMeta').textContent='Complete login in the Flipkart window that opened. Enter your mobile/OTP on Flipkart, then click Verify sign-in below.';
-      if(openBtn){openBtn.hidden=false;openBtn.textContent='Re-open Flipkart window'}
-      if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
+      $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
+      $('#connectStatusMeta').textContent='1. Click "Open Flipkart Login" to sign in on Flipkart. 2. Then click "Verify sign-in" below.';
     }
 
     if($('#connectLivePreview'))$('#connectLivePreview').hidden=true;
     if(typeof dialog.showModal==='function')dialog.showModal();
     else dialog.setAttribute('open','');
+
+    request('/api/retailer-accounts/prepare',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
+    }).catch(()=>{});
 
     startConnectPolling(account.id);
   }
