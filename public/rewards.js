@@ -138,7 +138,7 @@
           ?(challenge==='OTP_REQUIRED'
             ?''
             :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
-          :`<button type="button" class="secondary" data-verify-session style="font-weight:600;color:#2563eb;border-color:#93c5fd;">Connect account</button>`)
+          :`<a href="https://www.flipkart.com/account/login?ret=/" target="_blank" rel="noopener noreferrer" class="secondary" style="font-weight:700;color:#fff;background:#2874f0;border-color:#2874f0;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;border-radius:6px;gap:4px;">🔑 Open Flipkart ↗</a><button type="button" class="secondary" data-verify-session style="font-weight:600;color:#059669;border-color:#a7f3d0;background:#ecfdf5;margin-left:6px;">Verify login</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
