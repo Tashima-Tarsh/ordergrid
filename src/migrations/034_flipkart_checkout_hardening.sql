@@ -1,4 +1,4 @@
-﻿-- Flipkart checkout hardening: durable final submission, state machine, delivery signals and audit timeline
+-- Flipkart checkout hardening: durable final submission, state machine, delivery signals and audit timeline
 alter table public.checkout_baskets
   add column if not exists final_submit_started_at timestamptz,
   add column if not exists final_submit_attempt_id uuid,
