@@ -553,6 +553,9 @@
     }
     const verify=event.target.closest('[data-verify-session]');
     if(verify){
+      if(String(account.session_status)!=='READY'){
+        try{window.open('https://www.flipkart.com/account/login?ret=/','_blank','noopener,noreferrer')}catch{}
+      }
       openConnectModal(account);
       return;
     }

@@ -1,3 +1,4 @@
+if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(rs=>{for(const r of rs)r.unregister()});if('caches' in window){caches.keys().then(ks=>{for(const k of ks)caches.delete(k)})}}
 const $=s=>document.querySelector(s),money=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n||0)/100);
 const state={batches:[],tasks:[],dashboard:{batches:[],orders:[]}};let recipientsFile=null;
 const esc=v=>{const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML};
