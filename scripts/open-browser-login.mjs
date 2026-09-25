@@ -8,21 +8,29 @@ import { exportRetailerSessionState } from "../agent/cdp.mjs";
 const rl = createInterface({ input, output });
 
 async function main() {
-  const accountRef = process.argv[2] || (await rl.question("Enter Flipkart email or mobile number: ")).trim();
+  const serverUrl = (process.env.ORDERGRID_URL || "http://3.106.181.196:3000").replace(/\/$/, "");
+  const adminEmail = process.env.ORDERGRID_EMAIL || "amyhod3@gmail.com";
+  const adminPassword = process.env.ORDERGRID_PASSWORD || "OrderGridAdmin2026!7xK9";
+
+  console.log("=======================================================");
+  console.log("       ORDERGRID FLIPKART ACCOUNT CONNECTOR");
+  console.log("=======================================================");
+  console.log(`OrderGrid Server: ${serverUrl}\n`);
+
+  let accountRef = process.argv[2];
   if (!accountRef) {
-    console.error("Account email or mobile is required.");
-    process.exit(1);
+    const inputRef = (await rl.question("Enter Flipkart email or mobile number [default: niku906099@gmail.com]: ")).trim();
+    accountRef = inputRef || "niku906099@gmail.com";
   }
 
   const chrome = findChrome();
   if (!chrome) {
-    console.error("Chrome / Edge browser was not found.");
+    console.error("Chrome / Edge browser was not found on your system.");
     process.exit(1);
   }
 
   const directory = join(profileRoot(), profileKey(accountRef));
-  console.log(`\nOpening dedicated browser window for ${accountRef}...`);
-  console.log(`Profile directory: ${directory}`);
+  console.log(`\nLaunching dedicated browser profile for ${accountRef}...`);
 
   const args = [
     `--user-data-dir=${directory}`,
@@ -38,21 +46,70 @@ async function main() {
   browser.unref();
 
   console.log("\n=======================================================");
-  console.log("  FLIPKART LOGIN BROWSER OPENED ON YOUR SCREEN");
+  console.log("  >>> FLIPKART BROWSER WINDOW OPENED <<<");
   console.log("=======================================================");
-  console.log("1. Go to the newly opened browser window.");
-  console.log(`2. Enter ${accountRef}, click Continue / Request OTP.`);
+  console.log("1. Look at the Chrome window that just opened.");
+  console.log(`2. Enter ${accountRef} on Flipkart, click Request OTP / Continue.`);
   console.log("3. Enter your OTP and complete sign-in.");
   console.log("=======================================================\n");
 
-  await rl.question("Press [ENTER] here once you are logged in to sync session with OrderGrid: ");
+  await rl.question("Press [ENTER] here as soon as you have signed into Flipkart... ");
 
-  console.log("\nExporting session cookies and verifying authentication...");
+  console.log("\nCapturing session cookies from browser...");
   try {
     const sessionState = await exportRetailerSessionState({ chrome, directory, retailer: "flipkart" });
     const cookieCount = sessionState?.cookies?.length || 0;
-    console.log(`Successfully captured ${cookieCount} session cookie(s)!`);
-    console.log("Session is preserved and ready for OrderGrid batch checkouts.");
+    console.log(`Captured ${cookieCount} session cookie(s).`);
+
+    console.log("Syncing authenticated session with OrderGrid cloud server...");
+    const loginRes = await fetch(`${serverUrl}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: adminEmail, password: adminPassword })
+    });
+    const cookieHeader = loginRes.headers.get("set-cookie")?.split(";")[0];
+    if (!cookieHeader) throw new Error("Could not log in to OrderGrid server.");
+
+    const accountsRes = await fetch(`${serverUrl}/api/retailer-accounts?retailer=flipkart&limit=100`, {
+      headers: { "Cookie": cookieHeader }
+    });
+    const { accounts = [] } = await accountsRes.json();
+    let target = accounts.find(a => a.account_reference.toLowerCase() === accountRef.toLowerCase());
+
+    if (!target) {
+      console.log(`Adding ${accountRef} to OrderGrid pool...`);
+      const createRes = await fetch(`${serverUrl}/api/retailer-accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Cookie": cookieHeader },
+        body: JSON.stringify({
+          retailer: "flipkart",
+          accountReference: accountRef,
+          maxConcurrentOrders: 1,
+          active: true
+        })
+      });
+      target = await createRes.json();
+    }
+
+    if (target?.id) {
+      console.log(`Triggering verification for account ${target.id}...`);
+      await fetch(`${serverUrl}/api/retailer-accounts/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Cookie": cookieHeader },
+        body: JSON.stringify({
+          accountIds: [target.id],
+          retailer: "flipkart",
+          targetDays: 15,
+          verifyOnly: true
+        })
+      });
+    }
+
+    console.log("\n=======================================================");
+    console.log("  SUCCESS: Flipkart Session Synced with OrderGrid!");
+    console.log(`  Account: ${accountRef}`);
+    console.log("  Dashboard: " + serverUrl);
+    console.log("=======================================================\n");
   } catch (error) {
     console.error("Session sync notice:", error.message);
   }
