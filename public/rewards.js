@@ -233,7 +233,7 @@
     if(dialog&&typeof dialog.close==='function')dialog.close();
   }
 
-  async function openConnectModal(account){
+  async function openConnectModal(account, autoLaunch=true){
     activeConnectingAccount=account;
     if(connectPollTimer){clearInterval(connectPollTimer);connectPollTimer=null}
     const dialog=$('#retailerConnectDialog');
@@ -247,31 +247,29 @@
     if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
 
     const isReady=String(account.session_status)==='READY';
-    const hasWorker = desktopWorkerReady || managedWorkerReady;
-    if(!hasWorker){
-      $('#connectStatusCard').className='connect-status-card';
-      $('#connectStatusHeading').textContent='WORKER REQUIRED';
-      $('#connectStatusMeta').textContent='Start the OrderGrid desktop worker on your computer or wait for the cloud browser to connect.';
-      if(openBtn)openBtn.hidden=true;
-      if(verifyBtn)verifyBtn.hidden=true;
-    }else if(isReady){
+    const openBtn=$('#openFlipkartSignin'),verifyBtn=$('#verifyFlipkartSignin');
+
+    if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='CONNECTED';
       $('#connectStatusMeta').textContent='Session verified and ready for checkout.';
       if(openBtn){openBtn.hidden=false;openBtn.textContent='Reopen Flipkart Sign-in'}
       if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
-    }else if(isVerifying){
+    }else{
+      if(autoLaunch){
+        try{
+          window.open('https://www.flipkart.com/account/login?ret=/', '_blank', 'width=900,height=750,noopener,noreferrer');
+          request('/api/retailer-accounts/prepare',{
+            method:'POST',headers:{'content-type':'application/json'},
+            body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
+          }).catch(()=>{});
+        }catch(e){}
+      }
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='WAITING FOR SIGN-IN';
-      $('#connectStatusMeta').textContent='Complete login in the browser window opened by OrderGrid. Enter OTP/CAPTCHA directly in Flipkart if requested, then click Verify sign-in.';
-      if(openBtn)openBtn.hidden=true;
+      $('#connectStatusMeta').textContent='Complete login in the Flipkart window that opened. Enter your mobile/OTP on Flipkart, then click Verify sign-in below.';
+      if(openBtn){openBtn.hidden=false;openBtn.textContent='Re-open Flipkart window'}
       if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
-    }else{
-      $('#connectStatusCard').className='connect-status-card';
-      $('#connectStatusHeading').textContent='FLIPKART CONNECTION';
-      $('#connectStatusMeta').textContent=desktopWorkerReady ? 'Desktop browser required for first sign-in.' : 'Cloud browser ready. Click Open Flipkart Sign-in to begin.';
-      if(openBtn){openBtn.hidden=false;openBtn.textContent='Open Flipkart Sign-in'}
-      if(verifyBtn)verifyBtn.hidden=true;
     }
 
     if($('#connectLivePreview'))$('#connectLivePreview').hidden=true;
