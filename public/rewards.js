@@ -119,9 +119,9 @@
               ?'Retailer CAPTCHA required. Complete in Flipkart window, then click Verify sign-in.'
               :challenge==='OTP_COOLDOWN'||isOtpCooling
                 ?`⏳ OTP cooldown active until ${otpCooldownTime}.`
-                :desktopWorkerReady
-                  ?'Complete login in the Chrome window opened by OrderGrid, then click Verify sign-in.'
-                  :'Desktop browser required for first sign-in. Start the OrderGrid desktop worker.')
+                :(desktopWorkerReady||managedWorkerReady)
+                  ?'Complete login in the browser window opened by OrderGrid, then click Verify sign-in.'
+                  :'OrderGrid browser worker required for first sign-in.')
           :sessionStatus==='VERIFYING'
             ?(desktopWorkerReady||managedWorkerReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
             :(desktopWorkerReady||managedWorkerReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
@@ -247,14 +247,11 @@
     if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
 
     const isReady=String(account.session_status)==='READY';
-    const isVerifying=String(account.session_status)==='VERIFYING';
-
-    const openBtn=$('#openFlipkartSignin'),verifyBtn=$('#verifyFlipkartSignin');
-
-    if(!desktopWorkerReady){
+    const hasWorker = desktopWorkerReady || managedWorkerReady;
+    if(!hasWorker){
       $('#connectStatusCard').className='connect-status-card';
-      $('#connectStatusHeading').textContent='DESKTOP WORKER REQUIRED';
-      $('#connectStatusMeta').textContent='Start the OrderGrid desktop worker on the computer where you want the Flipkart session to live.';
+      $('#connectStatusHeading').textContent='WORKER REQUIRED';
+      $('#connectStatusMeta').textContent='Start the OrderGrid desktop worker on your computer or wait for the cloud browser to connect.';
       if(openBtn)openBtn.hidden=true;
       if(verifyBtn)verifyBtn.hidden=true;
     }else if(isReady){
@@ -266,13 +263,13 @@
     }else if(isVerifying){
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='WAITING FOR SIGN-IN';
-      $('#connectStatusMeta').textContent='Complete login in the Chrome window opened by OrderGrid. Enter OTP/CAPTCHA directly in Flipkart if requested, then click Verify sign-in.';
+      $('#connectStatusMeta').textContent='Complete login in the browser window opened by OrderGrid. Enter OTP/CAPTCHA directly in Flipkart if requested, then click Verify sign-in.';
       if(openBtn)openBtn.hidden=true;
       if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
     }else{
       $('#connectStatusCard').className='connect-status-card';
       $('#connectStatusHeading').textContent='FLIPKART CONNECTION';
-      $('#connectStatusMeta').textContent='Desktop browser required for first sign-in.';
+      $('#connectStatusMeta').textContent=desktopWorkerReady ? 'Desktop browser required for first sign-in.' : 'Cloud browser ready. Click Open Flipkart Sign-in to begin.';
       if(openBtn){openBtn.hidden=false;openBtn.textContent='Open Flipkart Sign-in'}
       if(verifyBtn)verifyBtn.hidden=true;
     }

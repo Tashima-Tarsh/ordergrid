@@ -19,7 +19,22 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
   const workers=new Map<string,ManagedWorker>();
   let stopping=false;
   let timer:NodeJS.Timeout|null=null;
-  const browserPath=process.env.ORDERGRID_CHROME_PATH||join(process.cwd(),".ordergrid","chrome","chrome-linux64","chrome");
+  function resolveBrowserPath(): string {
+    const configured = process.env.ORDERGRID_CHROME_PATH;
+    if (configured && existsSync(configured)) return configured;
+    const candidates = [
+      configured,
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      join(process.cwd(), ".ordergrid", "chrome", "chrome-linux64", "chrome")
+    ].filter(Boolean) as string[];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    return candidates[0] || join(process.cwd(), ".ordergrid", "chrome", "chrome-linux64", "chrome");
+  }
 
   async function stopWorker(tenantId:string){
     const entry=workers.get(tenantId);
@@ -32,6 +47,7 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
   async function reconcile(){
     if(stopping)return;
     if(!config.WORKER_API_TOKEN)return;
+    const browserPath = resolveBrowserPath();
     if(!existsSync(browserPath)){
       console.error(`Managed execution browser is not installed at ${browserPath}`);
       return;
@@ -41,7 +57,6 @@ export function startManagedExecutionSupervisor(db:Db,config:Config){
       select distinct on (t.id)
         t.id tenant_id,u.id user_id,u.role::text role
       from tenants t
-      join retailer_accounts ra on ra.tenant_id=t.id and ra.active
       join users u on u.tenant_id=t.id and u.active and u.role::text in ('OWNER','APPROVER','BUYER')
       order by t.id,
         case u.role::text when 'OWNER' then 0 when 'APPROVER' then 1 else 2 end,

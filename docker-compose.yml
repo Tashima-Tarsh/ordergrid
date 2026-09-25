@@ -47,6 +47,7 @@ services:
       - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-apac.amazon.nova-lite-v1:0}
       - AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK:-}
       - ORDERGRID_MANAGED_EXECUTION=${ORDERGRID_MANAGED_EXECUTION:-true}
+      - ORDERGRID_CHROME_PATH=/usr/bin/chromium
     volumes:
       - ordergrid_profiles:/app/.ordergrid
     depends_on:
