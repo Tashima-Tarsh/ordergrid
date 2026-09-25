@@ -138,7 +138,7 @@
           ?(challenge==='OTP_REQUIRED'
             ?''
             :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
-          :`<button type="button" class="secondary" data-verify-session>${sessionStatus==='VERIFYING'?'Connecting…':'Connect account'}</button>`)
+          :`<button type="button" class="secondary" data-verify-session style="font-weight:600;color:#2563eb;border-color:#93c5fd;">Connect account</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
@@ -258,8 +258,16 @@
     }
 
     if($('#connectLivePreview'))$('#connectLivePreview').hidden=true;
-    if(typeof dialog.showModal==='function')dialog.showModal();
-    else dialog.setAttribute('open','');
+    try{
+      if(typeof dialog.showModal==='function'){
+        if(!dialog.open) dialog.showModal();
+      }else{
+        dialog.setAttribute('open','');
+      }
+    }catch(err){
+      try{dialog.close()}catch(e){}
+      try{dialog.showModal()}catch(e){dialog.setAttribute('open','');}
+    }
 
     request('/api/retailer-accounts/prepare',{
       method:'POST',headers:{'content-type':'application/json'},
