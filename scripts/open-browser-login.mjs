@@ -8,9 +8,9 @@ import { exportRetailerSessionState } from "../agent/cdp.mjs";
 const rl = createInterface({ input, output });
 
 async function main() {
-  const serverUrl = (process.env.ORDERGRID_URL || "http://3.106.181.196:3000").replace(/\/$/, "");
-  const adminEmail = process.env.ORDERGRID_EMAIL || "amyhod3@gmail.com";
-  const adminPassword = process.env.ORDERGRID_PASSWORD || "OrderGridAdmin2026!7xK9";
+  const serverUrl = (process.env.ORDERGRID_URL || "http://localhost:3000").replace(/\/$/, "");
+  const adminEmail = process.env.ORDERGRID_EMAIL || "";
+  const adminPassword = process.env.ORDERGRID_PASSWORD || "";
 
   console.log("=======================================================");
   console.log("       ORDERGRID FLIPKART ACCOUNT CONNECTOR");
@@ -19,8 +19,8 @@ async function main() {
 
   let accountRef = process.argv[2];
   if (!accountRef) {
-    const inputRef = (await rl.question("Enter Flipkart email or mobile number [default: niku906099@gmail.com]: ")).trim();
-    accountRef = inputRef || "niku906099@gmail.com";
+    const inputRef = (await rl.question("Enter Flipkart email or mobile number: ")).trim();
+    accountRef = inputRef;
   }
 
   const chrome = findChrome();

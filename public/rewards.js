@@ -327,13 +327,14 @@
     const btn=$('#openFlipkartSignin');
     btn.disabled=true;const prev=btn.textContent;btn.textContent='Opening…';
     try{
+      window.open('https://www.flipkart.com/account/login?ret=/', '_blank', 'width=900,height=750,noopener,noreferrer');
       await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({accountIds:[activeConnectingAccount.id],retailer:activeConnectingAccount.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
       });
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='WAITING FOR SIGN-IN';
-      $('#connectStatusMeta').textContent='Complete login in the Chrome window opened by OrderGrid. Enter OTP/CAPTCHA directly in Flipkart if requested, then return here and click Verify sign-in.';
+      $('#connectStatusMeta').textContent='Complete login on Flipkart in the window. Enter your mobile / OTP directly on Flipkart, then return here and click Verify sign-in.';
       btn.hidden=true;
       const verifyBtn=$('#verifyFlipkartSignin');
       if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
