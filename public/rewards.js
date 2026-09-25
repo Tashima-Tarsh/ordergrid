@@ -138,7 +138,7 @@
           ?(challenge==='OTP_REQUIRED'
             ?''
             :`<span class="session-cooldown-chip" style="font-size:11px;color:#d97706;padding:4px 8px;background:rgba(245,158,11,0.1);border-radius:4px;">⏳ Cooldown until ${otpCooldownTime}</span>`)
-          :`<a href="https://www.flipkart.com/account/login?ret=/" target="_blank" rel="noopener noreferrer" class="secondary" style="font-weight:700;color:#fff;background:#2874f0;border-color:#2874f0;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;border-radius:6px;gap:4px;">🔑 Open Flipkart ↗</a><button type="button" class="secondary" data-verify-session style="font-weight:600;color:#059669;border-color:#a7f3d0;background:#ecfdf5;margin-left:6px;">Verify login</button>`)
+          :`<a href="https://www.flipkart.com/account/login?ret=/" target="_blank" rel="noopener noreferrer" class="secondary" data-connect-link style="font-weight:700;color:#fff;background:#2874f0;border-color:#2874f0;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;border-radius:6px;gap:4px;cursor:pointer;">🔑 Connect account ↗</a><button type="button" class="secondary" data-verify-session style="font-weight:600;color:#059669;border-color:#a7f3d0;background:#ecfdf5;margin-left:6px;cursor:pointer;">Verify login</button>`)
         :sessionStatus==='READY'
           ?'<span class="session-connected-chip">✓ Connected</span><button type="button" class="secondary" data-reconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;">Reconnect</button><button type="button" class="secondary" data-disconnect-session style="padding:4px 9px;font-size:11px;margin-left:6px;color:#64748b;border-color:#cbd5e1;">Disconnect</button>'
           :'';
@@ -205,13 +205,12 @@
     const button=$('#prepareRetailerAccounts');
     button.disabled=true;const previous=button.textContent;button.textContent='Connecting…';
     try{
+      window.open('https://www.flipkart.com/account/login?ret=/', '_blank', 'noopener,noreferrer');
       const result=await request('/api/retailer-accounts/prepare',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({retailer,targetDays:sessionTargetDays(),verifyOnly:false})
       });
-      toast(desktopWorkerReady
-        ?result.count+' account(s) queued. Authentication will proceed one account at a time on your desktop worker.'
-        :result.count+' account(s) queued. Start the OrderGrid desktop worker to open visible sign-in windows.');
+      toast(result.count+' account(s) queued. Flipkart login opened in new tab — complete sign-in and click Verify login.');
       await load();
     }catch(error){alert(customerError(error))}
     finally{button.disabled=false;button.textContent=previous}
@@ -520,6 +519,15 @@
         await load();
       }catch(error){alert(customerError(error))}
       finally{savePassword.textContent=previous;setTimeout(()=>{savePassword.disabled=false},1200)}
+      return;
+    }
+    const connectLink=event.target.closest('[data-connect-link]');
+    if(connectLink){
+      request('/api/retailer-accounts/prepare',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
+      }).catch(()=>{});
+      toast(`Flipkart login opened for ${account.account_reference}. Complete OTP on Flipkart, then click Verify login.`);
       return;
     }
     const submitOtp=event.target.closest('[data-submit-account-otp]');
