@@ -32,6 +32,9 @@ if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
   process.env.WORKER_API_TOKEN ||= randomBytes(48).toString("base64url");
 }
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
+const releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.RENDER_GIT_COMMIT||process.env.CF_PAGES_COMMIT_SHA||"dev");
+const workerProtocol=2;
+const expectedMigration="034_flipkart_checkout_hardening.sql";
 const bedrock=createBedrockService(config);
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -222,7 +225,7 @@ function workerMachineRoute(req:any){
   return /^\/api\/bulk-queue\/[^/]+\/(?:open|progress|stock-wait|stock-available|commercial-check|confirm)$/.test(path);
 }
 app.addHook("preHandler",async(req,reply)=>{
-  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/login"||req.url==="/api/login/google"||req.url==="/api/auth-config"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
+  if(!req.url.startsWith("/api/")||req.url==="/api/health"||req.url==="/api/version"||req.url==="/api/login"||req.url==="/api/login/google"||req.url==="/api/auth-config"||req.url==="/api/signup"||req.url==="/api/signup-status"||req.url==="/api/secure-browser/bootstrap")return;
   const raw=req.cookies.session;if(!raw)return reply.code(401).send({error:"unauthorized"});
   const {rows}=await db.query(`
     select u.id,u.tenant_id home_tenant_id,u.tenant_id tenant_id,u.role::text role
@@ -239,13 +242,19 @@ app.addHook("preHandler",async(req,reply)=>{
   }
 });
 
+app.get("/api/version",async()=>({release:releaseSha,workerProtocol,expectedMigration,node:process.version,environment:config.NODE_ENV}));
 app.get("/api/health",async()=>{
   let dbStatus = "healthy";
   try { await db.query("select 1"); } catch { dbStatus = "unhealthy"; }
   const workers = await db.query("select count(*)::int online from execution_workers where last_seen > now() - interval '30 seconds'").catch(()=>({rows:[{online:0}]}));
   const connectedIssuers = await db.query("select count(*)::int count from issuer_connections where status='CONNECTED'").catch(()=>({rows:[{count:0}]}));
+  const migration=await db.query("select name from schema_migrations order by name desc limit 1").catch(()=>({rows:[]}));
+  const latestMigration=String(migration.rows[0]?.name||"none");
+  const onlineDesktopWorkers=await db.query("select count(*)::int online from execution_workers where mode in (\'DESKTOP\',\'INTERACTIVE\') and last_seen > now() - interval \'30 seconds\'").catch(()=>({rows:[{online:0}]}));
+  const paymentReady=config.CARD_PROVIDER!=="disabled"&&Number(connectedIssuers.rows[0]?.count||0)>0;
   return {
     status: dbStatus === "healthy" ? "ok" : "degraded",
+    release:releaseSha,workerProtocol,expectedMigration,latestMigration,migrationReady:latestMigration===expectedMigration,paymentReady,
     workerAuth:Boolean(config.WORKER_API_TOKEN),
     googleAuth:Boolean(config.GOOGLE_CLIENT_ID),
     api: "healthy",
@@ -253,6 +262,7 @@ app.get("/api/health",async()=>{
     redis: jobs ? "connected" : "direct_mode",
     workerAvailability: {
       onlineWorkers: Number(workers.rows[0]?.online || 0),
+      onlineDesktopWorkers: Number(onlineDesktopWorkers.rows[0]?.online || 0),
       authConfigured: Boolean(config.WORKER_API_TOKEN)
     },
     bedrockAvailability: {
@@ -266,6 +276,20 @@ app.get("/api/health",async()=>{
     }
   };
 });
+app.get("/api/production-readiness",async(req,reply)=>{
+  const p=req.principal!;
+  if(!["OWNER","APPROVER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
+  const [migration,workers,issuers]=await Promise.all([
+    db.query("select name from schema_migrations order by name desc limit 1").catch(()=>({rows:[]})),
+    db.query("select mode,count(*)::int count from execution_workers where last_seen>now()-interval '30 seconds' group by mode").catch(()=>({rows:[]})),
+    db.query("select count(*)::int count from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId]).catch(()=>({rows:[{count:0}]}))
+  ]);
+  const latestMigration=String(migration.rows[0]?.name||"none");
+  const desktopWorkers=workers.rows.filter((r:any)=>["DESKTOP","INTERACTIVE"].includes(String(r.mode))).reduce((n:number,r:any)=>n+Number(r.count||0),0);
+  const connectedIssuers=Number(issuers.rows[0]?.count||0);
+  const checks={releaseKnown:releaseSha!=="dev",databaseMigrated:latestMigration===expectedMigration,workerAuthConfigured:Boolean(config.WORKER_API_TOKEN),desktopWorkerOnline:desktopWorkers>0,paymentProviderConfigured:config.CARD_PROVIDER!=="disabled",paymentIssuerConnected:connectedIssuers>0};
+  return {ready:Object.values(checks).every(Boolean),release:releaseSha,workerProtocol,expectedMigration,latestMigration,checks,workers:{desktopOnline:desktopWorkers},payments:{provider:config.CARD_PROVIDER,connectedIssuers,ready:checks.paymentProviderConfigured&&checks.paymentIssuerConnected}};
+});
 app.get("/api/auth-config",async()=>({
   google:{enabled:Boolean(config.GOOGLE_CLIENT_ID),clientId:config.GOOGLE_CLIENT_ID??null},
   ownerSignupEnabled:Boolean(config.ORDERGRID_SIGNUP_CODE)
@@ -277,6 +301,8 @@ app.get("/api/worker-bootstrap",async(req,reply)=>{
   return {
     workerToken:config.WORKER_API_TOKEN,
     ordergridUrl:config.APP_ORIGIN,
+    workerRef:releaseSha,
+    workerProtocol,
     autoStartSupported:true
   };
 });
@@ -339,6 +365,8 @@ app.post("/api/secure-browser/bootstrap",{config:{rateLimit:{max:20,timeWindow:"
     workerToken:config.WORKER_API_TOKEN,
     workerSessionToken:sessionToken,
     ordergridUrl:config.APP_ORIGIN,
+    workerRef:releaseSha,
+    workerProtocol,
     userEmail:user.email,
     sessionDays:30,
     autoStartSupported:true
@@ -2136,6 +2164,7 @@ app.post("/api/execution-worker/:workerId/session-health/:retailerAccountId",asy
      returning id,session_status,session_checked_at,session_target_expires_at,session_worker_id,otp_cooldown_until,otp_last_requested_at`,
     [body.status,retailerAccountId,p.tenantId,body.code??null,cooldownParam]
   );
+  if(body.code==="OTP_SENT")await audit(db,p.tenantId,row.created_by??p.id,"retailer_account.otp_send_confirmed","retailer_account",retailerAccountId,{workerId,confirmedAt:new Date().toISOString()}).catch(()=>{});
   await createNotification({
     tenantId:p.tenantId,userId:row.created_by??p.id,type:ready?"SESSION_READY":"SESSION_REAUTH_REQUIRED",
     title:ready?"Retailer account ready":"Retailer verification required",
