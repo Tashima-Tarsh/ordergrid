@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decideSessionReady } from "../agent/cdp.mjs";
+import { classifyLoginOutcome, decideSessionReady } from "../agent/cdp.mjs";
 import { profileKey } from "../agent/lib.mjs";
 import { validateRetailerOrderId } from "../src/retailers.js";
 import { buildFlipkartAllocation } from "../src/flipkart-allocation.js";
@@ -61,29 +61,26 @@ test("C. MANAGED worker can claim Flipkart session check when verifyOnly=true", 
   assert.equal(claimable[0].session_check_verify_only, true);
 });
 
-test("D. Flipkart initial connection returns LOGIN_REQUIRED with human-in-the-loop message rather than auto-OTP", () => {
-  const verifyOnly = false;
-  const isReady = false;
+test("D. Flipkart OTP prompt requires observed OTP evidence", () => {
+  const notSent = classifyLoginOutcome({
+    text: "Login to Flipkart",
+    digitsCount: 0,
+    hasOtpInput: false,
+    isRateLimited: false,
+    isNewUser: false
+  });
+  assert.equal(notSent.outcome, "UNKNOWN");
+  assert.equal(notSent.code, "OTP_NOT_SENT");
 
-  const getOutcome = (ready: boolean, verify: boolean) => {
-    if (ready) {
-      return { status: "READY", code: "SESSION_READY" };
-    }
-    if (verify) {
-      return { status: "REAUTH_REQUIRED", code: "LOGIN_REQUIRED", message: "Retailer sign-in is required." };
-    }
-    return {
-      status: "REAUTH_REQUIRED",
-      code: "LOGIN_REQUIRED",
-      message: "Complete Flipkart sign-in in the visible Chrome window. Enter OTP/CAPTCHA directly in Flipkart if requested, then return to OrderGrid and click Verify sign-in."
-    };
-  };
-
-  const outcome = getOutcome(isReady, verifyOnly);
-  assert.equal(outcome.status, "REAUTH_REQUIRED");
-  assert.equal(outcome.code, "LOGIN_REQUIRED");
-  assert.ok(outcome.message.includes("Complete Flipkart sign-in in the visible Chrome window"));
-  assert.ok(!outcome.message.includes("OTP sent"));
+  const sent = classifyLoginOutcome({
+    text: "Please enter the OTP sent to your mobile number",
+    digitsCount: 6,
+    hasOtpInput: true,
+    isRateLimited: false,
+    isNewUser: false
+  });
+  assert.equal(sent.outcome, "OTP_SENT");
+  assert.equal(sent.code, "OTP_SENT");
 });
 
 test("E. Authenticated Flipkart session can become READY after verification", () => {
