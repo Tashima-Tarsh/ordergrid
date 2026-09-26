@@ -242,11 +242,15 @@ async function main(){
         try{
           const sessionClaim=(await api(`/api/execution-worker/${encodeURIComponent(workerId)}/session-health/claim`,{method:"POST",body:JSON.stringify({limit:sessionClaimLimit})})).body;
           const sessionAccounts=sessionClaim.accounts||[];
+          if(sessionAccounts.length){
+            output.write(`Session check claimed ${sessionAccounts.length} account(s): ${sessionAccounts.map(a=>`${a.retailer}:${a.credentials?.login||a.retailerAccountId}`).join(", ")}\n`);
+          }
           const sessionConcurrency=Math.min(5,parallel);
           await runPool(sessionAccounts.map(a=>[a]),sessionConcurrency,async group=>{
             const account=group[0];
             const lockKey=account.profileKey||account.retailerAccountId||"default";
             const directory=join(profileRoot(),profileKey(lockKey));
+            output.write(`[SESSION_CHECK] Starting ${account.retailer} account ${account.credentials?.login||account.retailerAccountId} (verifyOnly=${Boolean(account.verifyOnly)})\n`);
             let result=null;
             for(let attempt=0;attempt<2;attempt++){
               try{
@@ -265,6 +269,7 @@ async function main(){
               await sleep(800);
             }
             result=result||{status:"ERROR",code:"SESSION_WORKER_ERROR",message:"Hosted retailer browser did not return a session result."};
+            output.write(`[SESSION_RESULT] ${account.retailer} ${account.credentials?.login||account.retailerAccountId} -> ${result.status} (${result.code||"NO_CODE"})\n`);
             const sessionState=result.status==="READY"
               ?await profileMutex.withLock(lockKey,async()=>await exportRetailerSessionState({chrome,directory,retailer:account.retailer}).catch(()=>null))
               :null;

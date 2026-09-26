@@ -1098,7 +1098,11 @@ export async function submitRetailerOtp({chrome,directory,retailer,otp}){
 export async function focusRetailerSession({chrome,directory,retailer}){
   const port=await ensureChrome(chrome,directory),host=retailerHost(retailer);
   const targets=(await listTargets(port)).filter(t=>t.type==="page"&&t.webSocketDebuggerUrl&&(!host||String(t.url||"").includes(host)));
-  const target=targets.find(t=>/(checkout|payment|pay|secure|order|cart|login|verify|otp)/i.test(t.url||""))||targets[0];
+  let target=targets.find(t=>/(checkout|payment|pay|secure|order|cart|login|verify|otp)/i.test(t.url||""))||targets[0];
+  if(!target){
+    const defaultUrl=retailer==="flipkart"?"https://www.flipkart.com/account/login?ret=/":"https://www.amazon.in/";
+    target=await createTarget(port,defaultUrl);
+  }
   if(!target)return {ok:false,reason:"SESSION_TAB_NOT_FOUND"};
   const connection=new CdpConnection(target.webSocketDebuggerUrl);
   try{
@@ -1242,17 +1246,6 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Retailer sign-in is required.",url:activeCheck?.url||url,screenshot};
     }
 
-    if(retailer==="flipkart"){
-      const screenshot=await captureScreen();
-      return {
-        status:"REAUTH_REQUIRED",
-        code:"LOGIN_REQUIRED",
-        message:"Complete Flipkart sign-in in the visible Chrome window. Enter OTP/CAPTCHA directly in Flipkart if requested, then return to OrderGrid and click Verify sign-in.",
-        url:target.url||url,
-        screenshot
-      };
-    }
-
     const resetFlipkartToStorefront=async()=>{
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
       await sleep(800);
@@ -1261,7 +1254,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     for(let round=0;round<5;round++){
       await waitReady(connection);
       await sleep(round?400:600);
-      if(retailer==="amazon-in"){
+      if(retailer==="amazon-in"||retailer==="flipkart"){
         const acted=await evaluate(connection,retailerAuthScript(accountCredentials));
         if(acted?.acted){
           if(acted.action==='LOGIN_SURFACE_OPENED'||acted.action==='LOGIN_IDENTIFIER_ENTERED'){

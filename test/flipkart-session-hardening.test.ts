@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import { decideSessionReady } from "../agent/cdp.mjs";
 import { profileKey } from "../agent/lib.mjs";
@@ -161,4 +161,44 @@ test("J. Checkout never confirms without retailer order ID", () => {
 
   assert.equal(validateRetailerOrderId("OD123456789012345000"), "OD123456789012345000");
   assert.equal(validateRetailerOrderId("405-1234567-1234567"), "405-1234567-1234567");
+});
+
+test("K. Session health claim waiting check does not block on LOGIN_REQUIRED", () => {
+  const accounts = [
+    { id: "acc-1", session_status: "REAUTH_REQUIRED", session_challenge_code: "LOGIN_REQUIRED", session_worker_id: "w1", session_check_requested_at: null },
+    { id: "acc-2", session_status: "VERIFYING", session_challenge_code: null, session_worker_id: null, session_check_requested_at: new Date() }
+  ];
+
+  // Waiting query only blocks if there is an in-flight human action challenge like OTP or CAPTCHA without a fresh check request
+  const waiting = accounts.find(a =>
+    a.session_worker_id === "w1" &&
+    a.session_status === "REAUTH_REQUIRED" &&
+    ["OTP_REQUIRED", "CAPTCHA_REQUIRED"].includes(a.session_challenge_code || "") &&
+    a.session_check_requested_at === null
+  );
+
+  assert.equal(waiting, undefined);
+
+  // acc-2 is eligible for claim
+  const claimable = accounts.filter(a => a.session_check_requested_at !== null);
+  assert.equal(claimable.length, 1);
+  assert.equal(claimable[0].id, "acc-2");
+});
+
+test("L. Re-requested session check is claimable even if previously assigned to worker in REAUTH_REQUIRED", () => {
+  const accounts = [
+    { id: "acc-1", session_status: "VERIFYING", session_challenge_code: "OTP_REQUIRED", session_worker_id: "w1", session_check_requested_at: new Date() }
+  ];
+
+  const waiting = accounts.find(a =>
+    a.session_worker_id === "w1" &&
+    a.session_status === "REAUTH_REQUIRED" &&
+    ["OTP_REQUIRED", "CAPTCHA_REQUIRED"].includes(a.session_challenge_code || "") &&
+    a.session_check_requested_at === null
+  );
+
+  assert.equal(waiting, undefined);
+  const claimable = accounts.filter(a => a.session_check_requested_at !== null);
+  assert.equal(claimable.length, 1);
+  assert.equal(claimable[0].id, "acc-1");
 });
