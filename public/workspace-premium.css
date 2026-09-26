@@ -2,85 +2,83 @@
    Dense, quiet, system-wide visual layer. No business logic lives here. */
 :root{
   --og-bg:#f8fafc;
-  --og-surface:rgba(255,255,255,.92);
-  --og-solid:#fff;
+  --og-surface:#ffffff;
+  --og-solid:#ffffff;
   --og-ink:#0f172a;
-  --og-sub:#64748b;
-  --og-line:rgba(226,232,240,.9);
-  --og-line-strong:rgba(203,213,225,.95);
-  --og-accent:#2563eb;
-  --og-green:#10b981;
-  --og-blue-gradient:linear-gradient(135deg, #0284c7 0%, #2563eb 50%, #4f46e5 100%);
-  --og-blue-glow:0 4px 16px rgba(37, 99, 235, 0.28);
-  --og-radius:16px;
-  --og-radius-sm:11px;
-  --og-shadow:0 12px 34px rgba(15,23,42,.055);
+  --og-sub:#475569;
+  --og-line:#e2e8f0;
+  --og-line-strong:#cbd5e1;
+  --og-accent:#1d4ed8;
+  --og-blue:#1d4ed8;
+  --og-blue-hover:#1e40af;
+  --og-green:#059669;
+  --og-radius:12px;
+  --og-radius-sm:8px;
+  --og-shadow:0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
 }
 body.product-shell{
-  background:
-    radial-gradient(1100px 450px at 15% -60px, rgba(56, 189, 248, 0.09), transparent 70%),
-    radial-gradient(850px 450px at 85% 120px, rgba(99, 102, 241, 0.07), transparent 60%),
-    var(--og-bg);
-  letter-spacing:-.006em
+  background:#f8fafc;
+  color:#0f172a;
+  letter-spacing:-.006em;
 }
 body.product-shell header{
   height:58px;
-  background:rgba(255,255,255,.86);
+  background:#ffffff;
   border-bottom:1px solid var(--og-line);
-  backdrop-filter:saturate(180%) blur(20px);
-  -webkit-backdrop-filter:saturate(180%) blur(20px);
+  box-shadow:0 1px 2px rgba(15,23,42,.03);
 }
-body.product-shell .brand{font-size:12px;letter-spacing:.1em}
-body.product-shell .mark{width:30px;height:30px;border-radius:9px}
+body.product-shell .brand{font-size:12px;letter-spacing:.1em;font-weight:900;color:#0f172a}
+body.product-shell .mark{width:30px;height:30px;border-radius:8px}
 body.product-shell button,
 body.product-shell a.secondary{
-  min-height:34px;
-  border-radius:10px;
-  padding:.54rem .78rem;
+  min-height:36px;
+  border-radius:8px;
+  padding:.54rem .85rem;
   font-size:12px;
-  font-weight:750;
+  font-weight:650;
   letter-spacing:-.01em;
-  transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+  transition:background .15s ease,border-color .15s ease,box-shadow .15s ease,transform .15s ease;
 }
 body.product-shell button:not(.secondary):not(.close){
-  background:linear-gradient(135deg, #0284c7 0%, #2563eb 50%, #4f46e5 100%);
-  color:#fff;
-  border:1px solid rgba(255,255,255,0.15);
-  box-shadow:0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(37,99,235,.26);
+  background:#1d4ed8;
+  color:#ffffff;
+  border:1px solid #1e40af;
+  box-shadow:0 1px 2px rgba(15,23,42,.08);
 }
 body.product-shell button:not(.secondary):not(.close):hover{
-  background:linear-gradient(135deg, #0369a1 0%, #1d4ed8 50%, #4338ca 100%);
-  box-shadow:0 2px 4px rgba(0,0,0,.12), 0 6px 20px rgba(37,99,235,.38);
+  background:#1e40af;
+  border-color:#1e3a8a;
+  box-shadow:0 2px 4px rgba(15,23,42,.12);
 }
 body.product-shell button.secondary,
 body.product-shell a.secondary{
-  background:rgba(255,255,255,.88);
+  background:#ffffff;
   color:#1e293b;
   border:1px solid var(--og-line-strong);
   box-shadow:0 1px 2px rgba(15,23,42,.025);
 }
 body.product-shell button.secondary:hover,
-body.product-shell a.secondary:hover{background:#fff;border-color:rgba(37,99,235,.35);color:#0f172a}
+body.product-shell a.secondary:hover{background:#f1f5f9;border-color:#94a3b8;color:#0f172a}
 body.product-shell button:hover{transform:none}
-.premium-icon-button{width:34px!important;min-width:34px!important;padding:0!important;display:inline-grid!important;place-items:center;font-size:16px!important}
-.premium-quiet-button{background:transparent!important;border-color:transparent!important;box-shadow:none!important;color:#475467!important;padding-left:.45rem!important;padding-right:.45rem!important}
-.premium-quiet-button:hover{background:rgba(15,23,42,.045)!important}
-body.product-shell .eyebrow{font-size:9px!important;letter-spacing:.13em;color:#64748b!important}
+.premium-icon-button{width:36px!important;min-width:36px!important;padding:0!important;display:inline-grid!important;place-items:center;font-size:15px!important}
+.premium-quiet-button{background:transparent!important;border-color:transparent!important;box-shadow:none!important;color:#475569!important;padding-left:.45rem!important;padding-right:.45rem!important}
+.premium-quiet-button:hover{background:rgba(15,23,42,.04)!important}
+body.product-shell .eyebrow{font-size:9.5px!important;letter-spacing:.12em;font-weight:800;color:#64748b!important}
 body.product-shell .workspace-title{
-  margin:0 0 10px;
-  padding:1px 2px 8px;
+  margin:0 0 12px;
+  padding:2px 2px 10px;
   border-bottom:1px solid var(--og-line);
 }
-body.product-shell .workspace-title h1{font-size:22px!important;letter-spacing:-.035em;margin:2px 0 0!important}
-body.product-shell .workspace-title p:last-child{font-size:11px;margin:2px 0 0!important;color:#7a8492!important}
+body.product-shell .workspace-title h1{font-size:22px!important;letter-spacing:-.03em;color:#0f172a;margin:3px 0 0!important;font-weight:800}
+body.product-shell .workspace-title p:last-child{font-size:12px;margin:3px 0 0!important;color:#64748b!important}
 body.product-shell .view-section.view-active{
-  animation:workspaceIn .18s ease-out;
+  animation:workspaceIn .16s ease-out;
   min-width:0;
 }
-@keyframes workspaceIn{from{opacity:.35;transform:translateY(3px)}to{opacity:1;transform:none}}
+@keyframes workspaceIn{from{opacity:.4;transform:translateY(2px)}to{opacity:1;transform:none}}
 
 /* Dashboard */
-.premium-dashboard-shell{display:grid;gap:10px}
+.premium-dashboard-shell{display:grid;gap:12px}
 .overview-commandbar,
 .overview-kpi-strip,
 .overview-readiness-strip,
@@ -88,28 +86,26 @@ body.product-shell .view-section.view-active{
 .overview-batches-card,
 .overview-lower-grid{min-width:0}
 .overview-commandbar{
-  display:flex;align-items:center;justify-content:space-between;gap:18px;
-  padding:14px 16px;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 18px;
   border:1px solid var(--og-line);
   border-radius:var(--og-radius);
-  background:
-    radial-gradient(circle at 88% -80%,rgba(16,185,129,.16),transparent 37%),
-    linear-gradient(135deg,#fbfcfd,#fff);
+  background:#ffffff;
   box-shadow:var(--og-shadow);
 }
 .overview-command-identity{display:flex;align-items:center;gap:12px;min-width:0}
-.overview-command-identity h2{margin:1px 0 1px;font-size:20px;letter-spacing:-.035em;color:#111827}
-.overview-command-identity p:last-child{margin:0;max-width:620px;color:#667085;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.overview-live-mark{width:32px;height:32px;border-radius:11px;background:#111827;display:grid;place-items:center;flex:none}
-.overview-live-mark i{width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 0 5px rgba(52,211,153,.14)}
-.overview-command-actions{display:flex;align-items:center;gap:7px;flex:none}
+.overview-command-identity h2{margin:2px 0 2px;font-size:19px;letter-spacing:-.03em;color:#0f172a}
+.overview-command-identity p:last-child{margin:0;max-width:620px;color:#64748b;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.overview-live-mark{width:32px;height:32px;border-radius:8px;background:#0f172a;display:grid;place-items:center;flex:none}
+.overview-live-mark i{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 0 4px rgba(16,185,129,.16)}
+.overview-command-actions{display:flex;align-items:center;gap:8px;flex:none}
 .overview-status,.overview-chip{
-  display:inline-flex;align-items:center;min-height:27px;padding:0 9px;
-  border-radius:999px;background:#effaf5;color:#087b59;border:1px solid #d2eee3;
-  font-size:9px;font-weight:900;letter-spacing:.07em;white-space:nowrap;
+  display:inline-flex;align-items:center;min-height:28px;padding:0 10px;
+  border-radius:999px;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;
+  font-size:10px;font-weight:800;letter-spacing:.05em;white-space:nowrap;
 }
 .overview-kpi-strip{
-  display:grid;grid-template-columns:1.25fr repeat(4,1fr);gap:8px;
+  display:grid;grid-template-columns:1.25fr repeat(4,1fr);gap:10px;
 }
 .overview-kpi-strip article{
   min-height:76px;padding:11px 13px;border:1px solid var(--og-line);

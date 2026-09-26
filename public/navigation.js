@@ -6,51 +6,53 @@ document.head.appendChild(fulfilmentStyle);
 
 const style=document.createElement('style');
 style.textContent=`
-body.product-shell{padding-left:216px}
-body.product-shell header{padding-left:234px;padding-right:18px}
+body.product-shell{padding-left:220px}
+body.product-shell header{padding-left:238px;padding-right:18px}
 body.product-shell main{max-width:1600px;width:100%;margin:0 auto;padding:14px 18px 28px}
 .menu-trigger{display:none!important}
 .app-sidebar{
-  position:fixed;z-index:500;pointer-events:auto;isolation:isolate;inset:0 auto 0 0;width:216px;
-  padding:16px 12px 18px;background:linear-gradient(180deg,#080d1a,#0c1322 62%,#080d19);color:#fff;
-  border-right:1px solid rgba(56,189,248,.12);box-shadow:12px 0 34px rgba(2,8,24,.22)
+  position:fixed;z-index:500;pointer-events:auto;isolation:isolate;inset:0 auto 0 0;width:220px;
+  padding:16px 12px 18px;background:#0f172a;color:#fff;
+  border-right:1px solid #1e293b;box-shadow:4px 0 24px rgba(15,23,42,.12)
 }
-.sidebar-brand{display:flex;align-items:center;gap:10px;height:46px;padding:0 6px 12px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sidebar-brand{display:flex;align-items:center;gap:10px;height:46px;padding:0 6px 12px;margin-bottom:14px;border-bottom:1px solid #1e293b}
 .sidebar-brand-mark{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:transparent;flex:none}
-.sidebar-brand strong{display:block;font-size:11.5px;font-weight:900;letter-spacing:.12em;background:linear-gradient(90deg,#ffffff,#93c5fd);-webkit-background-clip:text;-webkit-text-fill-color:transparent}.sidebar-brand small{display:block;margin-top:2px;color:#7dd3fc;font-size:7px;font-weight:800;letter-spacing:.12em}
+.sidebar-brand strong{display:block;font-size:12px;font-weight:900;letter-spacing:.1em;color:#ffffff}
+.sidebar-brand small{display:block;margin-top:2px;color:#94a3b8;font-size:7.5px;font-weight:700;letter-spacing:.1em}
 .nav-label{padding:4px 9px 7px;color:#64748b;font-size:8px;font-weight:900;letter-spacing:.14em}
 .app-sidebar button{
   position:relative;z-index:2;pointer-events:auto;display:flex;width:100%;align-items:center;gap:10px;
-  min-height:38px;padding:7px 10px;margin:3px 0;border:1px solid transparent;border-radius:10px;background:transparent;
-  color:#94a3b8;font-size:11.5px;font-weight:680;text-align:left;box-shadow:none;cursor:pointer;transition:all .18s cubic-bezier(0.16, 1, 0.3, 1);
+  min-height:38px;padding:8px 10px;margin:3px 0;border:1px solid transparent;border-radius:8px;background:transparent;
+  color:#94a3b8;font-size:12px;font-weight:600;text-align:left;box-shadow:none;cursor:pointer;transition:all .15s ease;
 }
-.app-sidebar button:hover{background:rgba(56,189,248,.08);color:#f1f5f9;border-color:rgba(56,189,248,.15);transform:none}
+.app-sidebar button:hover{background:#1e293b;color:#ffffff;border-color:#334155;transform:none}
 .app-sidebar button.active{
-  background:linear-gradient(90deg, rgba(37,99,235,0.22) 0%, rgba(99,102,241,0.12) 100%);
-  border-color:rgba(56,189,248,0.32);
+  background:#1e293b;
+  border-color:#3b82f6;
   color:#ffffff;
-  box-shadow:inset 0 0 14px rgba(37,99,235,0.18), 0 2px 8px rgba(0,0,0,0.25);
+  font-weight:700;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);
   transform:none
 }
 .nav-icon{
-  width:24px;height:24px;display:grid;place-items:center;border-radius:7px;background:rgba(255,255,255,.05);
-  color:#94a3b8;font-size:11px;font-weight:900;transition:.18s
+  width:24px;height:24px;display:grid;place-items:center;border-radius:6px;background:#1e293b;
+  color:#94a3b8;font-size:11px;font-weight:800;transition:.15s
 }
-.app-sidebar button:hover .nav-icon{color:#38bdf8;background:rgba(56,189,248,.12)}
-.app-sidebar button.active .nav-icon{background:linear-gradient(135deg, #0284c7, #2563eb);color:#ffffff;box-shadow:0 2px 10px rgba(37,99,235,0.45)}
-.nav-foot{position:absolute;bottom:17px;left:16px;right:16px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);font-size:7.5px;color:#64748b;letter-spacing:.05em;text-align:center}
+.app-sidebar button:hover .nav-icon{color:#ffffff;background:#334155}
+.app-sidebar button.active .nav-icon{background:#2563eb;color:#ffffff;box-shadow:0 1px 4px rgba(37,99,235,.4)}
+.nav-foot{position:absolute;bottom:17px;left:16px;right:16px;padding-top:10px;border-top:1px solid #1e293b;font-size:8px;color:#64748b;letter-spacing:.04em;text-align:center}
 .workspace-title{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .view-section{display:none!important}
 .view-section.view-active{display:block!important}
 @media(max-width:900px){
   body.product-shell{padding-left:0}
-  body.product-shell header{padding-left:16px;padding-right:16px}
-  body.product-shell main{padding:12px 12px 24px}
-  .menu-trigger{display:flex!important}
-  .app-sidebar{transform:translateX(-100%);transition:.2s;width:min(82vw,270px)}
+  body.product-shell header{padding-left:14px;padding-right:14px}
+  body.product-shell main{padding:12px 14px 28px}
+  .menu-trigger{display:flex!important;align-items:center;gap:6px;padding:6px 10px;font-size:12px;font-weight:700;border-radius:8px}
+  .app-sidebar{transform:translateX(-100%);transition:transform .22s cubic-bezier(0.16, 1, 0.3, 1);width:min(85vw,280px)}
   body.nav-open .app-sidebar{transform:none}
-  body.nav-open:after{content:'';position:fixed;z-index:450;inset:0;background:rgba(2,8,18,.42);backdrop-filter:blur(3px)}
-  .workspace-title{align-items:flex-start;flex-direction:column}
+  body.nav-open:after{content:'';position:fixed;z-index:450;inset:0;background:rgba(15,23,42,.6);backdrop-filter:blur(2px)}
+  .workspace-title{align-items:flex-start;flex-direction:column;gap:4px}
 }`;
 document.head.appendChild(style);
 document.body.classList.add('product-shell');
