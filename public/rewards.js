@@ -35,10 +35,10 @@
         status.textContent='DESKTOP WORKER ONLINE';
       }else if(managedWorkerReady){
         status.dataset.ready='managed';
-        status.textContent='CLOUD WORKER ONLINE · DESKTOP NEEDED FOR FLIPKART';
+        status.textContent='CLOUD BROWSER ONLINE';
       }else{
         status.dataset.ready='false';
-        status.textContent='WORKER OFFLINE · START DESKTOP WORKER';
+        status.textContent='CLOUD BROWSER STARTING';
       }
     }
   }
@@ -119,12 +119,12 @@
               ?'Retailer CAPTCHA required. Complete in Flipkart window, then click Verify sign-in.'
               :challenge==='OTP_COOLDOWN'||isOtpCooling
                 ?`⏳ OTP cooldown active until ${otpCooldownTime}.`
-                :(retailer==='flipkart'?desktopWorkerReady:(desktopWorkerReady||managedWorkerReady))
+                :(desktopWorkerReady||managedWorkerReady)
                   ?'Complete login in the browser window opened by OrderGrid, then click Verify sign-in.'
-                  :'Start the OrderGrid desktop worker to sign in.')
+                  :'OrderGrid browser worker required for first sign-in.')
           :sessionStatus==='VERIFYING'
-            ?(desktopWorkerReady||managedWorkerReady?'Worker browser is checking this account…':'Queued · start the desktop worker to continue.')
-            :(desktopWorkerReady||managedWorkerReady?'Waiting for worker browser':'Start the desktop worker before connecting.');
+            ?(desktopWorkerReady||managedWorkerReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
+            :(desktopWorkerReady||managedWorkerReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
