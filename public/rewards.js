@@ -119,12 +119,12 @@
               ?'Retailer CAPTCHA required. Complete in Flipkart window, then click Verify sign-in.'
               :challenge==='OTP_COOLDOWN'||isOtpCooling
                 ?`⏳ OTP cooldown active until ${otpCooldownTime}.`
-                :(desktopWorkerReady||managedWorkerReady)
+                :desktopWorkerReady
                   ?'Complete login in the browser window opened by OrderGrid, then click Verify sign-in.'
-                  :'OrderGrid browser worker required for first sign-in.')
+                  :'Start the OrderGrid Secure Browser on this computer before connecting Flipkart.')
           :sessionStatus==='VERIFYING'
-            ?(desktopWorkerReady||managedWorkerReady?'OrderGrid Cloud Secure Browser is connecting this account…':'Queued — Cloud Secure Browser is starting automatically.')
-            :(desktopWorkerReady||managedWorkerReady?'Waiting for Cloud Secure Browser':'Cloud Secure Browser will start automatically when this account is connected.');
+            ?(desktopWorkerReady?'OrderGrid Secure Browser is connecting this account…':'Waiting for the OrderGrid Secure Browser on this computer.')
+            :(desktopWorkerReady?'Waiting for OrderGrid Secure Browser':'Start the OrderGrid Secure Browser before connecting this Flipkart account.');
       const otpAction=sessionStatus==='REAUTH_REQUIRED'&&challenge==='OTP_REQUIRED'
         ?'<div class="managed-otp"><input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Enter OTP" data-account-otp-input><button type="button" data-submit-account-otp>Verify OTP</button></div>'
         :'';
@@ -252,7 +252,7 @@
     }else{
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
-      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'The OrderGrid browser is unavailable. An operator must start the desktop session before sign-in can continue.';
+      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'Start the OrderGrid Secure Browser on this computer before connecting Flipkart.';
     }
 
     const openBtn=$('#openFlipkartSignin');
@@ -270,6 +270,13 @@
     }catch(err){
       try{dialog.close()}catch(e){}
       try{dialog.showModal()}catch(e){dialog.setAttribute('open','');}
+    }
+
+    if(!isReady&&!desktopWorkerReady){
+      $('#connectStatusCard').className='connect-status-card attention';
+      $('#connectStatusHeading').textContent='SECURE BROWSER OFFLINE';
+      $('#connectStatusMeta').textContent='Start the OrderGrid Secure Browser on this computer. Flipkart login cannot be started by the cloud worker.';
+      return;
     }
 
     request('/api/retailer-accounts/prepare',{
