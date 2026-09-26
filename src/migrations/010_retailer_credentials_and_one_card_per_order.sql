@@ -52,4 +52,3 @@ create index if not exists retailer_credentials_tenant_account_idx
   on private.retailer_credentials(tenant_id,retailer_account_id);
 
 revoke all on schema private from public;
-revoke all on all tables in schema private from anon, authenticated;
