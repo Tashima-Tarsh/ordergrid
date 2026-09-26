@@ -1277,8 +1277,12 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const label = el => String(el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
 
         if (isEmail) {
-          const useEmailBtn = controls.find(el => /use\s+email/i.test(label(el)))
-            || [...document.querySelectorAll('*')].find(s => /use\s+email/i.test(s.innerText || '') && s.children.length === 0);
+          const allEls = [...document.querySelectorAll('*')];
+          const useEmailBtn = allEls.find(el => {
+            const t = String(el.innerText || el.textContent || '').trim();
+            if (!/use\s*email/i.test(t)) return false;
+            return el.children.length === 0 || ![...el.children].some(c => /use\s*email/i.test(c.innerText || ''));
+          });
           if (useEmailBtn) {
             try {
               useEmailBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
@@ -1286,14 +1290,20 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
               useEmailBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
               useEmailBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
               useEmailBtn.click();
+              if (useEmailBtn.parentElement && ['A', 'BUTTON'].includes(useEmailBtn.parentElement.tagName)) {
+                useEmailBtn.parentElement.click();
+              }
             } catch {}
           }
         } else {
-          const usePhoneBtn = controls.find(el => /use\s+(?:phone|mobile)/i.test(label(el)))
-            || [...document.querySelectorAll('*')].find(s => /use\s+(?:phone|mobile)/i.test(s.innerText || '') && s.children.length === 0);
+          const allEls = [...document.querySelectorAll('*')];
+          const usePhoneBtn = allEls.find(el => {
+            const t = String(el.innerText || el.textContent || '').trim();
+            if (!/use\s*(?:phone|mobile)/i.test(t)) return false;
+            return el.children.length === 0 || ![...el.children].some(c => /use\s*(?:phone|mobile)/i.test(c.innerText || ''));
+          });
           if (usePhoneBtn) {
             try {
-              usePhoneBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
               usePhoneBtn.click();
             } catch {}
           }
