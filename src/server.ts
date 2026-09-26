@@ -1502,10 +1502,10 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
       const desktopWorker=await db.query(
         `select 1
          from execution_workers
-         where tenant_id=$1 and user_id=$2 and mode in ('DESKTOP','INTERACTIVE')
+         where tenant_id=$1 and mode in ('DESKTOP','INTERACTIVE')
            and last_seen>now()-interval '30 seconds'
          limit 1`,
-        [p.tenantId,p.id]
+        [p.tenantId]
       );
       if(!desktopWorker.rows[0]){
         return reply.code(409).send({
@@ -1990,19 +1990,6 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
     if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
     const workerMode=String(live.rows[0].mode||"DESKTOP");
     const isManaged=workerMode==="MANAGED";
-    const waiting=await client.query(
-      `select id,session_challenge_code
-       from retailer_accounts
-       where tenant_id=$1 and session_worker_id=$2 and session_status='REAUTH_REQUIRED'
-         and session_challenge_code in ('OTP_REQUIRED','CAPTCHA_REQUIRED','LOGIN_REQUIRED')
-       order by updated_at,id
-       limit 1`,
-      [p.tenantId,workerId]
-    );
-    if(waiting.rows[0]){
-      await client.query("commit");
-      return {accounts:[],waitingFor:{retailerAccountId:String(waiting.rows[0].id),code:String(waiting.rows[0].session_challenge_code)}};
-    }
     await client.query(
       `update retailer_accounts set session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING',session_check_verify_only=true,updated_at=now()
        where tenant_id=$1 and session_check_requested_at is not null and session_check_claimed_at<now()-interval '2 minutes'`,
