@@ -27,6 +27,12 @@ async function readSecret(label){
 async function api(path,options={}){
   const response=await fetch(`${baseUrl}${path}`,{...options,headers:{"content-type":"application/json",...(cookie?{cookie}:{}),...(workerToken?{"x-ordergrid-worker-token":workerToken}:{}),...(options.headers||{})}});
   const body=await response.json().catch(()=>({}));
+  if(response.status===401&&!options._retry&&!workerSessionToken&&path!=="/api/login"){
+    try{
+      await login();
+      return await api(path,{...options,_retry:true});
+    }catch{}
+  }
   if(!response.ok)throw new Error(`${body.error||response.statusText} (${response.status})`);
   return {body,response};
 }
