@@ -112,7 +112,7 @@ $('#batchForm').onsubmit=async e=>{
         estimatedUnitPriceMinor:Number(allocation.sellingPriceMinor),
         productCheckId:String(allocation.productCheckId),
         retailerAccountId:String(allocation.retailerAccountId),
-        addressId:String(allocation.addressId),
+        addressId:allocation.addressId?String(allocation.addressId):undefined,
         hsnSac:product.hsnSac,
         gstRate:product.gstRate,
         cessRate:product.cessRate,
