@@ -226,7 +226,7 @@ must(allocationMigration.includes("add column if not exists retailer_account_id"
 must(server.includes(`const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];`),"retailer session contract: OTP-only accounts must be eligible for preparation");
 must(!server.includes(`credential_status<>'MISSING' and session_check_requested_at is not null`),"retailer session contract: native worker must claim OTP-only accounts");
 must(server.includes("session_check_requested_at=null,session_check_claimed_at=null"),"retailer session contract: completed auth challenge must pause until explicit OTP or reconnect action");
-must(server.includes("waitingFor:{retailerAccountId"),"retailer session contract: worker must not start another account while current authentication needs action");
+must(!server.includes("waitingFor:{retailerAccountId"),"retailer session contract: one challenged account must not block unrelated queued account authentication");
 must(server.includes("case when session_worker_id=$2 then 0 else 1 end"),"retailer session contract: OTP-submitted account must be rechecked before the next account starts");
 must(server.includes("clauses.push(\"(session_status<>'READY'"),"retailer session contract: Connect all must skip already-connected accounts");
 must(cdp.includes('submitRetailerOtp'),"retailer session contract: managed retailer OTP submission missing");
@@ -340,7 +340,7 @@ must(server.includes("workerToken:config.WORKER_API_TOKEN"),"worker bootstrap co
 must(workerInstaller.includes("ConvertFrom-SecureString"),"worker installer contract: optional legacy local credentials must remain protected");
 must(!files["public/rewards.js"].includes("start the secure browser worker"),"retailer session contract: worker startup jargon must stay out of customer UI");
 must(!files["public/human-actions.js"].includes("Start the native OrderGrid worker"),"human action contract: customer must not be asked to run a worker");
-must(files["public/rewards.js"].includes("Cloud Secure Browser is starting automatically"),"retailer session contract: hosted browser startup guidance missing");
+must(files["public/rewards.js"].includes("Start the OrderGrid Secure Browser on this computer"),"retailer session contract: Flipkart must clearly require the local Secure Browser when desktop execution is unavailable");
 
 console.log("Frontend/card connector contract OK");
 
