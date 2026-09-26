@@ -1281,7 +1281,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           const useEmailBtn = allEls.find(el => {
             const t = String(el.innerText || el.textContent || '').trim();
             if (!/use\s*email/i.test(t)) return false;
-            return el.children.length === 0 || ![...el.children].some(c => /use\s*email/i.test(c.innerText || ''));
+            const children = Array.from(el.children);
+            return children.length === 0 || !children.some(c => /use\s*email/i.test(c.innerText || ''));
           });
           if (useEmailBtn) {
             try {
@@ -1294,7 +1295,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           const usePhoneBtn = allEls.find(el => {
             const t = String(el.innerText || el.textContent || '').trim();
             if (!/use\s*(?:phone|mobile)/i.test(t)) return false;
-            return el.children.length === 0 || ![...el.children].some(c => /use\s*(?:phone|mobile)/i.test(c.innerText || ''));
+            const children = Array.from(el.children);
+            return children.length === 0 || !children.some(c => /use\s*(?:phone|mobile)/i.test(c.innerText || ''));
           });
           if (usePhoneBtn) {
             try {
