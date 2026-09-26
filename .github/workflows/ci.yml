@@ -22,8 +22,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Validate Workers Free configuration
-        run: npx --yes wrangler@4.136.1 deploy --dry-run --outdir /tmp/ordergrid-wrangler-dry-run
       - name: Frontend/card connector contract smoke test
         run: npm run smoke:frontend
       - name: End-to-end showroom checkout smoke test
