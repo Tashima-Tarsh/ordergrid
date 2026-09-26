@@ -1194,22 +1194,28 @@ export async function reconcileRetailerAccount({chrome,directory,retailer,orders
 
 export function classifyLoginOutcome({text='', digitsCount=0, hasOtpInput=false, isRateLimited=false, isNewUser=false, excerpt=''}={}){
   const normalizedText = String(text||'').replace(/\s+/g,' ');
-  const isOtpSent = /(?:please enter the verification code|please enter the otp|enter otp|verification code we've sent|resend otp in|enter 6-digit|enter the 6-digit)/i.test(normalizedText)
-    || digitsCount >= 4
-    || Boolean(hasOtpInput);
-
-  if (isOtpSent) {
-    return { outcome: "OTP_SENT", code: "OTP_SENT", message: "Flipkart verification OTP has been sent. Enter the 6-digit code below to connect." };
-  }
-  if (isRateLimited || /(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)/i.test(normalizedText)) {
-    const m = normalizedText.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached)[^.!?]{0,100}/i);
-    const msg = excerpt || (m ? m[0] : "Flipkart rate limit reached. Please try again later.");
+  const rateLimited = isRateLimited || /(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached|could not send|failed to send)/i.test(normalizedText);
+  if (rateLimited) {
+    const m = normalizedText.match(/(?:try again later|too many attempts|something went wrong|unable to send|maximum attempts reached|could not send|failed to send)[^.!?]{0,120}/i);
+    const msg = excerpt || (m ? m[0] : "Flipkart did not confirm OTP delivery. Please retry after the allowed interval.");
     return { outcome: "RATE_LIMITED", code: "RATE_LIMITED", message: msg };
   }
+
   if (isNewUser || /looks like you're new here|sign up with your/i.test(normalizedText)) {
     return { outcome: "ACCOUNT_NOT_REGISTERED", code: "ACCOUNT_NOT_REGISTERED", message: "Login identifier is not registered on Flipkart. Please register or verify the email/mobile." };
   }
-  return { outcome: "UNKNOWN", code: "OTP_NOT_SENT", message: "Flipkart did not send an OTP after login submission. Please try manual browser login." };
+
+  const explicitSentEvidence = /(?:otp|verification code|one[- ]time password).{0,45}(?:has been |was |is )?sent(?: successfully)?(?: to)?|(?:we(?:'ve| have)?|we)s+sent.{0,35}(?:otp|verification code)|(?:otp|verification code)s+sents+to|resends+(?:otp|code)s+ins+\d+/i.test(normalizedText);
+  if (explicitSentEvidence) {
+    return { outcome: "OTP_SENT", code: "OTP_SENT", message: "Flipkart confirms that the verification code was sent. Enter it below to connect." };
+  }
+
+  const challengeVisible = Boolean(hasOtpInput) || digitsCount >= 4 || /(?:enter|verify|type).{0,25}(?:otp|verification code|one[- ]time password)/i.test(normalizedText);
+  if (challengeVisible) {
+    return { outcome: "OTP_CHALLENGE_VISIBLE", code: "OTP_SEND_UNCONFIRMED", message: "Flipkart is showing an OTP challenge, but it has not explicitly confirmed that the OTP was sent." };
+  }
+
+  return { outcome: "UNKNOWN", code: "OTP_NOT_SENT", message: "Flipkart did not confirm that an OTP was sent after the login request." };
 }
 
 export function decideSessionReady({url='', evalOk=false, hasAccountContent=false, isLoginUrl=false, hasLoginBtn=false, cookieNames=[]}={}){
@@ -1336,7 +1342,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
             if(otpOutcome.outcome==="ACCOUNT_NOT_REGISTERED"){
               return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:otpOutcome.message,url:target.url||url,screenshot};
             }
-            return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart did not confirm that an OTP was sent. Retry the connection; manual browser fallback is only needed if Flipkart presents an unexpected challenge.",url:target.url||url,screenshot};
+            if(otpOutcome.outcome==="OTP_CHALLENGE_VISIBLE"){
+              return {status:"REAUTH_REQUIRED",code:"OTP_SEND_UNCONFIRMED",message:otpOutcome.message,url:target.url||url,screenshot};
+            }
+            return {status:"REAUTH_REQUIRED",code:"OTP_NOT_SENT",message:"Flipkart did not confirm that an OTP was sent. Retry the connection.",url:target.url||url,screenshot};
           }
           await sleep(600);
           continue;
