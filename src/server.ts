@@ -134,6 +134,20 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
       continue;
     }
 
+    if(paymentRoute==="Corporate virtual card"){
+      const issuerReady=await db.query(
+        "select 1 from issuer_connections where tenant_id=$1 and status='CONNECTED' limit 1",
+        [tenantId]
+      );
+      if(config.CARD_PROVIDER==="disabled"||!issuerReady.rows[0]){
+        await db.query(
+          "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='PAYMENT_PROVIDER_NOT_READY',failure_message='Corporate virtual-card checkout requires a configured payment provider and a connected issuer',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+          [basketId,tenantId]
+        );
+        continue;
+      }
+    }
+
     await assignFundingRoute(db,tenantId,basketId);
     if(policy.auto_assign_virtual_card){
       let cardId=await assignAvailableVirtualCard(db,tenantId,basketId);
