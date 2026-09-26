@@ -29,16 +29,18 @@
   }
   function renderSecureBrowserStatus(){
     const status=$('#secureBrowserStatus');
+    if($('#installFlipkartWorker'))$('#installFlipkartWorker').hidden=desktopWorkerReady;
+    if($('#connectInstallWorker'))$('#connectInstallWorker').hidden=desktopWorkerReady;
     if(status){
       if(desktopWorkerReady){
         status.dataset.ready='true';
         status.textContent='DESKTOP WORKER ONLINE';
       }else if(managedWorkerReady){
         status.dataset.ready='managed';
-        status.textContent='CLOUD BROWSER ONLINE';
+        status.textContent='CLOUD WORKER ONLINE · DESKTOP NEEDED FOR FLIPKART';
       }else{
         status.dataset.ready='false';
-        status.textContent='CLOUD BROWSER STARTING';
+        status.textContent='WORKER OFFLINE · START DESKTOP WORKER';
       }
     }
   }
@@ -245,6 +247,7 @@
     if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
 
     const isReady=String(account.session_status)==='READY';
+    if($('#connectInstallWorker'))$('#connectInstallWorker').hidden=desktopWorkerReady;
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='CONNECTED';
@@ -252,7 +255,7 @@
     }else{
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
-      $('#connectStatusMeta').textContent='Start the desktop worker, then open its browser and sign in there. Return here to verify.';
+      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'Download and start the desktop worker on your Windows computer, then open its browser.';
     }
 
     const openBtn=$('#openFlipkartSignin');
