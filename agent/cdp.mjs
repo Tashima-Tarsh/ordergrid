@@ -1310,7 +1310,14 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           || (isEmail ? nonSearch.find(el => ['text', 'email'].includes(el.type)) : nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type)))
           || nonSearch[0] || null;
 
-        if (!field) return { ok: false, reason: 'LOGIN_FIELD_NOT_FOUND' };
+        if (!field) {
+          const openLoginBtn = controls.find(el => /^(?:login|log in|sign in|signin)$/i.test(label(el)));
+          if (openLoginBtn) {
+            try { openLoginBtn.click(); } catch {}
+          }
+          return { ok: false, reason: 'LOGIN_FIELD_NOT_FOUND' };
+        }
+
         field.focus();
         try { field.value = ''; } catch {}
         try { field.select(); } catch { try { field.setSelectionRange(0, String(field.value || '').length); } catch {} }
@@ -1322,7 +1329,14 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     }
 
     if(!focusLogin?.ok){
-      console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:false,reason:focusLogin?.reason||"NOT_FOUND"})}`);
+      const pageDump = await evaluate(connection, `(()=>{
+        const inputs = [...document.querySelectorAll('input')].map(i => ({
+          type: i.type, name: i.name, id: i.id, placeholder: i.placeholder,
+          visible: getComputedStyle(i).visibility !== 'hidden' && getComputedStyle(i).display !== 'none'
+        }));
+        return { title: document.title, url: location.href, inputsCount: inputs.length, inputs, textExcerpt: (document.body?.innerText || '').slice(0, 300) };
+      })()`).catch(() => null);
+      console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:false,pageDump})}`);
       return {outcome:"LOGIN_REQUIRED",message:"Flipkart login field was not found."};
     }
     console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:true,meta:focusLogin.meta,type:focusLogin.type})}`);
@@ -1420,8 +1434,12 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   try{
     await primeConnection();
+    const currentLoc=await evaluate(connection,`location.href`).catch(()=>"");
+    if(!currentLoc||!currentLoc.includes("flipkart.com/login")&&retailer==="flipkart"&&!verifyOnly){
+      await connection.send("Page.navigate",{url});
+    }
     await waitReady(connection).catch(()=>null);
-    await sleep(1500);
+    await sleep(2000);
 
     const cookieRes=await connection.send("Network.getAllCookies").catch(()=>({cookies:[]}));
     const cookies=cookieRes.cookies||[];
