@@ -13,7 +13,7 @@ $nodeRoot = Join-Path $runtimeRoot "node"
 $configPath = Join-Path $base "worker-config.json"
 $launcherPath = Join-Path $base "start-worker.ps1"
 $logPath = Join-Path $base "worker.log"
-$zip = Join-Path $env:TEMP "ordergrid-main.zip"
+$zip = Join-Path $env:TEMP "ordergrid-worker.zip"
 $extract = Join-Path $env:TEMP "ordergrid-worker-install"
 $nodeZip = Join-Path $env:TEMP "ordergrid-node.zip"
 $nodeExtract = Join-Path $env:TEMP "ordergrid-node-install"
@@ -87,9 +87,13 @@ if (Test-Path $workerRoot) { Remove-Item $workerRoot -Recurse -Force }
 if (Test-Path $zip) { Remove-Item $zip -Force }
 if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
 
-Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/Tashima-Tarsh/ordergrid/archive/refs/heads/main.zip" -OutFile $zip
+$workerRef = if ([string]::IsNullOrWhiteSpace($env:ORDERGRID_WORKER_REF)) { "main" } else { [string]$env:ORDERGRID_WORKER_REF }
+$archiveUrl = "https://github.com/Tashima-Tarsh/ordergrid/archive/$workerRef.zip"
+Invoke-WebRequest -UseBasicParsing -Uri $archiveUrl -OutFile $zip
 Expand-Archive -Path $zip -DestinationPath $extract -Force
-Move-Item (Join-Path $extract "ordergrid-main") $workerRoot
+$expandedWorker = Get-ChildItem $extract -Directory | Select-Object -First 1
+if (-not $expandedWorker) { throw "OrderGrid worker archive extraction failed." }
+Move-Item $expandedWorker.FullName $workerRoot
 
 $defaultUrl = if ([string]::IsNullOrWhiteSpace($env:ORDERGRID_URL)) { "https://ordergrid-production.onrender.com" } else { $env:ORDERGRID_URL }
 $url = $defaultUrl.TrimEnd("/")
@@ -148,6 +152,7 @@ $encryptedPassword = if ([string]::IsNullOrWhiteSpace($password)) {
   password = $encryptedPassword
   workerToken = $encryptedToken
   workerSessionToken = $encryptedSession
+  workerRef = $workerRef
   workerRoot = $workerRoot
   nodeExe = $nodeExe
 } | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
@@ -171,6 +176,7 @@ function Read-Protected([string]$value) {
 try {
   $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
   $env:ORDERGRID_URL = [string]$cfg.url
+  $env:ORDERGRID_WORKER_REF = [string]$cfg.workerRef
   $env:ORDERGRID_WORKER_TOKEN = Read-Protected ([string]$cfg.workerToken)
   $env:ORDERGRID_SESSION_TOKEN = Read-Protected ([string]$cfg.workerSessionToken)
 
@@ -197,6 +203,7 @@ try {
   $env:ORDERGRID_PASSWORD = ""
   $env:ORDERGRID_SESSION_TOKEN = ""
   $env:ORDERGRID_WORKER_TOKEN = ""
+  $env:ORDERGRID_WORKER_REF = ""
   try { $mutex.ReleaseMutex() } catch {}
   $mutex.Dispose()
 }
@@ -222,5 +229,6 @@ $password = ""
 $workerToken = ""
 $workerSessionToken = ""
 $env:ORDERGRID_SETUP_TOKEN = ""
+$env:ORDERGRID_WORKER_REF = ""
 Start-Sleep -Seconds 2
 Write-Host "Setup complete. Return to OrderGrid; queued retailer logins will open automatically." -ForegroundColor Green
