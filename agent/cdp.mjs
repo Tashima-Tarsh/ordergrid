@@ -1203,7 +1203,7 @@ export function classifyLoginOutcome({text='', digitsCount=0, hasOtpInput=false,
     return { outcome: "ACCOUNT_NOT_REGISTERED", code: "ACCOUNT_NOT_REGISTERED", message: "Login identifier is not registered on Flipkart. Please register or verify the email/mobile." };
   }
 
-  const explicitSentEvidence = /(?:otp|verification code|one[- ]time password).{0,45}(?:has been |was |is )?sent(?: successfully)?(?: to)?|(?:we(?:'ve| have)?|we)s+sent.{0,35}(?:otp|verification code)|(?:otp|verification code)s+sents+to|resends+(?:otp|code)s+ins+\d+/i.test(normalizedText);
+  const explicitSentEvidence = /(?:otp|verification code|one[- ]time password).{0,45}(?:has been |was |is )?sent(?: successfully)?(?: to)?|(?:we(?:'ve| have)?|we)\s+sent.{0,35}(?:otp|verification code)|(?:otp|verification code)\s+sent\s+to|resend\s+(?:otp|code)\s+in\s+\d+/i.test(normalizedText);
   if (explicitSentEvidence) {
     return { outcome: "OTP_SENT", code: "OTP_SENT", message: "Flipkart confirms that the verification code was sent. Enter it below to connect." };
   }
@@ -1235,7 +1235,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   const port=await ensureChrome(chrome,directory);
   const flipkartLoginUrl="https://www.flipkart.com/";
   const url=retailer==="flipkart"
-    ?(verifyOnly?"https://www.flipkart.com/account/orders":"https://www.flipkart.com/account/login?ret=/")
+    ?(verifyOnly?"https://www.flipkart.com/account/orders":"https://www.flipkart.com/login?ret=/")
     :retailer==="amazon-in"
       ?"https://www.amazon.in/gp/your-account/order-history"
       :null;
@@ -1259,6 +1259,99 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const data=`data:image/jpeg;base64,${shot.data}`;
       return data.length<=800_000?data:null;
     }catch{return null}
+  };
+  const requestFlipkartOtp=async()=>{
+    const login=String(accountCredentials?.login||"").trim();
+    if(!login)return {outcome:"LOGIN_REQUIRED",message:"Flipkart login identifier is missing."};
+
+    // Use real Chrome text insertion so Flipkart's controlled input receives native browser events.
+    const focusLogin=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const inputs=[...document.querySelectorAll('input')].filter(visible);
+      const meta=el=>String([el.name,el.id,el.placeholder,el.autocomplete,el.getAttribute('aria-label')].filter(Boolean).join(' '));
+      const candidates=inputs.filter(el=>{
+        const type=String(el.type||'text').toLowerCase();
+        if(!['text','email','tel','number'].includes(type))return false;
+        if(el.name==='q'||/search|products brands and more/i.test(meta(el)))return false;
+        return true;
+      });
+      const field=candidates.find(el=>/email|mobile|phone|login|username/i.test(meta(el)))||candidates[0]||null;
+      if(!field)return {ok:false,reason:'LOGIN_FIELD_NOT_FOUND'};
+      field.focus();
+      try{field.select()}catch{try{field.setSelectionRange(0,String(field.value||'').length)}catch{}}
+      return {ok:true,value:String(field.value||''),meta:meta(field),url:location.href};
+    })()`).catch(()=>null);
+    if(!focusLogin?.ok)return {outcome:"LOGIN_REQUIRED",message:"Flipkart login field was not found."};
+
+    await connection.send("Input.insertText",{text:login});
+    await sleep(450);
+
+    const accepted=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const inputs=[...document.querySelectorAll('input')].filter(visible);
+      const meta=el=>String([el.name,el.id,el.placeholder,el.autocomplete,el.getAttribute('aria-label')].filter(Boolean).join(' '));
+      const candidates=inputs.filter(el=>{
+        const type=String(el.type||'text').toLowerCase();
+        if(!['text','email','tel','number'].includes(type))return false;
+        if(el.name==='q'||/search|products brands and more/i.test(meta(el)))return false;
+        return true;
+      });
+      const field=candidates.find(el=>/email|mobile|phone|login|username/i.test(meta(el)))||candidates[0]||null;
+      return {value:String(field?.value||''),url:location.href};
+    })()`).catch(()=>null);
+    if(String(accepted?.value||'').trim()!==login){
+      return {outcome:"LOGIN_IDENTIFIER_REJECTED",message:"Flipkart did not accept the mobile/email value in its login field."};
+    }
+
+    // Wait for Flipkart itself to enable the OTP request control. Never force-enable it.
+    let control=null;
+    for(let attempt=0;attempt<20;attempt++){
+      control=await evaluate(connection,`(()=>{
+        const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+        const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"]')].filter(visible);
+        const label=el=>String(el.innerText||el.value||el.getAttribute('aria-label')||'').trim();
+        const button=controls.find(el=>/(request otp|send otp|get otp|login with otp|log in with otp|continue)/i.test(label(el)))||null;
+        if(!button)return {found:false,url:location.href};
+        const enabled=!button.disabled&&button.getAttribute('aria-disabled')!=='true';
+        return {found:true,enabled,label:label(button),url:location.href};
+      })()`).catch(()=>null);
+      if(control?.found&&control?.enabled)break;
+      await sleep(500);
+    }
+    if(!control?.found)return {outcome:"LOGIN_REQUIRED",message:"Flipkart did not expose a Request OTP control."};
+    if(!control?.enabled)return {outcome:"OTP_CONTROL_DISABLED",message:"Flipkart kept the OTP request control disabled after accepting the login identifier."};
+
+    const clicked=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const controls=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"]')].filter(visible);
+      const label=el=>String(el.innerText||el.value||el.getAttribute('aria-label')||'').trim();
+      const button=controls.find(el=>/(request otp|send otp|get otp|login with otp|log in with otp|continue)/i.test(label(el)))||null;
+      if(!button||button.disabled||button.getAttribute('aria-disabled')==='true')return {ok:false};
+      button.click();
+      return {ok:true,label:label(button),url:location.href};
+    })()`).catch(()=>null);
+    if(!clicked?.ok)return {outcome:"OTP_CLICK_FAILED",message:"Flipkart OTP request control could not be clicked."};
+
+    let otpOutcome={outcome:"UNKNOWN",code:"OTP_NOT_SENT",message:"Flipkart has not confirmed that an OTP was sent yet."};
+    for(let attempt=0;attempt<16;attempt++){
+      await sleep(attempt===0?900:500);
+      const observed=await evaluate(connection,`(()=>{
+        const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,12000);
+        const otpInputs=[...document.querySelectorAll('input')].filter(el=>{
+          const meta=[el.name,el.id,el.placeholder,el.autocomplete,el.getAttribute('aria-label')].filter(Boolean).join(' ');
+          return /otp|one.?time|verification.?code/i.test(meta);
+        });
+        const digits=[...document.querySelectorAll('input')].filter(el=>el.maxLength===1||el.getAttribute('maxlength')==='1'||/digit|otp/i.test(String(el.getAttribute('aria-label')||'')));
+        const isRateLimited=/(try again later|too many attempts|maximum attempts|unable to send|something went wrong|could not send|failed to send)/i.test(text);
+        const isNewUser=/(looks like you're new here|sign up with your)/i.test(text);
+        return {text,digitsCount:digits.length,hasOtpInput:otpInputs.length>0,isRateLimited,isNewUser,excerpt:text.slice(0,1200),url:location.href};
+      })()`).catch(()=>null);
+      if(observed){
+        otpOutcome=classifyLoginOutcome(observed);
+        if(otpOutcome.outcome!=="UNKNOWN")break;
+      }
+    }
+    return otpOutcome;
   };
   try{
     await primeConnection();
@@ -1299,6 +1392,18 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       await connection.send("Page.navigate",{url:flipkartLoginUrl});
       await sleep(800);
     };
+
+    if(retailer==="flipkart"&&!accountCredentials?.password){
+      const otpFlow=await requestFlipkartOtp();
+      const screenshot=await captureScreen();
+      if(otpFlow.outcome==="OTP_SENT")return {status:"REAUTH_REQUIRED",code:"OTP_SENT",message:otpFlow.message,url:target.url||url,screenshot};
+      if(otpFlow.outcome==="RATE_LIMITED")return {status:"REAUTH_REQUIRED",code:"RATE_LIMITED",message:otpFlow.message,url:target.url||url,screenshot};
+      if(otpFlow.outcome==="ACCOUNT_NOT_REGISTERED")return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:otpFlow.message,url:target.url||url,screenshot};
+      if(otpFlow.outcome==="OTP_CHALLENGE_VISIBLE")return {status:"REAUTH_REQUIRED",code:"OTP_SEND_UNCONFIRMED",message:otpFlow.message,url:target.url||url,screenshot};
+      if(otpFlow.outcome==="OTP_CONTROL_DISABLED")return {status:"REAUTH_REQUIRED",code:"OTP_CONTROL_DISABLED",message:otpFlow.message,url:target.url||url,screenshot};
+      if(otpFlow.outcome==="LOGIN_IDENTIFIER_REJECTED")return {status:"REAUTH_REQUIRED",code:"LOGIN_IDENTIFIER_REJECTED",message:otpFlow.message,url:target.url||url,screenshot};
+      return {status:"REAUTH_REQUIRED",code:"OTP_NOT_SENT",message:otpFlow.message||"Flipkart did not confirm an OTP request.",url:target.url||url,screenshot};
+    }
 
     for(let round=0;round<5;round++){
       await waitReady(connection);
