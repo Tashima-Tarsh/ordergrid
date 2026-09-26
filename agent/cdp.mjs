@@ -248,9 +248,14 @@ export async function restoreRetailerSessionState({chrome,directory,retailer,ses
 }
 
 export async function createTarget(port,url){
-  const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"});
-  if(!response.ok)throw new Error(`Could not open retailer tab (${response.status})`);
-  return response.json();
+  let lastStatus = null;
+  for(let i=0;i<4;i++){
+    const response=await fetchWithTimeout(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,{method:"PUT"}).catch(()=>null);
+    if(response?.ok)return response.json();
+    lastStatus=response?.status;
+    await sleep(400);
+  }
+  throw new Error(`Could not open retailer tab (${lastStatus||"unknown"})`);
 }
 export async function closeTarget(port,target){
   const targetId=typeof target==="string"?target:target?.id;
@@ -275,7 +280,7 @@ export async function waitReady(connection,timeoutMs=20000){
 }
 export async function evaluate(connection,expression){
   const result=await connection.send("Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true,userGesture:true});
-  if(result.exceptionDetails)throw new Error("Retailer page automation script failed");
+  if(result.exceptionDetails)throw new Error("Retailer page automation script failed: " + (result.exceptionDetails.exception?.description || result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)));
   return result.result?.value;
 }
 function productAvailabilityScript(){
@@ -1277,31 +1282,17 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const label = el => String(el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
 
         if (isEmail) {
-          const allEls = [...document.querySelectorAll('*')];
-          const useEmailBtn = allEls.find(el => {
-            const t = String(el.innerText || el.textContent || '').trim();
-            if (!/use\s*email/i.test(t)) return false;
-            const children = Array.from(el.children);
-            return children.length === 0 || !children.some(c => /use\s*email/i.test(c.innerText || ''));
-          });
+          const useEmailBtn = [...document.querySelectorAll('span, a, button, [role="button"], p, div')].find(el => /^use\\s*email/i.test((el.innerText || el.textContent || '').trim()) && el.children.length === 0);
           if (useEmailBtn) {
             try {
               useEmailBtn.click();
-              if (useEmailBtn.parentElement) useEmailBtn.parentElement.click();
             } catch {}
           }
         } else {
-          const allEls = [...document.querySelectorAll('*')];
-          const usePhoneBtn = allEls.find(el => {
-            const t = String(el.innerText || el.textContent || '').trim();
-            if (!/use\s*(?:phone|mobile)/i.test(t)) return false;
-            const children = Array.from(el.children);
-            return children.length === 0 || !children.some(c => /use\s*(?:phone|mobile)/i.test(c.innerText || ''));
-          });
+          const usePhoneBtn = [...document.querySelectorAll('span, a, button, [role="button"], p, div')].find(el => /^use\\s*(?:phone|mobile)/i.test((el.innerText || el.textContent || '').trim()) && el.children.length === 0);
           if (usePhoneBtn) {
             try {
               usePhoneBtn.click();
-              if (usePhoneBtn.parentElement) usePhoneBtn.parentElement.click();
             } catch {}
           }
         }
@@ -1325,22 +1316,18 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
 
         let field = null;
         if (isEmail) {
-          field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+          field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email[ /]mobile/i.test(fieldMeta(el)))
             || nonSearch.find(el => el.type !== 'number' && /email|mobile|phone|login|username/i.test(fieldMeta(el)))
             || nonSearch.find(el => ['text', 'email'].includes(el.type))
             || null;
         } else {
-          field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+          field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email[ /]mobile/i.test(fieldMeta(el)))
             || nonSearch.find(el => /email|mobile|phone|login|username/i.test(fieldMeta(el)))
             || nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type))
             || nonSearch[0] || null;
         }
 
         if (!field) {
-          const openLoginBtn = controls.find(el => /^(?:login|log in|sign in|signin)$/i.test(label(el)));
-          if (openLoginBtn) {
-            try { openLoginBtn.click(); } catch {}
-          }
           return { ok: false, reason: 'LOGIN_FIELD_NOT_FOUND' };
         }
 
@@ -1391,12 +1378,12 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       });
       let field = null;
       if (isEmail) {
-        field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+        field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email[ /]mobile/i.test(fieldMeta(el)))
           || nonSearch.find(el => el.type !== 'number' && /email|mobile|phone|login|username/i.test(fieldMeta(el)))
           || nonSearch.find(el => ['text', 'email'].includes(el.type))
           || null;
       } else {
-        field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+        field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email[ /]mobile/i.test(fieldMeta(el)))
           || nonSearch.find(el => /email|mobile|phone|login|username/i.test(fieldMeta(el)))
           || nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type))
           || nonSearch[0] || null;
@@ -1467,10 +1454,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   try{
     await primeConnection();
-    const currentLoc=await evaluate(connection,`location.href`).catch(()=>"");
-    if(!currentLoc||!currentLoc.includes("flipkart.com/login")&&retailer==="flipkart"&&!verifyOnly){
-      await connection.send("Page.navigate",{url});
-    }
+    await connection.send("Page.navigate",{url});
     await waitReady(connection).catch(()=>null);
     await sleep(2000);
 
