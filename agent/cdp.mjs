@@ -1262,6 +1262,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
   };
   const requestFlipkartOtp=async()=>{
     const login=String(accountCredentials?.login||"").trim();
+    const maskedLogin=login.length>4?login.slice(0,2)+"*".repeat(Math.max(2,login.length-6))+login.slice(-4):"******";
+    console.log(`[FLIPKART_LOGIN_START] ${JSON.stringify({retailerAccountId:accountCredentials?.retailerAccountId||"unknown",profileKey:accountCredentials?.profileKey||"unknown",timestamp:new Date().toISOString(),url:target.url||url})}`);
     if(!login)return {outcome:"LOGIN_REQUIRED",message:"Flipkart login identifier is missing."};
 
     // Use real Chrome text insertion so Flipkart's controlled input receives native browser events.
@@ -1279,12 +1281,18 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       if(!field)return {ok:false,reason:'LOGIN_FIELD_NOT_FOUND'};
       field.focus();
       try{field.select()}catch{try{field.setSelectionRange(0,String(field.value||'').length)}catch{}}
-      return {ok:true,value:String(field.value||''),meta:meta(field),url:location.href};
+      return {ok:true,value:String(field.value||''),meta:meta(field),type:String(field.type||'text'),url:location.href};
     })()`).catch(()=>null);
-    if(!focusLogin?.ok)return {outcome:"LOGIN_REQUIRED",message:"Flipkart login field was not found."};
+
+    if(!focusLogin?.ok){
+      console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:false,reason:focusLogin?.reason||"NOT_FOUND"})}`);
+      return {outcome:"LOGIN_REQUIRED",message:"Flipkart login field was not found."};
+    }
+    console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:true,meta:focusLogin.meta,type:focusLogin.type})}`);
 
     await connection.send("Input.insertText",{text:login});
     await sleep(450);
+    console.log(`[FLIPKART_IDENTIFIER_INSERTED] ${JSON.stringify({success:true,identifier:maskedLogin})}`);
 
     const accepted=await evaluate(connection,`(()=>{
       const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
@@ -1299,7 +1307,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       const field=candidates.find(el=>/email|mobile|phone|login|username/i.test(meta(el)))||candidates[0]||null;
       return {value:String(field?.value||''),url:location.href};
     })()`).catch(()=>null);
-    if(String(accepted?.value||'').trim()!==login){
+
+    const matchesExpected=String(accepted?.value||'').trim()===login;
+    console.log(`[FLIPKART_IDENTIFIER_READBACK] ${JSON.stringify({matchesExpected})}`);
+    if(!matchesExpected){
       return {outcome:"LOGIN_IDENTIFIER_REJECTED",message:"Flipkart did not accept the mobile/email value in its login field."};
     }
 
@@ -1318,6 +1329,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       if(control?.found&&control?.enabled)break;
       await sleep(500);
     }
+    console.log(`[FLIPKART_OTP_CONTROL] ${JSON.stringify({found:Boolean(control?.found),enabled:Boolean(control?.enabled),label:control?.label||null})}`);
     if(!control?.found)return {outcome:"LOGIN_REQUIRED",message:"Flipkart did not expose a Request OTP control."};
     if(!control?.enabled)return {outcome:"OTP_CONTROL_DISABLED",message:"Flipkart kept the OTP request control disabled after accepting the login identifier."};
 
@@ -1330,6 +1342,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       button.click();
       return {ok:true,label:label(button),url:location.href};
     })()`).catch(()=>null);
+    console.log(`[FLIPKART_OTP_CLICK] ${JSON.stringify({clicked:Boolean(clicked?.ok),timestamp:new Date().toISOString()})}`);
     if(!clicked?.ok)return {outcome:"OTP_CLICK_FAILED",message:"Flipkart OTP request control could not be clicked."};
 
     let otpOutcome={outcome:"UNKNOWN",code:"OTP_NOT_SENT",message:"Flipkart has not confirmed that an OTP was sent yet."};
@@ -1348,7 +1361,10 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
       })()`).catch(()=>null);
       if(observed){
         otpOutcome=classifyLoginOutcome(observed);
-        if(otpOutcome.outcome!=="UNKNOWN")break;
+        if(otpOutcome.outcome!=="UNKNOWN"){
+          console.log(`[FLIPKART_AFTER_OTP_CLICK] ${JSON.stringify({url:observed.url,otpInputVisible:observed.hasOtpInput||observed.digitsCount>=4,rateLimited:observed.isRateLimited,accountNotRegistered:observed.isNewUser,explicitSendConfirmation:otpOutcome.outcome==="OTP_SENT",sanitizedExcerpt:observed.excerpt.slice(0,150)})}`);
+          break;
+        }
       }
     }
     return otpOutcome;

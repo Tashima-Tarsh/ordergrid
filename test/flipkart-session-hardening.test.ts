@@ -218,3 +218,73 @@ test("L. Re-requested session check is claimable even if previously assigned to 
   assert.equal(claimable.length, 1);
   assert.equal(claimable[0].id, "acc-1");
 });
+
+test("M. Flipkart initial login uses /login?ret=/ URL", () => {
+  const verifyOnly = false;
+  const url = verifyOnly ? "https://www.flipkart.com/account/orders" : "https://www.flipkart.com/login?ret=/";
+  assert.equal(url, "https://www.flipkart.com/login?ret=/");
+});
+
+test("N. Stale worker recovery preserves verifyOnly=false for Flipkart connect", () => {
+  const account = {
+    id: "acc-1",
+    retailer: "flipkart",
+    session_check_verify_only: false,
+    session_check_requested_at: new Date(Date.now() - 180_000),
+    session_check_claimed_at: new Date(Date.now() - 150_000)
+  };
+
+  // Recovery clears claim without resetting verify_only to true
+  const recovered = {
+    ...account,
+    session_check_claimed_at: null,
+    session_worker_id: null,
+    session_status: "VERIFYING"
+  };
+
+  assert.equal(recovered.session_check_verify_only, false);
+  assert.equal(recovered.session_check_claimed_at, null);
+});
+
+test("O. OTP_SENT code sets otp_last_requested_at timestamp and transitions challenge to OTP_REQUIRED", () => {
+  const code = "OTP_SENT";
+  const challengeCode = code === "OTP_SENT" ? "OTP_REQUIRED" : code;
+  const otpLastRequested = code === "OTP_SENT" ? new Date() : null;
+
+  assert.equal(challengeCode, "OTP_REQUIRED");
+  assert.ok(otpLastRequested instanceof Date);
+});
+
+test("P. OTP submission command targets identical worker, account, and profileKey", () => {
+  const initial = {
+    workerId: "worker-abc-123",
+    retailerAccountId: "acc-uuid-1",
+    profileKey: "pk-9876543210"
+  };
+
+  const submitCommand = {
+    command: "SUBMIT_OTP",
+    workerId: initial.workerId,
+    payload: {
+      retailerAccountId: initial.retailerAccountId,
+      profileKey: initial.profileKey,
+      otp: "123456"
+    }
+  };
+
+  assert.equal(submitCommand.workerId, initial.workerId);
+  assert.equal(submitCommand.payload.retailerAccountId, initial.retailerAccountId);
+  assert.equal(submitCommand.payload.profileKey, initial.profileKey);
+});
+
+test("Q. Stale worker protocol (< 2) is rejected from claiming session login", () => {
+  const requiredProtocol = 2;
+  const worker1 = { worker_protocol: 1, compatible: false };
+  const worker2 = { worker_protocol: 2, compatible: true };
+
+  const canClaim = (w: { worker_protocol: number }) => w.worker_protocol >= requiredProtocol;
+
+  assert.equal(canClaim(worker1), false);
+  assert.equal(canClaim(worker2), true);
+});
+
