@@ -152,6 +152,8 @@ must(server.includes("req.headers.x-ordergrid-worker-token"),"security contract:
 must(server.includes('workerAuth:Boolean(config.WORKER_API_TOKEN)'),"health contract: worker auth readiness must be visible");
 must(server.includes("timingSafeEqual"),"security contract: machine token comparison must be timing-safe");
 must(server.includes("worker_role_required"),"security contract: machine routes must require an execution-capable role");
+must(!server.includes("session_check_claimed_at=null,session_worker_id=null,session_status='VERIFYING',session_check_verify_only=true"),"Flipkart session contract: stale worker recovery must preserve the original OTP-request mode");
+
 must(agent.includes("ORDERGRID_WORKER_TOKEN"),"security contract: native worker must send machine token");
 must(server.includes('app.post("/api/address-books/import",async(req,reply)=>{')&&server.includes('if(!["OWNER","APPROVER","BUYER"].includes(p.role))'),"security contract: address import must be role-protected");
 must(!server.includes("ORDERGRID_CLOUDFLARE_CONTAINER")&&!server.includes("CF_PAGES_COMMIT_SHA"),"deployment contract: Cloudflare runtime wiring must not return");
