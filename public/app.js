@@ -106,18 +106,25 @@ $('#batchForm').onsubmit=async e=>{
   try{
     let items=[],readyMessage='';
     if(poolMode){
-      items=products.flatMap(product=>product.allocationPlan.allocations.map(allocation=>({
-        productUrl:product.productUrl,
-        quantity:Number(allocation.quantity),
-        estimatedUnitPriceMinor:Number(allocation.sellingPriceMinor),
-        productCheckId:String(allocation.productCheckId),
-        retailerAccountId:String(allocation.retailerAccountId),
-        addressId:allocation.addressId?String(allocation.addressId):undefined,
-        hsnSac:product.hsnSac,
-        gstRate:product.gstRate,
-        cessRate:product.cessRate,
-        priceIncludesGst:product.priceIncludesGst
-      })));
+      const recipientData=await api('/api/recipients');
+      const recipients=recipientData.recipients||[];
+      let recipientCursor=0;
+      items=products.flatMap(product=>product.allocationPlan.allocations.map(allocation=>{
+        const addressId=allocation.addressId?String(allocation.addressId):String(recipients[recipientCursor++]?.id||'');
+        if(!addressId)throw new Error('Not enough saved recipient addresses for the pooled Flipkart allocations. Add/import recipient addresses first.');
+        return {
+          productUrl:product.productUrl,
+          quantity:Number(allocation.quantity),
+          estimatedUnitPriceMinor:Number(allocation.sellingPriceMinor),
+          productCheckId:String(allocation.productCheckId),
+          retailerAccountId:String(allocation.retailerAccountId),
+          addressId,
+          hsnSac:product.hsnSac,
+          gstRate:product.gstRate,
+          cessRate:product.cessRate,
+          priceIncludesGst:product.priceIncludesGst
+        };
+      }));
       const accountIds=new Set(items.map(item=>item.retailerAccountId));
       const unitCount=items.reduce((sum,item)=>sum+Number(item.quantity||0),0);
       readyMessage=unitCount+' units allocated across '+accountIds.size+' verified Flipkart accounts';
