@@ -27,6 +27,11 @@
     const value=Number($('#sessionTargetDays')?.value||15);
     return value===30?30:15;
   }
+  function hasConfirmedOtpSend(account){
+    if(String(account?.session_challenge_code||'')!=='OTP_REQUIRED')return false;
+    const ts=account?.otp_last_requested_at?new Date(account.otp_last_requested_at).getTime():0;
+    return Number.isFinite(ts)&&ts>0&&Date.now()-ts<=15*60*1000;
+  }
   function setConnectOtpVisible(visible){
     const form=$('#connectOtpForm'),input=$('#connectOtpInput');
     if(!form)return;
@@ -268,7 +273,7 @@
     if($('#connectOtpInput'))$('#connectOtpInput').value='';
     const initialStatus=String(account.session_status||'');
     const initialChallenge=String(account.session_challenge_code||'');
-    setConnectOtpVisible(initialStatus==='REAUTH_REQUIRED'&&initialChallenge==='OTP_REQUIRED');
+    setConnectOtpVisible(initialStatus==='REAUTH_REQUIRED'&&hasConfirmedOtpSend(account));
 
     const isReady=initialStatus==='READY';
     if(isReady){
@@ -359,14 +364,14 @@
           toast(`${target.account_reference} session verified!`);
           setTimeout(()=>{closeConnectModal()},1400);
         }else if(st==='REAUTH_REQUIRED'){
-          if(code==='OTP_REQUIRED'){
+          if(code==='OTP_REQUIRED'&&hasConfirmedOtpSend(target)){
             $('#connectStatusCard').className='connect-status-card otp-ready';
             $('#connectStatusHeading').textContent='FLIPKART OTP CONFIRMED';
-            $('#connectStatusMeta').textContent='Flipkart confirms a verification code was sent. Enter it below to finish connecting.';
+            $('#connectStatusMeta').textContent='Flipkart confirmed the OTP request at '+new Date(target.otp_last_requested_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+'. Enter the received code below.';
             setConnectOtpVisible(true);
             if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
             if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
-          }else if(code==='OTP_SEND_UNCONFIRMED'||code==='OTP_NOT_SENT'){
+          }else if(code==='OTP_REQUIRED'||code==='OTP_SEND_UNCONFIRMED'||code==='OTP_NOT_SENT'){
             setConnectOtpVisible(false);
             if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
             if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
