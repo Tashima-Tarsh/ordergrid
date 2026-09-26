@@ -10,10 +10,12 @@ test("classifyLoginOutcome correctly classifies login states", () => {
   assert.equal(otp1.code, "OTP_SENT");
 
   const otp2 = classifyLoginOutcome({ text: "Enter code", digitsCount: 6 });
-  assert.equal(otp2.outcome, "OTP_SENT");
+  assert.equal(otp2.outcome, "OTP_CHALLENGE_VISIBLE");
+  assert.equal(otp2.code, "OTP_SEND_UNCONFIRMED");
 
   const otp3 = classifyLoginOutcome({ text: "", hasOtpInput: true });
-  assert.equal(otp3.outcome, "OTP_SENT");
+  assert.equal(otp3.outcome, "OTP_CHALLENGE_VISIBLE");
+  assert.equal(otp3.code, "OTP_SEND_UNCONFIRMED");
 
   // 2. Rate limit
   const rl = classifyLoginOutcome({ text: "You have reached maximum attempts. Please try again later." });
