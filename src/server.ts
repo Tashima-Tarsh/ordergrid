@@ -1489,6 +1489,25 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
     verifyOnly:z.boolean().optional()
   }).parse(req.body??{});
   const verifyOnly=Boolean(body.verifyOnly);
+  if((body.retailer==="flipkart"||body.accountIds?.length)&&!verifyOnly){
+    const flipkartRequested=body.retailer==="flipkart"||Boolean(body.accountIds?.length);
+    if(flipkartRequested){
+      const desktopWorker=await db.query(
+        `select 1
+         from execution_workers
+         where tenant_id=$1 and user_id=$2 and mode in ('DESKTOP','INTERACTIVE')
+           and last_seen>now()-interval '30 seconds'
+         limit 1`,
+        [p.tenantId,p.id]
+      );
+      if(!desktopWorker.rows[0]){
+        return reply.code(409).send({
+          error:"flipkart_desktop_worker_required",
+          message:"Flipkart sign-in needs the OrderGrid Secure Browser running on this computer. Start the desktop worker, then connect the account again."
+        });
+      }
+    }
+  }
   const params:any[]=[p.tenantId,body.targetDays,verifyOnly];
   const clauses=["tenant_id=$1","active","retailer in ('amazon-in','flipkart')"];
   if(body.retailer){params.push(body.retailer);clauses.push(`retailer=$${params.length}`)}
