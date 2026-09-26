@@ -361,18 +361,32 @@
         }else if(st==='REAUTH_REQUIRED'){
           if(code==='OTP_REQUIRED'){
             $('#connectStatusCard').className='connect-status-card otp-ready';
-            $('#connectStatusHeading').textContent='FLIPKART OTP REQUIRED';
-            $('#connectStatusMeta').textContent='Flipkart confirmed an OTP was sent. Enter it below to finish connecting.';
+            $('#connectStatusHeading').textContent='FLIPKART OTP CONFIRMED';
+            $('#connectStatusMeta').textContent='Flipkart confirms a verification code was sent. Enter it below to finish connecting.';
             setConnectOtpVisible(true);
             if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
             if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
+          }else if(code==='OTP_SEND_UNCONFIRMED'||code==='OTP_NOT_SENT'){
+            setConnectOtpVisible(false);
+            if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
+            if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
+            $('#connectStatusCard').className='connect-status-card attention';
+            $('#connectStatusHeading').textContent='OTP REQUEST NOT CONFIRMED';
+            $('#connectStatusMeta').textContent=target.session_challenge_message||'Flipkart has not confirmed that an OTP was sent. Retry the connection instead of entering a code.';
+          }else if(code==='OTP_COOLDOWN'||code==='RATE_LIMITED'){
+            setConnectOtpVisible(false);
+            if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
+            if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
+            $('#connectStatusCard').className='connect-status-card attention';
+            $('#connectStatusHeading').textContent='OTP REQUEST COOLDOWN';
+            $('#connectStatusMeta').textContent='Flipkart did not confirm a new OTP. Wait for the cooldown, then retry.';
           }else{
             setConnectOtpVisible(false);
             if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=false;
             if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=false;
             $('#connectStatusCard').className='connect-status-card connecting';
-            $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
-            $('#connectStatusMeta').textContent='Sign in on Flipkart in the opened window, then click "Verify sign-in" below.';
+            $('#connectStatusHeading').textContent='FLIPKART LOGIN CHALLENGE';
+            $('#connectStatusMeta').textContent='Flipkart presented a login challenge that needs the browser fallback.';
           }
         }else if(st==='VERIFYING'){
           setConnectOtpVisible(false);
