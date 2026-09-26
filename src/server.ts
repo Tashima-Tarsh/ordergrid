@@ -1767,8 +1767,8 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
        pc.id product_check_id,pc.status product_check_status,pc.error product_check_error,
        pc.result product_check_result,pc.requested_at product_check_requested_at,pc.completed_at product_check_completed_at
      from retailer_accounts ra
-     join customers c on c.id=ra.customer_id and c.tenant_id=ra.tenant_id and c.active
-     join lateral (
+     left join customers c on c.id=ra.customer_id and c.tenant_id=ra.tenant_id
+     left join lateral (
        select a.id,a.recipient,a.postal_code
        from addresses a
        join address_books ab on ab.id=a.address_book_id
@@ -1776,7 +1776,7 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
        order by a.id
        limit 1
      ) addr on true
-     join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
+     left join execution_workers ew on ew.tenant_id=ra.tenant_id and ew.id=ra.session_worker_id
      left join lateral (
        select cmd.id,cmd.status,cmd.error,cmd.result,cmd.requested_at,cmd.completed_at
        from execution_worker_commands cmd
@@ -1790,11 +1790,11 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
      where ra.tenant_id=$1
        and ra.retailer='flipkart'
        and ra.active
+       and (ra.customer_id is null or c.active)
        and ra.auth_status not in ('LOCKED','DISABLED')
        and ra.session_status='READY'
        and (ra.session_target_expires_at is null or ra.session_target_expires_at>now())
        and (ra.cooldown_until is null or ra.cooldown_until<=now())
-       and ew.last_seen>now()-interval '30 seconds'
      order by ra.last_assigned_at nulls first,ra.created_at,ra.id`,
     [p.tenantId,productUrl]
   );
@@ -1808,7 +1808,7 @@ app.post("/api/products/flipkart/mobile/allocation/plan",async(req,reply)=>{
     if(ready){
       verified.push({
         retailerAccountId:String(row.retailer_account_id),
-        addressId:String(row.address_id),
+        addressId:row.address_id?String(row.address_id):null,
         accountReference:String(row.account_reference),
         customerReference:row.customer_reference??null,
         recipient:row.recipient??null,
@@ -3867,18 +3867,19 @@ app.post("/api/batches",async(req,reply)=>{
         return reply.code(409).send({error:"flipkart_quantity_exceeds_verified_limit",message:"Requested quantity exceeds the maximum verified for this Flipkart account.",maxQuantity});
       }
       if(item.retailerAccountId){
-        if(!item.addressId)return reply.code(409).send({error:"flipkart_allocation_address_required",message:"A pinned Flipkart account allocation requires its bound delivery address."});
+        if(!item.addressId)return reply.code(409).send({error:"flipkart_allocation_address_required",message:"A Flipkart allocation requires a delivery address."});
         const pinned=await db.query(
           `select 1
            from retailer_accounts ra
-           join addresses a on a.customer_id=ra.customer_id
+           join addresses a on a.id=$3
            join address_books ab on ab.id=a.address_book_id and ab.tenant_id=ra.tenant_id
            where ra.id=$1 and ra.tenant_id=$2 and ra.retailer='flipkart' and ra.active
-             and ra.session_status='READY' and a.id=$3
+             and ra.session_status='READY'
+             and (ra.customer_id is null or a.customer_id=ra.customer_id)
            limit 1`,
           [item.retailerAccountId,p.tenantId,item.addressId]
         );
-        if(!pinned.rows[0])return reply.code(409).send({error:"flipkart_allocation_account_address_mismatch",message:"The selected delivery address is not bound to the Flipkart account that was verified."});
+        if(!pinned.rows[0])return reply.code(409).send({error:"flipkart_allocation_account_address_mismatch",message:"The selected delivery address is not available to this Flipkart allocation."});
       }
     }
     preparedItems.push({...item,retailer});
