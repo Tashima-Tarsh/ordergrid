@@ -1351,36 +1351,6 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     return {status:"ERROR",code:"SESSION_CHECK_ERROR",message:String(error.message).slice(0,300),url};
   }finally{connection.close()}
 }
- -and $_.CommandLine -like ('*--user-data-dir='+$dir+'*') } | Select-Object -ExpandProperty ProcessId)",
-    "$done=$false",
-    "[Win32Focus]::EnumWindows({",
-    "  param($h,$l)",
-    "  if(-not [Win32Focus]::IsWindowVisible($h)){ return $true }",
-    "  [uint32]$pid=0",
-    "  [Win32Focus]::GetWindowThreadProcessId($h,[ref]$pid) | Out-Null",
-    "  if($pids -contains $pid){",
-    "    [Win32Focus]::ShowWindowAsync($h,9) | Out-Null",
-    "    [Win32Focus]::SetForegroundWindow($h) | Out-Null",
-    "    $script:done=$true",
-    "    return $false",
-    "  }",
-    "  return $true",
-    "},[IntPtr]::Zero) | Out-Null",
-    "if($done){ exit 0 } else { exit 1 }"
-  ].join("\n");
-  return await new Promise(resolve=>{
-    const child=spawn("powershell.exe",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",script],{windowsHide:true,stdio:"ignore"});
-    const timer=setTimeout(()=>{try{child.kill()}catch{};resolve(false)},5000);
-    child.once("exit",code=>{clearTimeout(timer);resolve(code===0)});
-    child.once("error",()=>{clearTimeout(timer);resolve(false)});
-  });
-}
-async function fetchWithTimeout(url,options={},timeoutMs=12000){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
-  try{return await fetch(url,{...options,signal:controller.signal})}
-  finally{clearTimeout(timer)}
-}
-
 export class CdpConnection{
   constructor(url){
     this.nextId=1;this.pending=new Map();this.socket=new WebSocket(url);
