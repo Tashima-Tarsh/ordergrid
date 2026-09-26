@@ -61,7 +61,7 @@ test("C. MANAGED worker can claim Flipkart session check when verifyOnly=true", 
   assert.equal(claimable[0].session_check_verify_only, true);
 });
 
-test("D. Flipkart OTP prompt requires observed OTP evidence", () => {
+test("D. Flipkart OTP prompt requires explicit send confirmation, not just an OTP field", () => {
   const notSent = classifyLoginOutcome({
     text: "Login to Flipkart",
     digitsCount: 0,
@@ -72,8 +72,18 @@ test("D. Flipkart OTP prompt requires observed OTP evidence", () => {
   assert.equal(notSent.outcome, "UNKNOWN");
   assert.equal(notSent.code, "OTP_NOT_SENT");
 
+  const challengeOnly = classifyLoginOutcome({
+    text: "Enter OTP",
+    digitsCount: 6,
+    hasOtpInput: true,
+    isRateLimited: false,
+    isNewUser: false
+  });
+  assert.equal(challengeOnly.outcome, "OTP_CHALLENGE_VISIBLE");
+  assert.equal(challengeOnly.code, "OTP_SEND_UNCONFIRMED");
+
   const sent = classifyLoginOutcome({
-    text: "Please enter the OTP sent to your mobile number",
+    text: "OTP has been sent to your mobile number. Resend OTP in 28 seconds.",
     digitsCount: 6,
     hasOtpInput: true,
     isRateLimited: false,
@@ -81,6 +91,15 @@ test("D. Flipkart OTP prompt requires observed OTP evidence", () => {
   });
   assert.equal(sent.outcome, "OTP_SENT");
   assert.equal(sent.code, "OTP_SENT");
+
+  const failedSend = classifyLoginOutcome({
+    text: "Unable to send OTP. Try again later.",
+    digitsCount: 6,
+    hasOtpInput: true,
+    isRateLimited: true,
+    isNewUser: false
+  });
+  assert.equal(failedSend.outcome, "RATE_LIMITED");
 });
 
 test("E. Authenticated Flipkart session can become READY after verification", () => {
