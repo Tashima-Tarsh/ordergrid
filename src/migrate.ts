@@ -6,11 +6,9 @@ import { createDb } from "./db.js";
 
 const db=createDb(loadConfig()),here=dirname(fileURLToPath(import.meta.url)),dir=join(here,"migrations");
 await db.query(`
-  do $$ begin
-    if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
-    if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+  do $ begin
     if not exists (select 1 from pg_roles where rolname = 'ordergrid_app') then create role ordergrid_app; end if;
-  end $$;
+  end $;
 `);
 const identity=await db.query(`
   select
