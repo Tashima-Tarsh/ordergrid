@@ -314,6 +314,7 @@ app.get("/api/secure-browser/setup.cmd",async(req,reply)=>{
   const origin=config.APP_ORIGIN.replace(/\/$/,"");
   const safeOrigin=origin.replace(/'/g,"''");
   const safeToken=setupToken.replace(/'/g,"''");
+  const safeWorkerRef=releaseSha.replace(/'/g,"''");
   const script=[
     "@echo off",
     "setlocal",
@@ -323,7 +324,7 @@ app.get("/api/secure-browser/setup.cmd",async(req,reply)=>{
     "echo  One-time Windows setup",
     "echo.",
     "echo  Installing the secure browser component. No command entry is required.",
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $env:ORDERGRID_URL='${safeOrigin}'; $env:ORDERGRID_SETUP_TOKEN='${safeToken}'; $p=Join-Path $env:TEMP 'ordergrid-secure-browser-setup.ps1'; Invoke-WebRequest -UseBasicParsing -Uri '${safeOrigin}/ordergrid-worker.ps1' -OutFile $p; & $p"`,
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $env:ORDERGRID_URL='${safeOrigin}'; $env:ORDERGRID_SETUP_TOKEN='${safeToken}'; $env:ORDERGRID_WORKER_REF='${safeWorkerRef}'; $p=Join-Path $env:TEMP 'ordergrid-secure-browser-setup.ps1'; Invoke-WebRequest -UseBasicParsing -Uri '${safeOrigin}/ordergrid-worker.ps1' -OutFile $p; & $p"`,
     "set \"OG_EXIT=%ERRORLEVEL%\"",
     "if not \"%OG_EXIT%\"==\"0\" (",
     "  echo.",
