@@ -79,3 +79,7 @@ body.product-shell main{max-width:1280px!important;padding:24px 28px 56px!import
 
 @keyframes spin{to{transform:rotate(360deg)}}
 
+
+
+.retailer-account-row .account-actions{position:relative;z-index:3;pointer-events:auto}
+.retailer-account-row .account-actions button{position:relative;z-index:4;pointer-events:auto}
