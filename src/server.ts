@@ -135,13 +135,10 @@ async function claimReadyBaskets(tenantId:string,userId:string,requestedLimit:nu
     }
 
     if(paymentRoute==="Corporate virtual card"){
-      const issuerReady=await db.query(
-        "select 1 from issuer_connections where tenant_id=$1 and status='CONNECTED' limit 1",
-        [tenantId]
-      );
-      if(config.CARD_PROVIDER==="disabled"||!issuerReady.rows[0]){
+      const issuerState=await loadTenantIssuer(db,config,tenantId);
+      if(!issuerState.issuer.configured()){
         await db.query(
-          "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='PAYMENT_PROVIDER_NOT_READY',failure_message='Corporate virtual-card checkout requires a configured payment provider and a connected issuer',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
+          "update checkout_baskets set status='REQUIRES_ACTION',commercial_status='REVIEW_REQUIRED',failure_code='PAYMENT_PROVIDER_NOT_READY',failure_message='Corporate virtual-card checkout requires a configured and verified issuer connection',claimed_by=null,execution_worker_id=null,expires_at=null,updated_at=now() where id=$1 and tenant_id=$2",
           [basketId,tenantId]
         );
         continue;
@@ -293,16 +290,18 @@ app.get("/api/health",async()=>{
 app.get("/api/production-readiness",async(req,reply)=>{
   const p=req.principal!;
   if(!["OWNER","APPROVER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
-  const [migration,workers,issuers]=await Promise.all([
+  const [migration,workers,issuers,issuerState]=await Promise.all([
     db.query("select name from schema_migrations order by name desc limit 1").catch(()=>({rows:[]})),
     db.query("select mode,count(*)::int count from execution_workers where last_seen>now()-interval '30 seconds' group by mode").catch(()=>({rows:[]})),
-    db.query("select count(*)::int count from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId]).catch(()=>({rows:[{count:0}]}))
+    db.query("select count(*)::int count from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId]).catch(()=>({rows:[{count:0}]})),
+    loadTenantIssuer(db,config,p.tenantId).catch(()=>null)
   ]);
   const latestMigration=String(migration.rows[0]?.name||"none");
   const desktopWorkers=workers.rows.filter((r:any)=>["DESKTOP","INTERACTIVE"].includes(String(r.mode))).reduce((n:number,r:any)=>n+Number(r.count||0),0);
   const connectedIssuers=Number(issuers.rows[0]?.count||0);
-  const checks={releaseKnown:releaseSha!=="dev",databaseMigrated:latestMigration===expectedMigration,workerAuthConfigured:Boolean(config.WORKER_API_TOKEN),desktopWorkerOnline:desktopWorkers>0,paymentProviderConfigured:config.CARD_PROVIDER!=="disabled",paymentIssuerConnected:connectedIssuers>0};
-  return {ready:Object.values(checks).every(Boolean),release:releaseSha,workerProtocol,expectedMigration,latestMigration,checks,workers:{desktopOnline:desktopWorkers},payments:{provider:config.CARD_PROVIDER,connectedIssuers,ready:checks.paymentProviderConfigured&&checks.paymentIssuerConnected}};
+  const paymentConfigured=Boolean(issuerState?.issuer.configured());
+  const checks={releaseKnown:releaseSha!=="dev",databaseMigrated:latestMigration===expectedMigration,workerAuthConfigured:Boolean(config.WORKER_API_TOKEN),desktopWorkerOnline:desktopWorkers>0,paymentIssuerReady:paymentConfigured};
+  return {ready:Object.values(checks).every(Boolean),release:releaseSha,workerProtocol,expectedMigration,latestMigration,checks,workers:{desktopOnline:desktopWorkers},payments:{provider:issuerState?.issuer.provider??config.CARD_PROVIDER,source:issuerState?.source??"none",connectedIssuers,ready:paymentConfigured}};
 });
 app.get("/api/auth-config",async()=>({
   google:{enabled:Boolean(config.GOOGLE_CLIENT_ID),clientId:config.GOOGLE_CLIENT_ID??null},
