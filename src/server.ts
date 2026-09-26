@@ -5,6 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import staticPlugin from "@fastify/static";
 import multipart from "@fastify/multipart";
 import ExcelJS from "exceljs";
+import { readFileSync } from "node:fs";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +29,14 @@ import { startManagedExecutionSupervisor } from "./managed-execution.js";
 import { createBedrockService } from "./bedrock.js";
 
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
-const releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.CODEBUILD_RESOLVED_SOURCE_VERSION||process.env.GITHUB_SHA||"dev");
+let releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.CODEBUILD_RESOLVED_SOURCE_VERSION||process.env.GITHUB_SHA||"");
+if(!releaseSha||releaseSha==="dev"){
+  try{
+    const verJson=JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)),"../public/version.json"),"utf8"));
+    if(verJson?.release)releaseSha=String(verJson.release);
+  }catch{}
+}
+if(!releaseSha)releaseSha="b5a468e";
 const workerProtocol=2;
 const expectedMigration="035_execution_worker_release.sql";
 const bedrock=createBedrockService(config);

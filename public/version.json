@@ -1,5 +1,5 @@
 {
-  "release": "runtime",
+  "release": "b5a468e",
   "feature": "authenticated-production",
   "platform": "aws-node-fastify-postgres",
   "deploymentTarget": "aws",
