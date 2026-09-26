@@ -1125,20 +1125,120 @@ export async function submitRetailerOtp({chrome,directory,retailer,otp}){
   try{
     await connection.send("Page.enable");
     await connection.send("Page.bringToFront").catch(()=>null);
-    const result=await evaluate(connection,otpSubmitScript(otp));
-    if(!result?.ok)return result||{ok:false,reason:"OTP_SUBMIT_FAILED"};
-    
-    // Wait for Flipkart to process the OTP and transition
-    for(let w=0;w<8;w++){
-      await sleep(1000);
-      const curUrl=await evaluate(connection,`location.href`).catch(()=>"");
-      const curText=await evaluate(connection,`document.body?.innerText||''`).catch(()=>"");
-      const isInvalidOtp=/(incorrect otp|invalid otp|wrong otp|please enter a valid|verification failed)/i.test(curText);
-      if(isInvalidOtp)return {ok:false,reason:"INVALID_OTP_ENTERED"};
-      const isVerified=!String(curUrl).includes('/login/verify')||/(my account|orders|logout|cart)/i.test(curText);
-      if(isVerified)return {ok:true,submitted:true};
+    await sleep(300);
+
+    const cleanOtp=String(otp||"").trim();
+    if(!/^\d{4,8}$/.test(cleanOtp))return {ok:false,reason:"INVALID_OTP_FORMAT"};
+
+    // Inspect inputs on the verify page
+    const inputMeta=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const inputs=[...document.querySelectorAll('input')].filter(visible);
+      const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+      const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
+      const singleField=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')));
+      return {
+        isDigits:digitInputs.length>=4,
+        digitCount:digitInputs.length,
+        hasSingleField:Boolean(singleField),
+        url:location.href
+      };
+    })()`).catch(()=>null);
+
+    console.log(`[SUBMIT_OTP_INPUT_META] ${JSON.stringify(inputMeta)}`);
+
+    if(inputMeta?.isDigits){
+      for(let i=0;i<cleanOtp.length;i++){
+        const focused=await evaluate(connection,`(()=>{
+          const visible=el=>Boolean(el)&&!el.disabled&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+          const inputs=[...document.querySelectorAll('input')].filter(visible);
+          const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+          const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
+          const el=digitInputs[${i}];
+          if(el){
+            el.focus();
+            try{el.value='';}catch{}
+            return true;
+          }
+          return false;
+        })()`).catch(()=>false);
+
+        const digit=cleanOtp[i];
+        if(focused){
+          await connection.send("Input.insertText",{text:digit}).catch(()=>null);
+          await connection.send("Input.dispatchKeyEvent",{type:"keyDown",text:digit,key:digit,code:"Digit"+digit}).catch(()=>null);
+          await connection.send("Input.dispatchKeyEvent",{type:"keyUp",text:digit,key:digit,code:"Digit"+digit}).catch(()=>null);
+        }
+        await sleep(50);
+      }
+    }else{
+      // Fallback single field or evaluate script
+      await evaluate(connection,`(()=>{
+        const visible=el=>Boolean(el)&&!el.disabled&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+        const inputs=[...document.querySelectorAll('input')].filter(visible);
+        const field=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs[0];
+        if(field){
+          field.focus();
+          try{field.value='';}catch{}
+        }
+      })()`).catch(()=>null);
+
+      await connection.send("Input.insertText",{text:cleanOtp}).catch(()=>null);
+      await sleep(100);
+      await evaluate(connection,otpSubmitScript(cleanOtp)).catch(()=>null);
     }
-    return {ok:true,submitted:true};
+
+    await sleep(300);
+
+    // Click submit/verify button
+    const submitClicked=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const controls=[...document.querySelectorAll('button,input[type="submit"],input[type="button"],a,[role="button"]')].filter(visible);
+      const label=x=>String(x.innerText||x.value||x.getAttribute('aria-label')||'').trim();
+      const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||document.querySelector('button[type="submit"],input[type="submit"]');
+      if(submit){
+        try{submit.focus();}catch{}
+        submit.click();
+        return {ok:true,label:label(submit)};
+      }
+      return {ok:false};
+    })()`).catch(()=>null);
+
+    console.log(`[SUBMIT_OTP_CLICK] ${JSON.stringify({clicked:Boolean(submitClicked?.ok),label:submitClicked?.label||null})}`);
+
+    // Wait for Flipkart to process the OTP and verify authentication
+    let verified=false;
+    for(let w=0;w<14;w++){
+      await sleep(1000);
+      const check=await evaluate(connection,`(()=>{
+        const url=location.href;
+        const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,15000);
+        const isInvalid=/(incorrect otp|invalid otp|wrong otp|please enter a valid|verification failed)/i.test(text);
+        const isAwayFromVerify=!url.includes('/login/verify')&&!url.includes('/login?');
+        const hasAccountSignals=/(my account|my profile|orders|supercoin|logout|sign out)/i.test(text);
+        return {url,isInvalid,isAwayFromVerify,hasAccountSignals,excerpt:text.slice(0,200)};
+      })()`).catch(()=>null);
+
+      if(check?.isInvalid){
+        console.log(`[SUBMIT_OTP_ERROR] ${JSON.stringify(check)}`);
+        return {ok:false,reason:"INVALID_OTP_ENTERED",message:"Flipkart reported an incorrect or expired OTP."};
+      }
+      if(check?.isAwayFromVerify||check?.hasAccountSignals){
+        verified=true;
+        console.log(`[SUBMIT_OTP_VERIFIED] ${JSON.stringify(check)}`);
+        break;
+      }
+    }
+
+    if(!verified){
+      const finalUrl=await evaluate(connection,`location.href`).catch(()=>"");
+      const stillOnVerify=String(finalUrl).includes('/login/verify')||String(finalUrl).includes('/login?');
+      if(stillOnVerify){
+        return {ok:false,reason:"OTP_VERIFICATION_PENDING",message:"Flipkart did not complete sign-in with the submitted OTP."};
+      }
+    }
+
+    return {ok:true,submitted:true,verified:true};
   }finally{connection.close()}
 }
 
