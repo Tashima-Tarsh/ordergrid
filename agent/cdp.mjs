@@ -324,18 +324,12 @@ function retailerAuthScript(credentials){
       try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:value,inputType:'insertText'}));}catch{}
       el.dispatchEvent(new Event('input',{bubbles:true}));
       el.dispatchEvent(new Event('change',{bubbles:true}));
-      el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
-      el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'Enter',code:'Enter',keyCode:13}));
     };
+    const enabled=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true';
     const clickElement=(el)=>{
-      if(!el)return;
-      try{el.disabled=false;el.removeAttribute('disabled');}catch{}
+      if(!enabled(el))return false;
       try{el.focus();}catch{}
-      el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,cancelable:true,view:window}));
-      el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
-      el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
-      el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
-      try{el.click();}catch{}
+      try{el.click();return true;}catch{return false}
     };
     const visible=el=>Boolean(el)&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
     const inputs=[...document.querySelectorAll('input')].filter(visible);
@@ -400,9 +394,13 @@ function retailerAuthScript(credentials){
     if(!credentials.password&&explicitOtp){
       if(user&&String(user.value||'').trim()!==String(credentials.login).trim()){
         setValue(user,credentials.login);
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
       }
-      clickElement(explicitOtp);
-      return {acted:true,action:'OTP_REQUESTED'};
+      if(!enabled(explicitOtp)){
+        return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED',controlDisabled:true};
+      }
+      if(clickElement(explicitOtp))return {acted:true,action:'OTP_REQUESTED'};
+      return {acted:false,challenge:'LOGIN_REQUIRED'};
     }
     if(user){
       if(String(user.value||'').trim()!==String(credentials.login).trim()){
@@ -412,8 +410,8 @@ function retailerAuthScript(credentials){
         ||controls.find(x=>/(request otp|continue|next|sign in|signin|log in|login)/i.test(label(x)))
         ||user.form?.querySelector('button[type="submit"],input[type="submit"],[role="button"]');
       if(requestOtp){
-        clickElement(requestOtp);
-        return {acted:true,action:'OTP_REQUESTED'};
+        if(!enabled(requestOtp))return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED',controlDisabled:true};
+        if(clickElement(requestOtp))return {acted:true,action:'OTP_REQUESTED'};
       }
       return {acted:true,action:'LOGIN_IDENTIFIER_ENTERED'};
     }
