@@ -9,8 +9,10 @@ const files=Object.fromEntries(await Promise.all([
   "public/app.js",
   "public/index.html",
   "public/rewards.js",
-  "cloudflare/worker.mjs",
-  "wrangler.jsonc"
+  "public/version.json",
+  "Dockerfile",
+  "docker-compose.yml",
+  "package.json"
 ].map(async path=>[path,await readFile(path,"utf8")])));
 
 function must(condition,message){
@@ -33,14 +35,19 @@ must(server.includes("owner_recovery_enabled=false"),"login contract: one-time o
 must(server.includes("user.owner_recovery_consumed"),"login contract: owner recovery audit event missing");
 must(files["public/index.html"].includes("User ID or email"),"login contract: username/email label missing");
 must(files["public/app.js"].includes("identifier:f.get('identifier')"),"login contract: username identifier not submitted");
-must(files["cloudflare/worker.mjs"].includes('url.pathname.startsWith("/api/")'),"cloudflare production contract: API route handling missing");
-must(files["wrangler.jsonc"].includes('"run_worker_first": ["/api", "/api/*"]'),"cloudflare production contract: API must run Worker before SPA assets");
-must(files["wrangler.jsonc"].includes('"directory": "./public"'),"cloudflare production contract: public asset directory missing");
-must(files["cloudflare/worker.mjs"].includes("supabase.co/functions/v1/ordergrid-api"),"cloudflare production contract: Supabase Edge API origin missing");
-must(files["cloudflare/worker.mjs"].includes('"x-ordergrid-path"'),"cloudflare production contract: original API path forwarding missing");
-must(!files["cloudflare/worker.mjs"].includes("onrender.com"),"cloudflare production contract: Render dependency must be absent");
-must(!files["wrangler.jsonc"].includes('"containers"'),"cloudflare production contract: paid Containers must be absent");
-must(!files["wrangler.jsonc"].includes('"durable_objects"'),"cloudflare production contract: paid container Durable Object binding must be absent");
+const productionSurface=[
+  server,
+  files["public/version.json"],
+  files["Dockerfile"],
+  files["docker-compose.yml"],
+  files["package.json"]
+].join("\n");
+must(files["public/version.json"].includes('"deploymentTarget": "aws"'),"AWS production contract: deployment target metadata missing");
+must(files["public/version.json"].includes('"platform": "aws-node-fastify-postgres"'),"AWS production contract: runtime platform metadata missing");
+must(files["docker-compose.yml"].includes("AWS_REGION=")&&files["docker-compose.yml"].includes("BEDROCK_REGION="),"AWS production contract: AWS runtime configuration missing");
+must(files["Dockerfile"].includes("node dist/migrate.js && node dist/server.js"),"AWS production contract: container must migrate and start the Fastify server");
+must(server.includes("CODEBUILD_RESOLVED_SOURCE_VERSION"),"AWS production contract: release identity must support CodeBuild source versions");
+must(!/supabase|cloudflare|wrangler|workers\.dev|onrender|CF_PAGES|ORDERGRID_CLOUDFLARE/i.test(productionSurface),"AWS production contract: legacy provider wiring must stay removed");
 must(server.includes('app.get("/api/signup-status"'),"owner signup contract: public signup-status route missing");
 must(server.includes('app.post("/api/signup"'),"owner signup contract: protected signup route missing");
 must(server.includes("ORDERGRID_SIGNUP_CODE"),"owner signup contract: setup code protection missing");
