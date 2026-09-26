@@ -177,8 +177,50 @@ function Read-Protected([string]$value) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
+function Update-OrderGridWorker($cfg) {
+  try {
+    $baseUrl = ([string]$cfg.url).TrimEnd("/")
+    if ([string]::IsNullOrWhiteSpace($baseUrl)) { return $cfg }
+    $version = Invoke-RestMethod -Uri "$baseUrl/api/version" -Method Get -TimeoutSec 15
+    $desired = [string]$version.release
+    $current = [string]$cfg.workerRef
+    if ([string]::IsNullOrWhiteSpace($desired) -or $desired -eq "dev" -or $desired -eq $current) { return $cfg }
+
+    $updateZip = Join-Path $env:TEMP "ordergrid-worker-update.zip"
+    $updateExtract = Join-Path $env:TEMP "ordergrid-worker-update"
+    if (Test-Path $updateZip) { Remove-Item $updateZip -Force }
+    if (Test-Path $updateExtract) { Remove-Item $updateExtract -Recurse -Force }
+
+    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/Tashima-Tarsh/ordergrid/archive/$desired.zip" -OutFile $updateZip
+    Expand-Archive -Path $updateZip -DestinationPath $updateExtract -Force
+    $expanded = Get-ChildItem $updateExtract -Directory | Select-Object -First 1
+    if (-not $expanded) { throw "Worker update archive extraction failed." }
+
+    $workerPath = [string]$cfg.workerRoot
+    $backup = "$workerPath.previous"
+    if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
+    if (Test-Path $workerPath) { Move-Item $workerPath $backup }
+    try {
+      Move-Item $expanded.FullName $workerPath
+      if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
+    } catch {
+      if (Test-Path $workerPath) { Remove-Item $workerPath -Recurse -Force }
+      if (Test-Path $backup) { Move-Item $backup $workerPath }
+      throw
+    }
+
+    $cfg.workerRef = $desired
+    $cfg | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
+    ("[" + (Get-Date).ToString("s") + "] Secure Browser updated to " + $desired) | Add-Content $logPath
+  } catch {
+    ("[" + (Get-Date).ToString("s") + "] Secure Browser auto-update skipped: " + $_.Exception.Message) | Add-Content $logPath
+  }
+  return $cfg
+}
+
 try {
   $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+  $cfg = Update-OrderGridWorker $cfg
   $env:ORDERGRID_URL = [string]$cfg.url
   $env:ORDERGRID_WORKER_REF = [string]$cfg.workerRef
   $env:ORDERGRID_WORKER_TOKEN = Read-Protected ([string]$cfg.workerToken)
