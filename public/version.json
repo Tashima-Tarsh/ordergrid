@@ -1,8 +1,9 @@
 {
-  "release": "cloudflare-free-live-trigger-2026-09-22",
+  "release": "runtime",
   "feature": "authenticated-production",
-  "platform": "cloudflare-workers-free+supabase-edge",
-  "renderDependency": false,
-  "containers": false,
-  "expectedMainCommit": "c56937b6542464e2adf8279033b65cbd4a7b3930"
+  "platform": "node-fastify-postgres",
+  "versionEndpoint": "/api/version",
+  "readinessEndpoint": "/api/production-readiness",
+  "workerProtocol": 2,
+  "deploymentManifest": "render.yaml"
 }
