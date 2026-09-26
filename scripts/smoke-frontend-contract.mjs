@@ -293,7 +293,8 @@ must(managedExecution.includes("ORDERGRID_HEADLESS"),"managed execution contract
 must(managedChromeInstaller.includes("Chrome for Testing"),"managed execution contract: managed Chrome installer missing");
 must(packageSource.includes('"start": "node dist/server.js"'),"managed execution contract: production startup must use the least-privileged app runtime");
 must(!packageSource.includes("node dist/migrate.js && node dist/server.js"),"managed execution contract: app runtime must not require DDL privileges");
-must(files["public/rewards.js"].includes("CLOUD BROWSER ONLINE"),"retailer session contract: hosted Cloud Browser customer status missing");
+must(files["public/rewards.js"].includes("DESKTOP NEEDED FOR FLIPKART"),"retailer session contract: Flipkart sign-in must identify desktop worker requirement");
+must(html.includes('id="installFlipkartWorker"')&&html.includes('id="connectInstallWorker"'),"retailer session contract: worker setup must be available in account list and connection dialog");
 must(files["public/rewards.js"].includes("waiting OTP"),"retailer session contract: account authentication progress counts missing");
 must(agent.includes("ORDERGRID_SESSION_CLAIM"),"retailer session contract: local worker must support sequential auth claims");
 must(workerInstaller.includes('ORDERGRID_SESSION_CLAIM = "1"'),"retailer session contract: Windows Secure Browser must authenticate one account at a time");
