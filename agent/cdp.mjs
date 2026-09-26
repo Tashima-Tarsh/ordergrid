@@ -1307,9 +1307,36 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
             continue;
           }
           if(acted.action==='OTP_REQUESTED'||acted.challenge==='OTP_REQUIRED'){
-            await sleep(3000);
+            let otpOutcome={outcome:"UNKNOWN",code:"OTP_NOT_SENT",message:"Flipkart has not confirmed that an OTP was sent yet."};
+            for(let attempt=0;attempt<8;attempt++){
+              await sleep(attempt===0?1200:700);
+              const observed=await evaluate(connection,`(()=>{
+                const text=(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,12000);
+                const otpInputs=[...document.querySelectorAll('input')].filter(el=>{
+                  const meta=[el.name,el.id,el.placeholder,el.autocomplete,el.getAttribute('aria-label')].filter(Boolean).join(' ');
+                  return /otp|one.?time|verification.?code/i.test(meta);
+                });
+                const digits=[...document.querySelectorAll('input')].filter(el=>/^[0-9]$/.test(String(el.value||''))||/digit|otp/i.test(String(el.getAttribute('aria-label')||'')));
+                const isRateLimited=/(try again later|too many attempts|maximum attempts|unable to send|something went wrong)/i.test(text);
+                const isNewUser=/(looks like you're new here|sign up with your)/i.test(text);
+                return {text,digitsCount:digits.length,hasOtpInput:otpInputs.length>0,isRateLimited,isNewUser,excerpt:text.slice(0,1200),url:location.href};
+              })()`).catch(()=>null);
+              if(observed){
+                otpOutcome=classifyLoginOutcome(observed);
+                if(otpOutcome.outcome!=="UNKNOWN")break;
+              }
+            }
             const screenshot=await captureScreen();
-            return {status:"REAUTH_REQUIRED",code:"OTP_REQUIRED",message:"Retailer OTP is required to finish sign-in.",url:target.url||url,screenshot};
+            if(otpOutcome.outcome==="OTP_SENT"){
+              return {status:"REAUTH_REQUIRED",code:"OTP_SENT",message:otpOutcome.message,url:target.url||url,screenshot};
+            }
+            if(otpOutcome.outcome==="RATE_LIMITED"){
+              return {status:"REAUTH_REQUIRED",code:"RATE_LIMITED",message:otpOutcome.message,url:target.url||url,screenshot};
+            }
+            if(otpOutcome.outcome==="ACCOUNT_NOT_REGISTERED"){
+              return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:otpOutcome.message,url:target.url||url,screenshot};
+            }
+            return {status:"REAUTH_REQUIRED",code:"LOGIN_REQUIRED",message:"Flipkart did not confirm that an OTP was sent. Retry the connection; manual browser fallback is only needed if Flipkart presents an unexpected challenge.",url:target.url||url,screenshot};
           }
           await sleep(600);
           continue;
