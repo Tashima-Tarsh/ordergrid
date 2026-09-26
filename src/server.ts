@@ -34,7 +34,7 @@ if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
 const releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.RENDER_GIT_COMMIT||process.env.CF_PAGES_COMMIT_SHA||"dev");
 const workerProtocol=2;
-const expectedMigration="034_flipkart_checkout_hardening.sql";
+const expectedMigration="035_execution_worker_release.sql";
 const bedrock=createBedrockService(config);
 const secureCookies=new URL(config.APP_ORIGIN).protocol==="https:";
 const googleJwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -261,7 +261,7 @@ app.get("/api/health",async()=>{
   const connectedIssuers = await db.query("select count(*)::int count from issuer_connections where status='CONNECTED'").catch(()=>({rows:[{count:0}]}));
   const migration=await db.query("select name from schema_migrations order by name desc limit 1").catch(()=>({rows:[]}));
   const latestMigration=String(migration.rows[0]?.name||"none");
-  const onlineDesktopWorkers=await db.query("select count(*)::int online from execution_workers where mode in (\'DESKTOP\',\'INTERACTIVE\') and last_seen > now() - interval \'30 seconds\'").catch(()=>({rows:[{online:0}]}));
+  const onlineDesktopWorkers=await db.query("select count(*)::int online from execution_workers where mode in (\'DESKTOP\',\'INTERACTIVE\') and worker_protocol>=2 and last_seen > now() - interval \'30 seconds\'").catch(()=>({rows:[{online:0}]}));
   const paymentReady=config.CARD_PROVIDER!=="disabled"&&Number(connectedIssuers.rows[0]?.count||0)>0;
   return {
     status: dbStatus === "healthy" ? "ok" : "degraded",
@@ -292,7 +292,7 @@ app.get("/api/production-readiness",async(req,reply)=>{
   if(!["OWNER","APPROVER","AUDITOR"].includes(p.role))return reply.code(403).send({error:"forbidden"});
   const [migration,workers,issuers,issuerState]=await Promise.all([
     db.query("select name from schema_migrations order by name desc limit 1").catch(()=>({rows:[]})),
-    db.query("select mode,count(*)::int count from execution_workers where last_seen>now()-interval '30 seconds' group by mode").catch(()=>({rows:[]})),
+    db.query("select mode,count(*)::int count from execution_workers where worker_protocol>=$1 and last_seen>now()-interval '30 seconds' group by mode",[workerProtocol]).catch(()=>({rows:[]})),
     db.query("select count(*)::int count from issuer_connections where tenant_id=$1 and status='CONNECTED'",[p.tenantId]).catch(()=>({rows:[{count:0}]})),
     loadTenantIssuer(db,config,p.tenantId).catch(()=>null)
   ]);
@@ -1545,6 +1545,7 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
         `select 1
          from execution_workers
          where tenant_id=$1 and mode in ('DESKTOP','INTERACTIVE')
+           and worker_protocol>=2
            and last_seen>now()-interval '30 seconds'
          limit 1`,
         [p.tenantId]
@@ -2026,10 +2027,10 @@ app.post("/api/execution-worker/:workerId/session-health/claim",async(req,reply)
   try{
     await client.query("begin");
     const live=await client.query(
-      "select mode from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and last_seen>now()-interval '30 seconds' for update",
-      [p.tenantId,workerId,p.id]
+      "select mode,worker_protocol from execution_workers where tenant_id=$1 and id=$2 and user_id=$3 and worker_protocol>=$4 and last_seen>now()-interval '30 seconds' for update",
+      [p.tenantId,workerId,p.id,workerProtocol]
     );
-    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}
+    if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_update_required",requiredWorkerProtocol:workerProtocol})}
     const workerMode=String(live.rows[0].mode||"DESKTOP");
     const isManaged=workerMode==="MANAGED";
     await client.query(
@@ -2349,8 +2350,8 @@ app.patch("/api/retailer-refunds/:id/status",async(req,reply)=>{
 
 app.get("/api/checkout-tasks",async(req)=>{const p=req.principal!;const {rows}=await db.query(`select po.id,po.status,po.amount_minor,po.failure_message,bi.product_url,bi.title,bi.requested_quantity,a.id address_id,a.recipient,a.city,a.postal_code from purchase_orders po join batch_items bi on bi.id=po.batch_item_id left join addresses a on a.id=bi.address_id where po.tenant_id=$1 order by po.created_at desc limit 250`,[p.tenantId]);return {tasks:rows};});
 
-app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK","INTERACTIVE","MANUAL","MANAGED","DESKTOP"]).default("BULK")}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,last_seen) values($1,$2,$3,$4,$5,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode]);return {ok:true};});
-app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,last_seen from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId]);return {workers:rows};});
+app.post("/api/execution-worker/heartbeat",async(req)=>{const p=req.principal!;const body=z.object({workerId:z.string().min(8).max(128),hostname:z.string().max(120).optional(),mode:z.enum(["BULK","INTERACTIVE","MANUAL","MANAGED","DESKTOP"]).default("BULK"),releaseRef:z.string().max(120).optional(),workerProtocol:z.number().int().min(1).max(100).default(1)}).parse(req.body??{});await db.query(`insert into execution_workers(id,tenant_id,user_id,hostname,mode,release_ref,worker_protocol,last_seen) values($1,$2,$3,$4,$5,$6,$7,now()) on conflict(tenant_id,id) do update set user_id=excluded.user_id,hostname=excluded.hostname,mode=excluded.mode,release_ref=excluded.release_ref,worker_protocol=excluded.worker_protocol,last_seen=now()`,[body.workerId,p.tenantId,p.id,body.hostname??null,body.mode,body.releaseRef??null,body.workerProtocol]);return {ok:true,workerProtocol,release:releaseSha};});
+app.get("/api/execution-workers",async(req)=>{const p=req.principal!;const {rows}=await db.query("select id,hostname,mode,release_ref,worker_protocol,last_seen,(worker_protocol>=$2) compatible from execution_workers where tenant_id=$1 and last_seen>now()-interval '30 seconds' order by last_seen desc",[p.tenantId,workerProtocol]);return {workers:rows,requiredWorkerProtocol:workerProtocol,release:releaseSha};});
 app.post("/api/execution-worker/:workerId/claim",async(req,reply)=>{const p=req.principal!,workerId=z.string().min(8).max(128).parse((req.params as any).workerId),body=z.object({limit:z.number().int().min(1).max(25).default(25)}).parse(req.body??{}),policy=await getAutomationPolicy(p.tenantId);if(!policy.automation_enabled||!policy.auto_continue_checkout)return reply.code(409).send({error:"checkout_automation_paused"});const effectiveLimit=Math.min(body.limit,Number(policy.max_active_orders||8)),client=await db.connect();try{await client.query("begin");const live=await client.query("select 1 from execution_workers where tenant_id=$1 and id=$2 and last_seen>now()-interval '30 seconds' for update",[p.tenantId,workerId]);if(!live.rows[0]){await client.query("rollback");return reply.code(409).send({error:"execution_worker_not_online"})}const picked=await client.query("select id from checkout_baskets where tenant_id=$1 and status='CLAIMED' and execution_worker_id is null and expires_at>now() order by created_at for update skip locked limit $2",[p.tenantId,effectiveLimit]);for(const row of picked.rows)await client.query("update checkout_baskets set execution_worker_id=$1,updated_at=now() where id=$2",[workerId,row.id]);await client.query("commit");return {assigned:picked.rows.length};}catch(error){await client.query("rollback");throw error}finally{client.release()}});
 
 
