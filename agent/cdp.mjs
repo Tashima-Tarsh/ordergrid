@@ -1273,18 +1273,29 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const isEmail = ${JSON.stringify(isEmail)};
         const visible = el => Boolean(el) && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
         const inputs = [...document.querySelectorAll('input')].filter(visible);
-        const controls = [...document.querySelectorAll('button,[role="button"],a,span')].filter(visible);
+        const controls = [...document.querySelectorAll('button,[role="button"],a,span,div,p')].filter(visible);
         const label = el => String(el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
 
         if (isEmail) {
-          const useEmailBtn = controls.find(el => /use (?:email|email-id)/i.test(label(el)));
+          const useEmailBtn = controls.find(el => /use\s+email/i.test(label(el)))
+            || [...document.querySelectorAll('*')].find(s => /use\s+email/i.test(s.innerText || '') && s.children.length === 0);
           if (useEmailBtn) {
-            try { useEmailBtn.click(); } catch {}
+            try {
+              useEmailBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
+              useEmailBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+              useEmailBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+              useEmailBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              useEmailBtn.click();
+            } catch {}
           }
         } else {
-          const usePhoneBtn = controls.find(el => /use (?:phone|mobile)/i.test(label(el)));
+          const usePhoneBtn = controls.find(el => /use\s+(?:phone|mobile)/i.test(label(el)))
+            || [...document.querySelectorAll('*')].find(s => /use\s+(?:phone|mobile)/i.test(s.innerText || '') && s.children.length === 0);
           if (usePhoneBtn) {
-            try { usePhoneBtn.click(); } catch {}
+            try {
+              usePhoneBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              usePhoneBtn.click();
+            } catch {}
           }
         }
 
@@ -1301,14 +1312,21 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           const type = String(el.type || 'text').toLowerCase();
           if (!['text', 'email', 'tel', 'number'].includes(type)) return false;
           if (el.name === 'q' || /search|find products|products brands and more/i.test(fieldMeta(el))) return false;
-          if (isEmail && type === 'number') return false;
           return true;
         });
 
-        let field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
-          || nonSearch.find(el => /email|mobile|phone|login|username|request otp/i.test(fieldMeta(el)))
-          || (isEmail ? nonSearch.find(el => ['text', 'email'].includes(el.type)) : nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type)))
-          || nonSearch[0] || null;
+        let field = null;
+        if (isEmail) {
+          field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+            || nonSearch.find(el => el.type !== 'number' && /email|mobile|phone|login|username/i.test(fieldMeta(el)))
+            || nonSearch.find(el => ['text', 'email'].includes(el.type))
+            || null;
+        } else {
+          field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+            || nonSearch.find(el => /email|mobile|phone|login|username/i.test(fieldMeta(el)))
+            || nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type))
+            || nonSearch[0] || null;
+        }
 
         if (!field) {
           const openLoginBtn = controls.find(el => /^(?:login|log in|sign in|signin)$/i.test(label(el)));
@@ -1361,13 +1379,20 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
         const type = String(el.type || 'text').toLowerCase();
         if (!['text', 'email', 'tel', 'number'].includes(type)) return false;
         if (el.name === 'q' || /search|find products|products brands and more/i.test(fieldMeta(el))) return false;
-        if (isEmail && type === 'number') return false;
         return true;
       });
-      const field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
-        || nonSearch.find(el => /email|mobile|phone|login|username|request otp/i.test(fieldMeta(el)))
-        || (isEmail ? nonSearch.find(el => ['text', 'email'].includes(el.type)) : nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type)))
-        || nonSearch[0] || null;
+      let field = null;
+      if (isEmail) {
+        field = nonSearch.find(el => el.type !== 'number' && /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+          || nonSearch.find(el => el.type !== 'number' && /email|mobile|phone|login|username/i.test(fieldMeta(el)))
+          || nonSearch.find(el => ['text', 'email'].includes(el.type))
+          || null;
+      } else {
+        field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+          || nonSearch.find(el => /email|mobile|phone|login|username/i.test(fieldMeta(el)))
+          || nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type))
+          || nonSearch[0] || null;
+      }
       return { value: String(field?.value || ''), url: location.href };
     })()`).catch(()=>null);
 
