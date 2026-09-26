@@ -1285,14 +1285,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           });
           if (useEmailBtn) {
             try {
-              useEmailBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
-              useEmailBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-              useEmailBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-              useEmailBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
               useEmailBtn.click();
-              if (useEmailBtn.parentElement && ['A', 'BUTTON'].includes(useEmailBtn.parentElement.tagName)) {
-                useEmailBtn.parentElement.click();
-              }
+              if (useEmailBtn.parentElement) useEmailBtn.parentElement.click();
             } catch {}
           }
         } else {
@@ -1305,6 +1299,7 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           if (usePhoneBtn) {
             try {
               usePhoneBtn.click();
+              if (usePhoneBtn.parentElement) usePhoneBtn.parentElement.click();
             } catch {}
           }
         }
@@ -1318,7 +1313,8 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
           return String([el.name, el.id, el.placeholder, el.autocomplete, el.getAttribute('aria-label'), parentText].filter(Boolean).join(' '));
         };
 
-        const nonSearch = inputs.filter(el => {
+        const currentInputs = [...document.querySelectorAll('input')].filter(visible);
+        const nonSearch = currentInputs.filter(el => {
           const type = String(el.type || 'text').toLowerCase();
           if (!['text', 'email', 'tel', 'number'].includes(type)) return false;
           if (el.name === 'q' || /search|find products|products brands and more/i.test(fieldMeta(el))) return false;
