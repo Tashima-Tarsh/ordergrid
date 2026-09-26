@@ -52,5 +52,3 @@ create index if not exists sessions_active_tenant_idx
 alter table public.dealer_relationships enable row level security;
 alter table public.dealer_access enable row level security;
 
-revoke all on public.dealer_relationships from anon, authenticated;
-revoke all on public.dealer_access from anon, authenticated;
