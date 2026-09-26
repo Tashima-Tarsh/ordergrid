@@ -2,7 +2,7 @@
   const $=s=>document.querySelector(s);
   const esc=value=>{const node=document.createElement('div');node.textContent=String(value??'');return node.innerHTML};
   const moneyMinor=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value||0)/100);
-  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},desktopWorkerReady=false,managedWorkerReady=false;
+  let retailer='flipkart',accounts=[],finance={accounts:[],summary:{}},desktopWorkerReady=false,desktopWorkerUpdateRequired=false,managedWorkerReady=false;
 
   async function request(path,options={}){
     const response=await fetch(path,{...options,headers:{accept:'application/json',...(options.headers||{})}});
@@ -20,6 +20,7 @@
   }
   function customerError(error){
     const message=String(error?.message||error||'Request failed');
+    if(/update required|worker protocol/i.test(message))return 'The installed OrderGrid Secure Browser is out of date. Reinstall it from OrderGrid, then reconnect Flipkart.';
     if(/worker.*offline|execution worker|session worker|desktop worker/i.test(message))return 'The OrderGrid worker is offline. Start the desktop worker on the computer where the Flipkart session will live, then retry.';
     return message;
   }
@@ -45,6 +46,9 @@
       if(desktopWorkerReady){
         status.dataset.ready='true';
         status.textContent='DESKTOP WORKER ONLINE';
+      }else if(desktopWorkerUpdateRequired){
+        status.dataset.ready='update';
+        status.textContent='DESKTOP WORKER UPDATE REQUIRED · REINSTALL';
       }else if(managedWorkerReady){
         status.dataset.ready='managed';
         status.textContent='CLOUD WORKER ONLINE · DESKTOP NEEDED FOR FLIPKART';
@@ -207,7 +211,9 @@
     if(financeResult.status==='fulfilled')finance=financeResult.value;
     else console.error(financeResult.reason);
     const workers=(workersResult.status==='fulfilled'?(workersResult.value.workers||[]):[]);
-    desktopWorkerReady=workers.some(w=>['DESKTOP','INTERACTIVE'].includes(String(w.mode||'').toUpperCase()));
+    const desktopWorkers=workers.filter(w=>['DESKTOP','INTERACTIVE'].includes(String(w.mode||'').toUpperCase()));
+    desktopWorkerReady=desktopWorkers.some(w=>w.compatible===true||Number(w.worker_protocol||0)>=Number(workersResult.status==='fulfilled'?(workersResult.value.requiredWorkerProtocol||2):2));
+    desktopWorkerUpdateRequired=desktopWorkers.length>0&&!desktopWorkerReady;
     managedWorkerReady=workers.some(w=>String(w.mode||'').toUpperCase()==='MANAGED');
     render();
   }
@@ -283,7 +289,7 @@
     }else{
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
-      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'Start the OrderGrid Secure Browser on this computer before connecting Flipkart.';
+      $('#connectStatusMeta').textContent=desktopWorkerReady?'OrderGrid is requesting Flipkart verification in the secure session.':desktopWorkerUpdateRequired?'The installed Secure Browser is out of date. Reinstall it from OrderGrid before connecting Flipkart.':'Start the OrderGrid Secure Browser on this computer before connecting Flipkart.';
     }
 
     const openBtn=$('#openFlipkartSignin');
@@ -563,7 +569,7 @@
         }
       }catch(error){prepareError=customerError(error)}
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      secureBrowserReady=(secureState.workers||[]).some(w=>['DESKTOP','INTERACTIVE'].includes(String(w.mode||'').toUpperCase()));
+      secureBrowserReady=(secureState.workers||[]).some(w=>['DESKTOP','INTERACTIVE'].includes(String(w.mode||'').toUpperCase())&&(w.compatible===true||Number(w.worker_protocol||0)>=Number(secureState.requiredWorkerProtocol||2)));
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
