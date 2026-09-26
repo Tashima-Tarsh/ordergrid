@@ -75,3 +75,11 @@
 #retailerConnectDialog .live-preview-badge{position:absolute;top:8px;left:8px;background:rgba(15,23,42,0.85);color:#34d399;font-size:0.68rem;font-weight:900;letter-spacing:0.08em;padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);z-index:2}
 #retailerConnectDialog .connect-live-image{display:block;width:100%;height:auto;max-height:260px;object-fit:contain;background:#f8fafc}
 
+
+/* Flipkart connection setup: visible prerequisites and responsive actions. */
+.flipkart-setup{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 0;padding:18px 20px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:14px;color:#1e3a5f}
+.flipkart-setup strong{font-size:1rem}.flipkart-setup p{margin:5px 0 0;font-size:.87rem;line-height:1.5}
+.setup-download{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;text-decoration:none;padding:.72rem 1rem;border-radius:9px;font-weight:700}
+.setup-download[hidden]{display:none!important}.connect-steps{font-size:.83rem;line-height:1.5;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px}
+#retailerConnectDialog #connectInstallWorker{margin:10px 0;max-width:max-content}
+@media(max-width:700px){.flipkart-setup{flex-direction:column;align-items:stretch}.setup-download{white-space:normal;text-align:center}#retailerConnectDialog #connectInteractiveActions{flex-direction:column}#retailerConnectDialog #connectInteractiveActions button{width:100%}}
