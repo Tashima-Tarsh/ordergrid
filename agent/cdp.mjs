@@ -1267,54 +1267,59 @@ export async function prepareRetailerSession({chrome,directory,retailer,accountC
     if(!login)return {outcome:"LOGIN_REQUIRED",message:"Flipkart login identifier is missing."};
 
     const isEmail = login.includes('@');
-    // Use real Chrome text insertion so Flipkart's controlled input receives native browser events.
-    const focusLogin=await evaluate(connection,`(()=>{
-      const isEmail = ${JSON.stringify(isEmail)};
-      const visible = el => Boolean(el) && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
-      const inputs = [...document.querySelectorAll('input')].filter(visible);
-      const controls = [...document.querySelectorAll('button,[role="button"],a,span')].filter(visible);
-      const label = el => String(el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
+    let focusLogin = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      focusLogin = await evaluate(connection,`(()=>{
+        const isEmail = ${JSON.stringify(isEmail)};
+        const visible = el => Boolean(el) && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+        const inputs = [...document.querySelectorAll('input')].filter(visible);
+        const controls = [...document.querySelectorAll('button,[role="button"],a,span')].filter(visible);
+        const label = el => String(el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
 
-      if (isEmail) {
-        const useEmailBtn = controls.find(el => /use (?:email|email-id)/i.test(label(el)));
-        if (useEmailBtn) {
-          try { useEmailBtn.click(); } catch {}
+        if (isEmail) {
+          const useEmailBtn = controls.find(el => /use (?:email|email-id)/i.test(label(el)));
+          if (useEmailBtn) {
+            try { useEmailBtn.click(); } catch {}
+          }
+        } else {
+          const usePhoneBtn = controls.find(el => /use (?:phone|mobile)/i.test(label(el)));
+          if (usePhoneBtn) {
+            try { usePhoneBtn.click(); } catch {}
+          }
         }
-      } else {
-        const usePhoneBtn = controls.find(el => /use (?:phone|mobile)/i.test(label(el)));
-        if (usePhoneBtn) {
-          try { usePhoneBtn.click(); } catch {}
-        }
-      }
 
-      const fieldMeta = el => {
-        let parentText = '';
-        let node = el;
-        for (let d = 0; node && d < 5; d++, node = node.parentElement) {
-          parentText += ' ' + String(node.innerText || '');
-        }
-        return String([el.name, el.id, el.placeholder, el.autocomplete, el.getAttribute('aria-label'), parentText].filter(Boolean).join(' '));
-      };
+        const fieldMeta = el => {
+          let parentText = '';
+          let node = el;
+          for (let d = 0; node && d < 5; d++, node = node.parentElement) {
+            parentText += ' ' + String(node.innerText || '');
+          }
+          return String([el.name, el.id, el.placeholder, el.autocomplete, el.getAttribute('aria-label'), parentText].filter(Boolean).join(' '));
+        };
 
-      const nonSearch = inputs.filter(el => {
-        const type = String(el.type || 'text').toLowerCase();
-        if (!['text', 'email', 'tel', 'number'].includes(type)) return false;
-        if (el.name === 'q' || /search|find products|products brands and more/i.test(fieldMeta(el))) return false;
-        if (isEmail && type === 'number') return false;
-        return true;
-      });
+        const nonSearch = inputs.filter(el => {
+          const type = String(el.type || 'text').toLowerCase();
+          if (!['text', 'email', 'tel', 'number'].includes(type)) return false;
+          if (el.name === 'q' || /search|find products|products brands and more/i.test(fieldMeta(el))) return false;
+          if (isEmail && type === 'number') return false;
+          return true;
+        });
 
-      let field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
-        || nonSearch.find(el => /email|mobile|phone|login|username|request otp/i.test(fieldMeta(el)))
-        || (isEmail ? nonSearch.find(el => ['text', 'email'].includes(el.type)) : nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type)))
-        || nonSearch[0] || null;
+        let field = nonSearch.find(el => /enter (?:email|mobile|phone)|email or mobile|email\/mobile/i.test(fieldMeta(el)))
+          || nonSearch.find(el => /email|mobile|phone|login|username|request otp/i.test(fieldMeta(el)))
+          || (isEmail ? nonSearch.find(el => ['text', 'email'].includes(el.type)) : nonSearch.find(el => ['tel', 'number', 'text'].includes(el.type)))
+          || nonSearch[0] || null;
 
-      if (!field) return { ok: false, reason: 'LOGIN_FIELD_NOT_FOUND' };
-      field.focus();
-      try { field.value = ''; } catch {}
-      try { field.select(); } catch { try { field.setSelectionRange(0, String(field.value || '').length); } catch {} }
-      return { ok: true, value: String(field.value || ''), meta: fieldMeta(field).slice(0, 100), type: String(field.type || 'text'), url: location.href };
-    })()`).catch(()=>null);
+        if (!field) return { ok: false, reason: 'LOGIN_FIELD_NOT_FOUND' };
+        field.focus();
+        try { field.value = ''; } catch {}
+        try { field.select(); } catch { try { field.setSelectionRange(0, String(field.value || '').length); } catch {} }
+        return { ok: true, value: String(field.value || ''), meta: fieldMeta(field).slice(0, 100), type: String(field.type || 'text'), url: location.href };
+      })()`).catch(()=>null);
+
+      if (focusLogin?.ok) break;
+      await sleep(500);
+    }
 
     if(!focusLogin?.ok){
       console.log(`[FLIPKART_LOGIN_FIELD_FOUND] ${JSON.stringify({found:false,reason:focusLogin?.reason||"NOT_FOUND"})}`);

@@ -78,7 +78,7 @@ const profileMutex = new KeyedMutex();
 
 async function heartbeat(workerId){
   const mode=process.env.ORDERGRID_MANAGED_WORKER==="1"?"MANAGED":"DESKTOP";
-  const releaseRef=String(process.env.ORDERGRID_WORKER_REF||"dev");
+  const releaseRef=String(process.env.ORDERGRID_WORKER_REF||"b5a468e");
   await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode,releaseRef,workerProtocol:2})});
 }
 async function postProgress(workerId,basketId,state,code,message,extra={}){
@@ -257,7 +257,7 @@ async function main(){
               try{
                 result=await profileMutex.withLock(lockKey,async()=>{
                   return await prepareRetailerSession({
-                    chrome,directory,retailer:account.retailer,accountCredentials:account.credentials||null,sessionState:account.sessionState||null,verifyOnly:Boolean(account.verifyOnly)
+                    chrome,directory,retailer:account.retailer,accountCredentials:account.credentials?{...account.credentials,retailerAccountId:account.retailerAccountId,profileKey:account.profileKey}:null,sessionState:account.sessionState||null,verifyOnly:Boolean(account.verifyOnly)
                   });
                 });
               }catch(error){
