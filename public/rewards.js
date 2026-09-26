@@ -27,6 +27,13 @@
     const value=Number($('#sessionTargetDays')?.value||15);
     return value===30?30:15;
   }
+  function setConnectOtpVisible(visible){
+    const form=$('#connectOtpForm'),input=$('#connectOtpInput');
+    if(!form)return;
+    form.hidden=!visible;
+    form.style.display=visible?'flex':'none';
+    if(visible)setTimeout(()=>input?.focus(),0);
+  }
   function renderSecureBrowserStatus(){
     const status=$('#secureBrowserStatus');
     if(status){
@@ -259,9 +266,11 @@
     $('#connectAccountRef').textContent=account.account_reference;
     $('#connectOtpError').textContent='';
     if($('#connectOtpInput'))$('#connectOtpInput').value='';
-    if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
+    const initialStatus=String(account.session_status||'');
+    const initialChallenge=String(account.session_challenge_code||'');
+    setConnectOtpVisible(initialStatus==='REAUTH_REQUIRED'&&initialChallenge==='OTP_REQUIRED');
 
-    const isReady=String(account.session_status)==='READY';
+    const isReady=initialStatus==='READY';
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='CONNECTED';
@@ -338,7 +347,7 @@
           $('#connectStatusCard').className='connect-status-card success';
           $('#connectStatusHeading').textContent='CONNECTED';
           $('#connectStatusMeta').textContent='Session verified and saved.';
-          if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
+          setConnectOtpVisible(false);
           render();
           toast(`${target.account_reference} session verified!`);
           setTimeout(()=>{closeConnectModal()},1400);
@@ -347,13 +356,15 @@
             $('#connectStatusCard').className='connect-status-card otp-ready';
             $('#connectStatusHeading').textContent='FLIPKART OTP REQUIRED';
             $('#connectStatusMeta').textContent='Enter the 6-digit Flipkart OTP sent to '+(target.account_reference||'your mobile/email')+'.';
-            if($('#connectOtpForm'))$('#connectOtpForm').hidden=false;
+            setConnectOtpVisible(true);
           }else{
+            setConnectOtpVisible(false);
             $('#connectStatusCard').className='connect-status-card connecting';
             $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
             $('#connectStatusMeta').textContent='Sign in on Flipkart in the opened window, then click "Verify sign-in" below.';
           }
         }else if(st==='VERIFYING'){
+          setConnectOtpVisible(false);
           $('#connectStatusCard').className='connect-status-card connecting';
           $('#connectStatusHeading').textContent='VERIFYING SESSION';
           $('#connectStatusMeta').textContent='OrderGrid is checking Flipkart session status…';
