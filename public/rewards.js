@@ -165,6 +165,23 @@
           <div class="account-actions">${credentialAction}${otpAction}${verifyAction}<button type="button" class="secondary" data-toggle-account>${account.active?'Pause':'Activate'}</button><button type="button" class="secondary danger-btn" data-delete-account style="color:#ef4444;border-color:rgba(239,68,68,0.3);">Delete</button></div>
         </article>`;
     }).join(''):'<div class="account-pool-empty"><strong>No '+esc(retailerName(retailer))+' users yet</strong><span>Use Add Flipkart user to save the first user, delivery address and secure login.</span></div>';
+
+    // Bind primary connection actions directly after every render. Keep the
+    // delegated handler below as a fallback for dynamically added controls.
+    $('#retailerAccountPool')?.querySelectorAll('[data-connect-link],[data-reconnect-session],[data-verify-session]').forEach(button=>{
+      button.onclick=event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        const row=button.closest('[data-account-id]');
+        const account=accounts.find(x=>x.id===row?.dataset.accountId);
+        if(!account)return;
+        openConnectModal(account).catch(error=>{
+          const message=customerError(error);
+          const meta=$('#connectStatusMeta');if(meta)meta.textContent=message;
+          alert(message);
+        });
+      };
+    });
   }
   async function load(){
     const encoded=encodeURIComponent(retailer);
