@@ -27,12 +27,8 @@ import { buildUserDashboardCsv, buildUserDashboardWorkbook, getUserDashboard } f
 import { startManagedExecutionSupervisor } from "./managed-execution.js";
 import { createBedrockService } from "./bedrock.js";
 
-if(process.env.ORDERGRID_CLOUDFLARE_CONTAINER==="true"){
-  process.env.SESSION_SECRET ||= randomBytes(48).toString("base64url");
-  process.env.WORKER_API_TOKEN ||= randomBytes(48).toString("base64url");
-}
 const config=loadConfig(), db=createDb(config), jobs=config.REDIS_URL?createOrderQueue(config.REDIS_URL):null;
-const releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.RENDER_GIT_COMMIT||process.env.CF_PAGES_COMMIT_SHA||"dev");
+const releaseSha=String(process.env.ORDERGRID_RELEASE_SHA||process.env.CODEBUILD_RESOLVED_SOURCE_VERSION||process.env.GITHUB_SHA||"dev");
 const workerProtocol=2;
 const expectedMigration="035_execution_worker_release.sql";
 const bedrock=createBedrockService(config);
