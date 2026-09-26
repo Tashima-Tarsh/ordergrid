@@ -10,7 +10,6 @@ create table if not exists public.automation_policies (
 );
 
 alter table public.automation_policies enable row level security;
-revoke all on public.automation_policies from anon, authenticated;
 
 create index if not exists automation_policies_updated_by_idx
   on public.automation_policies(updated_by)
