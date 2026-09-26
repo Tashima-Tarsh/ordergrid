@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: ordergrid-production
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci && npm run build:local
+    startCommand: npm run db:migrate && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: DATA_ENCRYPTION_KEY_BASE64
+        sync: false
+      - key: WORKER_API_TOKEN
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: ORDERGRID_SIGNUP_CODE
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: "true"
+      - key: ORDERGRID_MANAGED_EXECUTION
+        value: "false"
+      - key: CARD_PROVIDER
+        value: disabled
+      - key: OTP_MIN_INTERVAL_MINUTES
+        value: "30"
+      - key: OTP_RATE_LIMIT_COOLDOWN_HOURS
+        value: "6"
