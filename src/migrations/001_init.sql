@@ -18,9 +18,9 @@ create index audit_log_tenant_created_idx on audit_log(tenant_id, created_at des
 create index batches_tenant_status_idx on order_batches(tenant_id,status);
 create index orders_tenant_status_idx on purchase_orders(tenant_id,status);
 
--- Supabase exposes the public schema through its Data API. OrderGrid uses a
--- private server-side Postgres connection, so deny all Data API access by
--- enabling RLS without public policies.
+-- Keep application tables protected by PostgreSQL row-level security.
+-- OrderGrid accesses PostgreSQL only through the server-side control plane;
+-- browser clients never connect directly to the database.
 alter table tenants enable row level security;
 alter table users enable row level security;
 alter table sessions enable row level security;
