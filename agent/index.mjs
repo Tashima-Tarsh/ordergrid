@@ -78,7 +78,8 @@ const profileMutex = new KeyedMutex();
 
 async function heartbeat(workerId){
   const mode=process.env.ORDERGRID_MANAGED_WORKER==="1"?"MANAGED":"DESKTOP";
-  await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode})});
+  const releaseRef=String(process.env.ORDERGRID_WORKER_REF||"dev");
+  await api("/api/execution-worker/heartbeat",{method:"POST",body:JSON.stringify({workerId,hostname:hostname(),mode,releaseRef,workerProtocol:2})});
 }
 async function postProgress(workerId,basketId,state,code,message,extra={}){
   await api(`/api/bulk-queue/${basketId}/progress`,{method:"POST",body:JSON.stringify({workerId,state,code,message,...extra})});
