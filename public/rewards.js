@@ -256,6 +256,11 @@
       $('#connectStatusMeta').textContent='1. Click "Open Flipkart Login" to sign in on Flipkart. 2. Then click "Verify sign-in" below.';
     }
 
+    const openBtn=$('#openFlipkartSignin');
+    if(openBtn)openBtn.hidden=false;
+    const verifyBtn=$('#verifyFlipkartSignin');
+    if(verifyBtn)verifyBtn.hidden=false;
+
     if($('#connectLivePreview'))$('#connectLivePreview').hidden=true;
     try{
       if(typeof dialog.showModal==='function'){
@@ -297,16 +302,34 @@
         activeConnectingAccount=target;
 
         const st=String(target.session_status||'');
+        const code=String(target.session_challenge_code||'');
         if(st==='READY'){
           clearInterval(connectPollTimer);
           connectPollTimer=null;
           $('#connectStatusCard').className='connect-status-card success';
           $('#connectStatusHeading').textContent='CONNECTED';
           $('#connectStatusMeta').textContent='Session verified and saved.';
+          if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
           render();
           toast(`${target.account_reference} session verified!`);
           setTimeout(()=>{closeConnectModal()},1400);
+        }else if(st==='REAUTH_REQUIRED'){
+          if(code==='OTP_REQUIRED'){
+            $('#connectStatusCard').className='connect-status-card otp-ready';
+            $('#connectStatusHeading').textContent='FLIPKART OTP REQUIRED';
+            $('#connectStatusMeta').textContent='Enter the 6-digit Flipkart OTP sent to '+(target.account_reference||'your mobile/email')+'.';
+            if($('#connectOtpForm'))$('#connectOtpForm').hidden=false;
+          }else{
+            $('#connectStatusCard').className='connect-status-card connecting';
+            $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
+            $('#connectStatusMeta').textContent='Sign in on Flipkart in the opened window, then click "Verify sign-in" below.';
+          }
+        }else if(st==='VERIFYING'){
+          $('#connectStatusCard').className='connect-status-card connecting';
+          $('#connectStatusHeading').textContent='VERIFYING SESSION';
+          $('#connectStatusMeta').textContent='OrderGrid is checking Flipkart session status…';
         }
+
         if(pollCount>300){
           clearInterval(connectPollTimer);
           connectPollTimer=null;
@@ -317,7 +340,8 @@
     },1000);
   }
 
-  $('#openFlipkartSignin')?.addEventListener('click',async()=>{
+  $('#openFlipkartSignin')?.addEventListener('click',async(event)=>{
+    event.preventDefault();
     if(!activeConnectingAccount)return;
     const btn=$('#openFlipkartSignin');
     btn.disabled=true;const prev=btn.textContent;btn.textContent='Opening…';
@@ -330,9 +354,6 @@
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='WAITING FOR SIGN-IN';
       $('#connectStatusMeta').textContent='Complete login on Flipkart in the window. Enter your mobile / OTP directly on Flipkart, then return here and click Verify sign-in.';
-      btn.hidden=true;
-      const verifyBtn=$('#verifyFlipkartSignin');
-      if(verifyBtn){verifyBtn.hidden=false;verifyBtn.textContent='Verify sign-in'}
       startConnectPolling(activeConnectingAccount.id);
     }catch(error){
       alert(customerError(error));
@@ -361,6 +382,46 @@
     }
   });
 
+  $('#connectOtpForm')?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(!activeConnectingAccount)return;
+    const formElement=event.currentTarget;
+    const btn=$('#connectSubmitOtp'),otpInput=$('#connectOtpInput');
+    const otp=String(otpInput?.value||'').trim();
+    if(!otp){if($('#connectOtpError'))$('#connectOtpError').textContent='Enter the OTP';return}
+    btn.disabled=true;btn.textContent='Submitting OTP…';if($('#connectOtpError'))$('#connectOtpError').textContent='';
+    try{
+      await request('/api/retailer-accounts/'+encodeURIComponent(activeConnectingAccount.id)+'/otp',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({otp})
+      });
+      toast('OTP submitted. Verifying session…');
+      startConnectPolling(activeConnectingAccount.id);
+    }catch(error){
+      if($('#connectOtpError'))$('#connectOtpError').textContent=customerError(error);
+    }finally{
+      btn.disabled=false;btn.textContent='Verify OTP & Connect';
+    }
+  });
+
+  $('#connectResendOtp')?.addEventListener('click',async()=>{
+    if(!activeConnectingAccount)return;
+    const btn=$('#connectResendOtp');
+    btn.disabled=true;const prev=btn.textContent;btn.textContent='Resending…';
+    try{
+      await request('/api/retailer-accounts/prepare',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({accountIds:[activeConnectingAccount.id],retailer:activeConnectingAccount.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
+      });
+      toast('Requested fresh OTP from Flipkart.');
+      startConnectPolling(activeConnectingAccount.id);
+    }catch(error){
+      alert(customerError(error));
+    }finally{
+      btn.disabled=false;btn.textContent=prev;
+    }
+  });
+
   $('#closeRetailerConnect')?.addEventListener('click',closeConnectModal);
   $('#retailerConnectDialog')?.addEventListener('close',()=>{
     if(connectPollTimer){clearInterval(connectPollTimer);connectPollTimer=null}
@@ -373,6 +434,7 @@
     const button=$('#saveRetailerUser'),form=new FormData(formElement);
     button.disabled=true;button.textContent='Saving…';$('#retailerUserError').textContent='';
     try{
+      try{window.open('https://www.flipkart.com/account/login?ret=/','_blank','width=900,height=750,noopener,noreferrer')}catch{}
       const result=await request('/api/retailer-users',{
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({
@@ -523,15 +585,27 @@
     }
     const connectLink=event.target.closest('[data-connect-link]');
     if(connectLink){
-      request('/api/retailer-accounts/prepare',{
-        method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({accountIds:[account.id],retailer:account.retailer||'flipkart',targetDays:sessionTargetDays(),verifyOnly:false})
-      }).catch(()=>{});
+      try{window.open('https://www.flipkart.com/account/login?ret=/','_blank','width=900,height=750,noopener,noreferrer')}catch{}
+      openConnectModal(account);
       toast(`Flipkart login opened for ${account.account_reference}. Complete OTP on Flipkart, then click Verify login.`);
       return;
     }
     const submitOtp=event.target.closest('[data-submit-account-otp]');
     if(submitOtp){
+      const otpInput=row.querySelector('[data-account-otp-input]');
+      const otp=String(otpInput?.value||'').trim();
+      if(otp){
+        submitOtp.disabled=true;submitOtp.textContent='Verifying…';
+        try{
+          await request('/api/retailer-accounts/'+encodeURIComponent(account.id)+'/otp',{
+            method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({otp})
+          });
+          toast('OTP submitted. Verifying session…');
+          await load();
+        }catch(error){alert(customerError(error))}
+        finally{submitOtp.disabled=false;submitOtp.textContent='Verify OTP'}
+        return;
+      }
       openConnectModal(account);
       return;
     }
