@@ -12,26 +12,33 @@ body.product-shell main{max-width:1600px;width:100%;margin:0 auto;padding:14px 1
 .menu-trigger{display:none!important}
 .app-sidebar{
   position:fixed;z-index:500;pointer-events:auto;isolation:isolate;inset:0 auto 0 0;width:216px;
-  padding:16px 12px 18px;background:linear-gradient(180deg,#0b0e13,#10161d 62%,#0d1218);color:#fff;
-  border-right:1px solid rgba(255,255,255,.07);box-shadow:12px 0 34px rgba(2,8,18,.08)
+  padding:16px 12px 18px;background:linear-gradient(180deg,#080d1a,#0c1322 62%,#080d19);color:#fff;
+  border-right:1px solid rgba(56,189,248,.12);box-shadow:12px 0 34px rgba(2,8,24,.22)
 }
-.sidebar-brand{display:flex;align-items:center;gap:9px;height:42px;padding:0 8px 12px;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,.075)}
-.sidebar-brand-mark{width:27px;height:27px;display:grid;place-items:center;border-radius:9px;background:#f5f7f8;color:#0e151d;font-size:9px;font-weight:950;letter-spacing:-.04em}
-.sidebar-brand strong{display:block;font-size:11px;letter-spacing:.11em}.sidebar-brand small{display:block;margin-top:1px;color:#6f8292;font-size:7px;letter-spacing:.08em}
-.nav-label{padding:4px 9px 7px;color:#637687;font-size:8px;font-weight:900;letter-spacing:.13em}
+.sidebar-brand{display:flex;align-items:center;gap:10px;height:46px;padding:0 6px 12px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sidebar-brand-mark{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:transparent;flex:none}
+.sidebar-brand strong{display:block;font-size:11.5px;font-weight:900;letter-spacing:.12em;background:linear-gradient(90deg,#ffffff,#93c5fd);-webkit-background-clip:text;-webkit-text-fill-color:transparent}.sidebar-brand small{display:block;margin-top:2px;color:#7dd3fc;font-size:7px;font-weight:800;letter-spacing:.12em}
+.nav-label{padding:4px 9px 7px;color:#64748b;font-size:8px;font-weight:900;letter-spacing:.14em}
 .app-sidebar button{
   position:relative;z-index:2;pointer-events:auto;display:flex;width:100%;align-items:center;gap:10px;
-  min-height:37px;padding:7px 9px;margin:2px 0;border:1px solid transparent;border-radius:10px;background:transparent;
-  color:#8fa0af;font-size:11px;font-weight:680;text-align:left;box-shadow:none;cursor:pointer;
+  min-height:38px;padding:7px 10px;margin:3px 0;border:1px solid transparent;border-radius:10px;background:transparent;
+  color:#94a3b8;font-size:11.5px;font-weight:680;text-align:left;box-shadow:none;cursor:pointer;transition:all .18s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.app-sidebar button:hover{background:rgba(255,255,255,.05);color:#e7edf2;transform:none}
-.app-sidebar button.active{background:rgba(255,255,255,.085);border-color:rgba(255,255,255,.075);color:#fff;transform:none}
+.app-sidebar button:hover{background:rgba(56,189,248,.08);color:#f1f5f9;border-color:rgba(56,189,248,.15);transform:none}
+.app-sidebar button.active{
+  background:linear-gradient(90deg, rgba(37,99,235,0.22) 0%, rgba(99,102,241,0.12) 100%);
+  border-color:rgba(56,189,248,0.32);
+  color:#ffffff;
+  box-shadow:inset 0 0 14px rgba(37,99,235,0.18), 0 2px 8px rgba(0,0,0,0.25);
+  transform:none
+}
 .nav-icon{
-  width:23px;height:23px;display:grid;place-items:center;border-radius:7px;background:rgba(255,255,255,.045);
-  color:#7d91a1;font-size:11px;font-weight:900;transition:.16s
+  width:24px;height:24px;display:grid;place-items:center;border-radius:7px;background:rgba(255,255,255,.05);
+  color:#94a3b8;font-size:11px;font-weight:900;transition:.18s
 }
-.app-sidebar button.active .nav-icon{background:#f2f5f7;color:#121820;box-shadow:0 4px 12px rgba(0,0,0,.12)}
-.nav-foot{position:absolute;bottom:17px;left:20px;right:20px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);font-size:8px;color:#617485;letter-spacing:.04em}
+.app-sidebar button:hover .nav-icon{color:#38bdf8;background:rgba(56,189,248,.12)}
+.app-sidebar button.active .nav-icon{background:linear-gradient(135deg, #0284c7, #2563eb);color:#ffffff;box-shadow:0 2px 10px rgba(37,99,235,0.45)}
+.nav-foot{position:absolute;bottom:17px;left:16px;right:16px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);font-size:7.5px;color:#64748b;letter-spacing:.05em;text-align:center}
 .workspace-title{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .view-section{display:none!important}
 .view-section.view-active{display:block!important}
@@ -69,8 +76,10 @@ const items=[
   ['rewards','★','Retailer users']
 ];
 
+const sidebarLogoSvg = `<svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="ogLgNav" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#2563eb"/><stop offset="100%" stop-color="#6366f1"/></linearGradient><linearGradient id="ogGlNav" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#0284c7"/><stop offset="100%" stop-color="#a855f7"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="#0f172a"/><path d="M16 5.5L25.5 11V21L16 26.5L6.5 21V11L16 5.5Z" stroke="url(#ogGlNav)" stroke-width="1.8" stroke-linejoin="round"/><path d="M16 5.5V16M25.5 11L16 16M6.5 11L16 16" stroke="url(#ogLgNav)" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="5.5" r="2.2" fill="#38bdf8"/><circle cx="25.5" cy="11" r="2.2" fill="#60a5fa"/><circle cx="25.5" cy="21" r="2.2" fill="#818cf8"/><circle cx="16" cy="26.5" r="2.2" fill="#c084fc"/><circle cx="6.5" cy="21" r="2.2" fill="#818cf8"/><circle cx="6.5" cy="11" r="2.2" fill="#38bdf8"/><circle cx="16" cy="16" r="2.8" fill="#ffffff"/></svg>`;
+
 side.innerHTML=
-  '<div class="sidebar-brand"><span class="sidebar-brand-mark">OG</span><div><strong>ORDERGRID</strong><small>PROCUREMENT OS</small></div></div>'+
+  '<div class="sidebar-brand"><span class="sidebar-brand-mark">' + sidebarLogoSvg + '</span><div><strong>ORDERGRID</strong><small>PROCUREMENT OS</small></div></div>'+
   '<div class="nav-label">WORKSPACE</div>'+
   items.map(x=>`<button type="button" data-view="${x[0]}"><span class="nav-icon">${x[1]}</span><span>${x[2]}</span></button>`).join('')+
   '<div class="nav-foot">Production workspace · secure operations</div>';
