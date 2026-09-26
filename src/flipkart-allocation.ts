@@ -1,6 +1,6 @@
 export type FlipkartVerifiedCapacity={
   retailerAccountId:string;
-  addressId:string;
+  addressId:string|null;
   accountReference:string;
   customerReference?:string|null;
   recipient?:string|null;
