@@ -29,8 +29,6 @@
   }
   function renderSecureBrowserStatus(){
     const status=$('#secureBrowserStatus');
-    if($('#installFlipkartWorker'))$('#installFlipkartWorker').hidden=desktopWorkerReady;
-    if($('#connectInstallWorker'))$('#connectInstallWorker').hidden=desktopWorkerReady;
     if(status){
       if(desktopWorkerReady){
         status.dataset.ready='true';
@@ -247,7 +245,6 @@
     if($('#connectOtpForm'))$('#connectOtpForm').hidden=true;
 
     const isReady=String(account.session_status)==='READY';
-    if($('#connectInstallWorker'))$('#connectInstallWorker').hidden=desktopWorkerReady;
     if(isReady){
       $('#connectStatusCard').className='connect-status-card success';
       $('#connectStatusHeading').textContent='CONNECTED';
@@ -255,7 +252,7 @@
     }else{
       $('#connectStatusCard').className='connect-status-card connecting';
       $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
-      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'Download and start the desktop worker on your Windows computer, then open its browser.';
+      $('#connectStatusMeta').textContent=desktopWorkerReady?'Open the worker browser, sign in there, then verify here.':'The OrderGrid browser is unavailable. An operator must start the desktop session before sign-in can continue.';
     }
 
     const openBtn=$('#openFlipkartSignin');
