@@ -1,9 +1,9 @@
 {
   "release": "runtime",
   "feature": "authenticated-production",
-  "platform": "node-fastify-postgres",
+  "platform": "aws-node-fastify-postgres",
+  "deploymentTarget": "aws",
   "versionEndpoint": "/api/version",
   "readinessEndpoint": "/api/production-readiness",
-  "workerProtocol": 2,
-  "deploymentManifest": "render.yaml"
+  "workerProtocol": 2
 }
