@@ -95,8 +95,11 @@ $expandedWorker = Get-ChildItem $extract -Directory | Select-Object -First 1
 if (-not $expandedWorker) { throw "OrderGrid worker archive extraction failed." }
 Move-Item $expandedWorker.FullName $workerRoot
 
-$defaultUrl = if ([string]::IsNullOrWhiteSpace($env:ORDERGRID_URL)) { "https://ordergrid-production.onrender.com" } else { $env:ORDERGRID_URL }
+$defaultUrl = if ([string]::IsNullOrWhiteSpace($env:ORDERGRID_URL)) { "" } else { [string]$env:ORDERGRID_URL }
 $url = $defaultUrl.TrimEnd("/")
+if (-not [string]::IsNullOrWhiteSpace($env:ORDERGRID_SETUP_TOKEN) -and [string]::IsNullOrWhiteSpace($url)) {
+  throw "OrderGrid deployment URL is missing from the secure-browser setup package."
+}
 
 $workerToken = ""
 $workerSessionToken = ""
@@ -115,8 +118,9 @@ if (-not [string]::IsNullOrWhiteSpace($env:ORDERGRID_SETUP_TOKEN)) {
   }
 } else {
   Write-Host "Manual setup mode" -ForegroundColor Yellow
-  $enteredUrl = Read-Host "OrderGrid URL [$defaultUrl]"
+  $enteredUrl = Read-Host "OrderGrid URL"
   if (-not [string]::IsNullOrWhiteSpace($enteredUrl)) { $url = $enteredUrl.TrimEnd("/") }
+  if ([string]::IsNullOrWhiteSpace($url)) { throw "OrderGrid URL is required." }
 
   $email = Read-Host "OrderGrid email"
   if ([string]::IsNullOrWhiteSpace($email)) { throw "OrderGrid email is required." }
