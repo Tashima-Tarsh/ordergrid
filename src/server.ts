@@ -1489,8 +1489,15 @@ app.post("/api/retailer-accounts/prepare",async(req,reply)=>{
     verifyOnly:z.boolean().optional()
   }).parse(req.body??{});
   const verifyOnly=Boolean(body.verifyOnly);
-  if((body.retailer==="flipkart"||body.accountIds?.length)&&!verifyOnly){
-    const flipkartRequested=body.retailer==="flipkart"||Boolean(body.accountIds?.length);
+  if(!verifyOnly){
+    let flipkartRequested=body.retailer==="flipkart";
+    if(!flipkartRequested&&body.accountIds?.length){
+      const targeted=await db.query(
+        "select 1 from retailer_accounts where tenant_id=$1 and id=any($2::uuid[]) and retailer='flipkart' limit 1",
+        [p.tenantId,body.accountIds]
+      );
+      flipkartRequested=Boolean(targeted.rows[0]);
+    }
     if(flipkartRequested){
       const desktopWorker=await db.query(
         `select 1
