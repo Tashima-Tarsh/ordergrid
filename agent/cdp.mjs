@@ -1130,67 +1130,98 @@ export async function submitRetailerOtp({chrome,directory,retailer,otp}){
     const cleanOtp=String(otp||"").trim();
     if(!/^\d{4,8}$/.test(cleanOtp))return {ok:false,reason:"INVALID_OTP_FORMAT"};
 
-    // Fill OTP using React property setter + input events
+    // Focus first digit box or single OTP field
+    const focusMeta=await evaluate(connection,`(()=>{
+      const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const inputs=[...document.querySelectorAll('input')].filter(visible);
+      const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+      const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
+      const singleField=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs[0];
+      
+      if(digitInputs.length>=4){
+        digitInputs[0].focus();
+        try{digitInputs.forEach(i=>i.value='');}catch{}
+        return {isDigits:true,digitCount:digitInputs.length,url:location.href};
+      }
+      if(singleField){
+        singleField.focus();
+        try{singleField.value='';}catch{}
+        return {isDigits:false,hasSingle:true,url:location.href};
+      }
+      return {isDigits:false,url:location.href};
+    })()`).catch(()=>null);
+
+    console.log(`[SUBMIT_OTP_FOCUS] ${JSON.stringify(focusMeta)}`);
+
+    // Type digits sequentially via native CDP keyboard events
+    for(let i=0;i<cleanOtp.length;i++){
+      const digit=cleanOtp[i];
+      if(focusMeta?.isDigits){
+        // Ensure the i-th input is focused if auto-advance didn't move
+        await evaluate(connection,`(()=>{
+          const visible=el=>Boolean(el)&&!el.disabled&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+          const inputs=[...document.querySelectorAll('input')].filter(visible);
+          const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
+          const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
+          if(digitInputs[${i}])digitInputs[${i}].focus();
+        })()`).catch(()=>null);
+      }
+
+      await connection.send("Input.insertText",{text:digit}).catch(()=>null);
+      await connection.send("Input.dispatchKeyEvent",{
+        type:"keyDown",text:digit,unmodifiedText:digit,key:digit,code:"Digit"+digit,windowsVirtualKeyCode:digit.charCodeAt(0)
+      }).catch(()=>null);
+      await connection.send("Input.dispatchKeyEvent",{
+        type:"keyUp",text:digit,unmodifiedText:digit,key:digit,code:"Digit"+digit,windowsVirtualKeyCode:digit.charCodeAt(0)
+      }).catch(()=>null);
+      await sleep(60);
+    }
+
+    // Sync backup values if any box missed React dispatch
     const filled=await evaluate(connection,`(()=>{
       const otp=${JSON.stringify(cleanOtp)};
-      const visible=el=>Boolean(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+      const visible=el=>Boolean(el)&&!el.disabled&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
       const inputs=[...document.querySelectorAll('input')].filter(visible);
       const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
       const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
       
       const setReactVal=(el,val)=>{
         if(!el)return;
-        try{el.focus();}catch{}
-        const tracker=el._valueTracker;
-        if(tracker)tracker.setValue('');
         const proto=Object.getPrototypeOf(el);
         const set=Object.getOwnPropertyDescriptor(proto,'value')?.set||Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value')?.set;
-        if(set)set.call(el,val);
-        else el.value=val;
+        if(set)set.call(el,val);else el.value=val;
         try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:val,inputType:'insertText'}));}catch{}
         el.dispatchEvent(new Event('input',{bubbles:true}));
         el.dispatchEvent(new Event('change',{bubbles:true}));
       };
 
       if(digitInputs.length>=4){
-        digitInputs.slice(0,otp.length).forEach((input,idx)=>setReactVal(input,otp[idx]));
-        return {
-          isDigits:true,
-          readback:digitInputs.slice(0,otp.length).map(i=>i.value).join('')
-        };
+        digitInputs.slice(0,otp.length).forEach((input,idx)=>{
+          if(!input.value||input.value!==otp[idx])setReactVal(input,otp[idx]);
+        });
+        return {readback:digitInputs.slice(0,otp.length).map(i=>i.value).join('')};
       }
-      const singleField=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code|security.?code/i.test(String(x.name||x.id||x.placeholder||x.getAttribute('aria-label')||'')))||inputs[0];
+      const singleField=inputs.find(x=>x.autocomplete==='one-time-code'||/otp|one.?time|verification.?code/i.test(String(x.name||x.id||x.placeholder||'')))||inputs[0];
       if(singleField){
-        setReactVal(singleField,otp);
-        return {
-          isDigits:false,
-          readback:singleField.value
-        };
+        if(!singleField.value)setReactVal(singleField,otp);
+        return {readback:singleField.value};
       }
-      return {isDigits:false,readback:''};
+      return {readback:''};
     })()`).catch(()=>null);
 
-    console.log(`[SUBMIT_OTP_FILLED] ${JSON.stringify(filled)}`);
+    console.log(`[SUBMIT_OTP_FILLED] ${JSON.stringify({readback:filled?.readback,expected:cleanOtp})}`);
 
-    // If readback did not match or for extra reliability, also dispatch native keyboard events
-    if(filled?.isDigits&&filled.readback!==cleanOtp){
-      for(let i=0;i<cleanOtp.length;i++){
-        await evaluate(connection,`(()=>{
-          const visible=el=>Boolean(el)&&!el.disabled&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
-          const inputs=[...document.querySelectorAll('input')].filter(visible);
-          const nonSearch=inputs.filter(x=>!/search/i.test(x.placeholder||x.name||''));
-          const digitInputs=nonSearch.filter(x=>x.maxLength===1||x.getAttribute('maxlength')==='1'||(x.type==='number'&&nonSearch.filter(i=>i.type==='number').length>=4)||/digit|otp/i.test(String(x.getAttribute('aria-label')||'')));
-          const el=digitInputs[${i}];
-          if(el)el.focus();
-        })()`).catch(()=>null);
+    await sleep(250);
 
-        const digit=cleanOtp[i];
-        await connection.send("Input.insertText",{text:digit}).catch(()=>null);
-        await sleep(50);
-      }
-    }
+    // Send Enter key on the active element
+    await connection.send("Input.dispatchKeyEvent",{
+      type:"keyDown",key:"Enter",code:"Enter",windowsVirtualKeyCode:13
+    }).catch(()=>null);
+    await connection.send("Input.dispatchKeyEvent",{
+      type:"keyUp",key:"Enter",code:"Enter",windowsVirtualKeyCode:13
+    }).catch(()=>null);
 
-    await sleep(300);
+    await sleep(200);
 
     // Find and click submit/verify button
     let submitClicked=null;
@@ -1202,8 +1233,18 @@ export async function submitRetailerOtp({chrome,directory,retailer,otp}){
         const submit=controls.find(x=>/(verify|continue|submit|confirm|proceed|sign in|login)/i.test(label(x)))||document.querySelector('button[type="submit"],input[type="submit"]');
         if(submit&&!submit.disabled&&submit.getAttribute('aria-disabled')!=='true'){
           try{submit.focus();}catch{}
-          submit.click();
+          submit.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+          submit.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+          submit.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+          submit.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+          try{submit.click();}catch{}
           return {ok:true,label:label(submit)};
+        }
+        const form=document.querySelector('form');
+        if(form){
+          form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+          try{form.submit();}catch{}
+          return {ok:true,label:'form.submit'};
         }
         return {ok:false};
       })()`).catch(()=>null);
