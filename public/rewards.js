@@ -493,7 +493,7 @@
       if(!file)throw new Error('Choose a CSV or XLSX file');
       const data=new FormData();data.append('file',file,file.name);
       const result=await request('/api/address-books/import',{method:'POST',body:data});
-      let queued=0;
+      let queued=0,prepareError='';
       const ids=result.retailerAccountIds||[];
       try{
         if(ids.length){
@@ -503,17 +503,19 @@
           });
           queued=Number(prepared.count||0);
         }
-      }catch{}
+      }catch(error){prepareError=customerError(error)}
       const secureState=await request('/api/execution-workers').catch(()=>({workers:[]}));
-      secureBrowserReady=(secureState.workers||[]).length>0;
+      secureBrowserReady=(secureState.workers||[]).some(w=>['DESKTOP','INTERACTIVE'].includes(String(w.mode||'').toUpperCase()));
       formElement.reset();
       if($('#retailerUsersBulkFileMeta'))$('#retailerUsersBulkFileMeta').textContent='No file selected';
       $('#retailerUserDialog').close();
       await load();
       if(queued&&secureBrowserReady){
         toast(result.count+' users imported · '+queued+' account connection(s) queued.');
+      }else if(prepareError){
+        toast(result.count+' users imported · '+prepareError);
       }else if(queued){
-        toast(result.count+' users imported. Secure Browser will authenticate the queued accounts one at a time.');
+        toast(result.count+' users imported. Start the OrderGrid Secure Browser to authenticate the queued accounts.');
       }else{
         toast(result.count+' users imported · '+result.retailerAccountsBound+' Flipkart login(s) added. Choose Connect all accounts to continue.');
       }
