@@ -328,12 +328,19 @@
         const updatedAccounts=resp.status==='fulfilled'?(resp.value.accounts||[]):[];
         if(updatedAccounts.length)accounts=updatedAccounts;
         const target=updatedAccounts.find(x=>x.id===accountId);
-        if(screenResp.status==='fulfilled'&&screenResp.value?.screenshot){
-          const img=$('#connectLiveImage'),prev=$('#connectLivePreview');
-          if(img&&prev){img.src=screenResp.value.screenshot;prev.hidden=false}
-        }
         if(!target)return;
         activeConnectingAccount=target;
+        const currentStatus=String(target.session_status||'');
+        const currentCode=String(target.session_challenge_code||'');
+        const img=$('#connectLiveImage'),prev=$('#connectLivePreview');
+        const showFallbackPreview=currentStatus==='REAUTH_REQUIRED'&&currentCode!=='OTP_REQUIRED';
+        if(img&&prev){
+          if(showFallbackPreview&&screenResp.status==='fulfilled'&&screenResp.value?.screenshot){
+            img.src=screenResp.value.screenshot;prev.hidden=false;
+          }else{
+            prev.hidden=true;
+          }
+        }
         if(target.session_worker_id && focusedAccountId!==accountId && desktopWorkerReady){
           focusedAccountId=accountId;
           request('/api/retailer-accounts/'+encodeURIComponent(accountId)+'/focus-session',{method:'POST'}).catch(()=>{focusedAccountId=null});
@@ -355,10 +362,14 @@
           if(code==='OTP_REQUIRED'){
             $('#connectStatusCard').className='connect-status-card otp-ready';
             $('#connectStatusHeading').textContent='FLIPKART OTP REQUIRED';
-            $('#connectStatusMeta').textContent='Enter the 6-digit Flipkart OTP sent to '+(target.account_reference||'your mobile/email')+'.';
+            $('#connectStatusMeta').textContent='Flipkart confirmed an OTP was sent. Enter it below to finish connecting.';
             setConnectOtpVisible(true);
+            if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=true;
+            if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=true;
           }else{
             setConnectOtpVisible(false);
+            if($('#openFlipkartSignin'))$('#openFlipkartSignin').hidden=false;
+            if($('#verifyFlipkartSignin'))$('#verifyFlipkartSignin').hidden=false;
             $('#connectStatusCard').className='connect-status-card connecting';
             $('#connectStatusHeading').textContent='FLIPKART LOGIN REQUIRED';
             $('#connectStatusMeta').textContent='Sign in on Flipkart in the opened window, then click "Verify sign-in" below.';
