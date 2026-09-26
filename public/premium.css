@@ -1,11 +1,77 @@
+/* 3D Motion Physics & Micro-Interactions System */
+:root {
+  --perspective-depth: 1000px;
+  --spring-easing: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --smooth-easing: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 3D Tactile Buttons */
+button, .connect-verify-btn, a.secondary[data-connect-link] {
+  position: relative;
+  transition: transform 0.18s var(--spring-easing), box-shadow 0.18s var(--smooth-easing), background-color 0.18s ease, border-color 0.18s ease !important;
+  transform-style: preserve-3d;
+  will-change: transform, box-shadow;
+}
+
+button:not(:disabled):hover, .connect-verify-btn:not(:disabled):hover, a.secondary[data-connect-link]:hover {
+  transform: translateY(-2px) translateZ(12px) !important;
+  box-shadow: 0 8px 20px -4px rgba(15, 23, 42, 0.14), 0 4px 6px -2px rgba(15, 23, 42, 0.05) !important;
+}
+
+button:not(:disabled):active, .connect-verify-btn:not(:disabled):active, a.secondary[data-connect-link]:active {
+  transform: translateY(1px) scale(0.985) translateZ(0) !important;
+  box-shadow: 0 2px 6px -1px rgba(15, 23, 42, 0.18) !important;
+}
+
+/* 3D Interactive Cards */
+.brain-card, .overview-hero, .overview-card, .ff-panel, .funding-source, .card-program, .retailer-account-row, .gst-card {
+  transition: transform 0.28s var(--smooth-easing), box-shadow 0.28s var(--smooth-easing), border-color 0.28s ease !important;
+  will-change: transform, box-shadow;
+}
+
+.retailer-account-row {
+  border-radius: 12px;
+  padding: 14px 16px !important;
+}
+
+.retailer-account-row:hover {
+  transform: translateY(-2px) translateZ(8px);
+  background: #f8fafc;
+  box-shadow: 0 10px 24px -6px rgba(15, 23, 42, 0.06), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+}
+
+.funding-source:hover, .procurement-cart:hover {
+  transform: translateY(-3px) translateZ(10px);
+  box-shadow: 0 16px 36px -8px rgba(15, 23, 42, 0.12), 0 4px 12px -2px rgba(15, 23, 42, 0.06);
+}
+
+/* 3D Modal & Dialog Animation */
+dialog[open] {
+  animation: modal3dEnter 0.32s var(--spring-easing) forwards;
+}
+
+@keyframes modal3dEnter {
+  0% {
+    opacity: 0;
+    transform: perspective(var(--perspective-depth)) translate3d(0, 24px, -60px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(var(--perspective-depth)) translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* Existing Batch Checkout & Human Check Rules */
 .batch-checkout{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:8px}
-.batch-checkout>div{padding:18px;border:1px solid #e2e8f0;border-radius:14px;background:linear-gradient(145deg,#fff,#f8fafc)}
+.batch-checkout>div{padding:18px;border:1px solid #e2e8f0;border-radius:14px;background:linear-gradient(145deg,#fff,#f8fafc);transition:transform 0.2s ease,box-shadow 0.2s ease}
+.batch-checkout>div:hover{transform:translateY(-2px);box-shadow:0 8px 18px -4px rgba(15,23,42,0.06)}
 .batch-checkout span{display:block;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.08em;margin-bottom:8px}
 .batch-checkout strong{display:block;color:#0f172a;font-size:16px;line-height:1.35;overflow-wrap:anywhere}
-.human-check{display:flex;align-items:center;gap:14px;margin:18px 0;padding:14px 16px;border:1px solid #cbd5e1;border-radius:12px;background:#f8fafc;cursor:pointer}
+.human-check{display:flex;align-items:center;gap:14px;margin:18px 0;padding:14px 16px;border:1px solid #cbd5e1;border-radius:12px;background:#f8fafc;cursor:pointer;transition:transform 0.18s ease,border-color 0.18s ease}
+.human-check:hover{transform:translateY(-1px);border-color:#94a3b8}
 .human-check input{width:20px;height:20px;margin:0;accent-color:#0c8f64;flex:none}
 .human-check span{display:flex;flex-direction:column;gap:3px}
 .human-check b{color:#0f172a}.human-check small{color:#64748b;font-weight:500}
-button:disabled{opacity:.48;cursor:not-allowed;transform:none!important}
+button:disabled{opacity:.48;cursor:not-allowed;transform:none!important;box-shadow:none!important}
 @media(max-width:760px){.batch-checkout{grid-template-columns:1fr 1fr}}
 @media(max-width:480px){.batch-checkout{grid-template-columns:1fr}}
