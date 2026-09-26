@@ -36,15 +36,40 @@ async function focusChromeWindowWindows(directory){
     "using System.Runtime.InteropServices;",
     "public static class Win32Focus {",
     "  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);",
-    "  [DllImport(\\"user32.dll\\")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);",
-    "  [DllImport(\\"user32.dll\\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);",
-    "  [DllImport(\\"user32.dll\\")] public static extern bool IsWindowVisible(IntPtr hWnd);",
-    "  [DllImport(\\"user32.dll\\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);",
-    "  [DllImport(\\"user32.dll\\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+    '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);',
+    '  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);',
+    '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);',
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
     "}",
     "'@",
     "$dir='"+escaped+"'",
-    "$pids=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^chrome(.exe)?async function fetchWithTimeout(url,options={},timeoutMs=12000){
+    "$pids=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^chrome(.exe)?$' -and $_.CommandLine -like ('*--user-data-dir='+$dir+'*') } | Select-Object -ExpandProperty ProcessId)",
+    "$done=$false",
+    "[Win32Focus]::EnumWindows({",
+    "  param($h,$l)",
+    "  if(-not [Win32Focus]::IsWindowVisible($h)){ return $true }",
+    "  [uint32]$pid=0",
+    "  [Win32Focus]::GetWindowThreadProcessId($h,[ref]$pid) | Out-Null",
+    "  if($pids -contains $pid){",
+    "    [Win32Focus]::ShowWindowAsync($h,9) | Out-Null",
+    "    [Win32Focus]::SetForegroundWindow($h) | Out-Null",
+    "    $script:done=$true",
+    "    return $false",
+    "  }",
+    "  return $true",
+    "},[IntPtr]::Zero) | Out-Null",
+    "if($done){ exit 0 } else { exit 1 }"
+  ].join("\n");
+  return await new Promise(resolve=>{
+    const child=spawn("powershell.exe",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",script],{windowsHide:true,stdio:"ignore"});
+    const timer=setTimeout(()=>{try{child.kill()}catch{};resolve(false)},5000);
+    child.once("exit",code=>{clearTimeout(timer);resolve(code===0)});
+    child.once("error",()=>{clearTimeout(timer);resolve(false)});
+  });
+}
+
+async function fetchWithTimeout(url,options={},timeoutMs=12000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{return await fetch(url,{...options,signal:controller.signal})}
   finally{clearTimeout(timer)}
