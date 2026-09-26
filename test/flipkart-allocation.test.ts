@@ -75,3 +75,20 @@ test("handles shortage: 40 accounts in pool, 25 eligible, 30 requested -> 25 all
   assert.equal(uniqueAllocated.size,25);
 });
 
+
+
+test("preserves pooled accounts that do not have a pre-bound address",()=>{
+  const pooled={
+    retailerAccountId:"pool-1",
+    addressId:null,
+    accountReference:"flip-pool-1",
+    productCheckId:"check-pool-1",
+    maxQuantity:2,
+    sellingPriceMinor:100000
+  };
+  const result=buildFlipkartAllocation([pooled],2);
+  assert.equal(result.complete,true);
+  assert.equal(result.allocations.length,1);
+  assert.equal(result.allocations[0].addressId,null);
+  assert.equal(result.allocations[0].quantity,2);
+});
